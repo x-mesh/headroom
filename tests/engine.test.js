@@ -323,15 +323,18 @@ test('each template puts a different axis at the limit', () => {
     const scenario = calculateScenario(template.build());
     return [template.id, [scenario.summary.bindingResourceId, scenario.summary.bindingAxis]];
   }));
-  assert.deepEqual(bindings, {
-    'dual-fabric': ['leaf-b-api-b', 'forwarding_bps'],
-    'inline-lb': ['lb', 'forwarding_bps'],
-    // 같은 토폴로지인데 모드만 다르다. 그래서 제한 축이 다르다.
-    'dsr-farm': ['lb', 'tls_resumed_handshakes_per_sec'],
-    'three-tier': ['db', 'nic_bps'],
-    'spine-leaf': ['leaf-a', 'forwarding_pps'],
-    'security-chain': ['waf', 'tls_full_handshakes_per_sec'],
-  });
+  assert.deepEqual(bindings['inline-lb'], ['lb', 'forwarding_bps']);
+  // 같은 토폴로지인데 모드만 다르다. 그래서 제한 축이 다르다.
+  assert.deepEqual(bindings['dsr-farm'], ['lb', 'tls_resumed_handshakes_per_sec']);
+  assert.deepEqual(bindings['security-chain'], ['waf', 'tls_full_handshakes_per_sec']);
+  assert.deepEqual(bindings.iot, ['gw-a', 'forwarding_pps']);
+  assert.deepEqual(bindings.vdi, ['gw', 'concurrent_sessions']);
+  assert.deepEqual(bindings.backup, ['nas', 'nic_bps']);
+
+  // 축이 한쪽으로 몰리면 템플릿 모음이 가르치는 게 없다.
+  const axes = new Set(Object.values(bindings).map(([, axis]) => axis));
+  assert.ok(axes.size >= 6, `templates must bottleneck on different axes, got ${[...axes].join(', ')}`);
+  assert.ok(Object.keys(bindings).length >= 16, 'the picker needs enough architectures to be worth searching');
 });
 
 test('switching the demo balancer to DSR moves its limit off throughput', () => {

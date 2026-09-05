@@ -95,15 +95,22 @@ async function verify(viewport, screenshot, interact = false) {
     // 새 설계는 템플릿 목록을 연다. 각 템플릿은 서로 다른 축이 먼저 차는 구성이다.
     const beforePanel = await page.evaluate(() => Math.round(document.querySelector('.main-grid').getBoundingClientRect().top));
     await page.locator('[data-editor-action="new"]').click();
-    assert.ok(await page.locator('.template-item').count() >= 6, 'the picker must offer architectures, not just a blank sheet');
+    assert.ok(await page.locator('.template-item').count() >= 16, 'the picker must offer architectures, not just a blank sheet');
+    // 목록이 길어지면 검색이 필요하다.
+    await page.locator('#template-search').fill('TLS');
+    const matched = await page.locator('.template-item:not([hidden])').count();
+    assert.ok(matched >= 2 && matched < 16, `search must narrow the list, got ${matched}`);
+    assert.match(await page.locator('#template-count').textContent(), /개 일치/);
+    await page.locator('#template-search').fill('');
+    assert.equal(await page.locator('.template-item:not([hidden])').count(), await page.locator('.template-item').count());
     assert.equal(await page.evaluate(() => Math.round(document.querySelector('.main-grid').getBoundingClientRect().top)), beforePanel,
       'the editor panel must float over the page, not push it down');
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('#editor-panel').isHidden(), true, 'escape must close the panel');
     await page.locator('[data-editor-action="new"]').click();
-    page.once('dialog', (dialog) => dialog.accept());
     await page.locator('[data-template="inline-lb"]').click();
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 5);
+    assert.equal(await page.locator('#toast [data-toast-undo]').count(), 1, 'replacing a design must offer an undo instead of a confirm');
     assert.match(await page.locator('[data-device-id="lb"] .node-meta').textContent(), /INLINE/);
     await page.locator('[data-device-id="lb"]').click();
     assert.equal(await page.locator('.behavior-choice input:checked').inputValue(), 'inline');
@@ -119,7 +126,12 @@ async function verify(viewport, screenshot, interact = false) {
     assert.equal(await page.locator('.behavior-choice input:checked').inputValue(), 'dsr');
 
     await page.locator('[data-editor-action="new"]').click();
-    page.once('dialog', (dialog) => dialog.accept());
+    await page.locator('[data-template="blank"]').click();
+    await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 0);
+    // 되돌리기가 실제로 되돌려야 한다.
+    await page.locator('#toast [data-toast-undo]').click();
+    await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 5);
+    await page.locator('[data-editor-action="new"]').click();
     await page.locator('[data-template="blank"]').click();
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 0);
     assert.equal(await page.locator('.mesh-node').count(), 0);

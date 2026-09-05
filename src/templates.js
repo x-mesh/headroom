@@ -99,47 +99,307 @@ function spineLeaf() {
   return topology;
 }
 
+function dmzTiers() {
+  const topology = createEmptyTopology('DMZ 이중 방화벽');
+  topology.haGroups = [{ id: 'inner-pair', name: 'Inner firewalls', members: ['fw-in'], sessionSync: 'none', reestablishWindowSec: 30 }];
+  place(topology, [
+    ['internet', 'INTERNET', 'cloud', 'EDGE', 110, 290, { forwarding_bps: 40e9, forwarding_pps: 8e6 }],
+    ['fw-out', 'FW OUT', 'firewall', 'DMZ', 290, 290, { forwarding_bps: 20e9, forwarding_pps: 3e6, new_sessions_per_sec: 60e3, concurrent_sessions: 1.2e6 }],
+    ['waf', 'WAF', 'waf', 'DMZ', 470, 290, { forwarding_bps: 15e9, new_sessions_per_sec: 50e3, concurrent_sessions: 1e6, tls_full_handshakes_per_sec: 5e3 }],
+    ['fw-in', 'FW IN', 'firewall', 'INTERNAL', 650, 290, { forwarding_bps: 15e9, forwarding_pps: 2.5e6, new_sessions_per_sec: 30e3, concurrent_sessions: 700e3 }],
+    ['app', 'APP', 'vm', 'INTERNAL', 840, 290, { nic_bps: 20e9, nic_pps: 3e6 }],
+  ]);
+  connect(topology, [['internet', 'fw-out', 40e9], ['fw-out', 'waf', 20e9], ['waf', 'fw-in', 15e9], ['fw-in', 'app', 20e9]]);
+  addDemand(topology, { id: 'public', name: '공개 서비스', source: 'internet', target: 'app',
+    load: { forwarding_bps: 6e9, forwarding_pps: 1.2e6, new_sessions_per_sec: 26e3, concurrent_sessions: 520e3, tls_full_handshakes_per_sec: 2.4e3, nic_bps: 6e9, nic_pps: 1.2e6 } });
+  return topology;
+}
+
+function hybridCloud() {
+  const topology = createEmptyTopology('하이브리드 클라우드 연결');
+  place(topology, [
+    ['core', 'CORE SW', 'switch', 'ON-PREM', 150, 290, { forwarding_bps: 40e9, forwarding_pps: 6e6 }],
+    ['app', 'APP', 'vm', 'ON-PREM', 150, 500, { nic_bps: 25e9, nic_pps: 4e6 }],
+    ['edge', 'WAN EDGE', 'router', 'ON-PREM', 380, 290, { forwarding_bps: 10e9, forwarding_pps: 1.5e6 }],
+    ['cloud-gw', 'CLOUD GW', 'router', 'CLOUD', 640, 290, { forwarding_bps: 10e9, forwarding_pps: 1.5e6 }],
+    ['cloud-svc', 'CLOUD SVC', 'cloud', 'CLOUD', 860, 290, { forwarding_bps: 40e9, forwarding_pps: 8e6 }],
+  ]);
+  // WAN 구간만 좁다. 사이트 안은 넉넉해도 여기서 막힌다.
+  connect(topology, [['app', 'core', 25e9], ['core', 'edge', 40e9], ['edge', 'cloud-gw', 2e9], ['cloud-gw', 'cloud-svc', 10e9]]);
+  addDemand(topology, { id: 'sync', name: '클라우드 동기화', source: 'app', target: 'cloud-svc',
+    load: { forwarding_bps: 1.7e9, forwarding_pps: 300e3, nic_bps: 1.7e9, nic_pps: 300e3 } });
+  return topology;
+}
+
+function cdnOrigin() {
+  const topology = createEmptyTopology('CDN 오리진');
+  place(topology, [
+    ['internet', 'INTERNET', 'cloud', 'EDGE', 120, 290, { forwarding_bps: 100e9, forwarding_pps: 20e6 }],
+    ['cache-a', 'CACHE 01', 'web', 'EDGE POP', 350, 170, { nic_bps: 40e9, nic_pps: null, new_sessions_per_sec: 120e3 }],
+    ['cache-b', 'CACHE 02', 'web', 'EDGE POP', 350, 410, { nic_bps: 40e9, nic_pps: null, new_sessions_per_sec: 120e3 }],
+    ['core', 'CORE SW', 'switch', 'ORIGIN', 590, 290, { forwarding_bps: 40e9, forwarding_pps: 6e6 }],
+    ['origin', 'ORIGIN', 'web', 'ORIGIN', 830, 290, { nic_bps: 25e9, nic_pps: null, new_sessions_per_sec: 20e3 }],
+  ]);
+  connect(topology, [['internet', 'cache-a', 100e9], ['internet', 'cache-b', 100e9],
+    ['cache-a', 'core', 40e9], ['cache-b', 'core', 40e9], ['core', 'origin', 25e9]]);
+  for (const [id, source] of [['miss-a', 'cache-a'], ['miss-b', 'cache-b']]) {
+    // 캐시 미스만 오리진까지 간다. 적은 양인데 오리진의 세션이 먼저 찬다.
+    addDemand(topology, { id, name: `${source.toUpperCase()} 캐시 미스`, source, target: 'origin',
+      load: { forwarding_bps: 3e9, new_sessions_per_sec: 9e3, nic_bps: 3e9 } });
+  }
+  return topology;
+}
+
+function microservices() {
+  const topology = createEmptyTopology('East-West 마이크로서비스');
+  place(topology, [
+    ['leaf-a', 'LEAF A', 'switch', 'RACK 01', 240, 200, { forwarding_bps: 40e9, forwarding_pps: 3e6 }],
+    ['leaf-b', 'LEAF B', 'switch', 'RACK 02', 700, 200, { forwarding_bps: 40e9, forwarding_pps: 3e6 }],
+    ['svc-a', 'API', 'vm', 'RACK 01', 150, 430, { nic_bps: 25e9, nic_pps: 4e6 }],
+    ['svc-b', 'AUTH', 'vm', 'RACK 01', 350, 430, { nic_bps: 25e9, nic_pps: 4e6 }],
+    ['svc-c', 'ORDER', 'vm', 'RACK 02', 610, 430, { nic_bps: 25e9, nic_pps: 4e6 }],
+    ['svc-d', 'LEDGER', 'vm', 'RACK 02', 810, 430, { nic_bps: 25e9, nic_pps: 4e6 }],
+  ]);
+  connect(topology, [['leaf-a', 'leaf-b', 40e9], ['svc-a', 'leaf-a', 25e9], ['svc-b', 'leaf-a', 25e9],
+    ['svc-c', 'leaf-b', 25e9], ['svc-d', 'leaf-b', 25e9]]);
+  // 서비스 간 호출은 작은 패킷이 많다. 대역폭보다 패킷 처리량이 먼저 찬다.
+  for (const [id, source, target] of [['call-1', 'svc-a', 'svc-b'], ['call-2', 'svc-a', 'svc-c'], ['call-3', 'svc-c', 'svc-d'], ['call-4', 'svc-b', 'svc-d']]) {
+    addDemand(topology, { id, name: `${source.toUpperCase()} → ${target.toUpperCase()}`, source, target,
+      load: { forwarding_bps: 2e9, forwarding_pps: 900e3, nic_bps: 2e9, nic_pps: 900e3 } });
+  }
+  return topology;
+}
+
+function backupNetwork() {
+  const topology = createEmptyTopology('백업 네트워크');
+  place(topology, [
+    ['app-a', 'APP 01', 'server', 'RACK 01', 160, 180, { nic_bps: 25e9, nic_pps: null }],
+    ['app-b', 'APP 02', 'server', 'RACK 01', 160, 400, { nic_bps: 25e9, nic_pps: null }],
+    ['core', 'CORE SW', 'switch', 'FABRIC', 430, 290, { forwarding_bps: 40e9, forwarding_pps: 5e6 }],
+    ['nas', 'NAS', 'nas', 'STORAGE', 680, 200, { nic_bps: 10e9, nic_pps: null }],
+    ['vault', 'TAPE VAULT', 'storage', 'STORAGE', 680, 420, { nic_bps: 8e9, nic_pps: null }],
+  ]);
+  connect(topology, [['app-a', 'core', 25e9], ['app-b', 'core', 25e9], ['core', 'nas', 10e9], ['core', 'vault', 8e9]]);
+  addDemand(topology, { id: 'nightly', name: '야간 백업', source: 'app-a', target: 'nas',
+    load: { forwarding_bps: 8e9, nic_bps: 8e9 } });
+  addDemand(topology, { id: 'archive', name: '아카이브 전송', source: 'app-b', target: 'vault',
+    load: { forwarding_bps: 6e9, nic_bps: 6e9 } });
+  return topology;
+}
+
+function vdiPool() {
+  const topology = createEmptyTopology('VDI 데스크톱 풀');
+  place(topology, [
+    ['internet', 'INTERNET', 'cloud', 'EDGE', 120, 290, { forwarding_bps: 40e9, forwarding_pps: 8e6 }],
+    ['gw', 'VDI GW', 'lb', 'BROKER', 340, 290,
+      { forwarding_bps: 20e9, new_sessions_per_sec: 6e3, concurrent_sessions: 12e3, tls_full_handshakes_per_sec: 3e3, tls_resumed_handshakes_per_sec: 8e3 },
+      { mode: 'inline', sessionSync: 'unknown' }],
+    ['host-a', 'HOST 01', 'vm', 'POOL', 600, 180, { nic_bps: 25e9, nic_pps: 4e6 }],
+    ['host-b', 'HOST 02', 'vm', 'POOL', 600, 400, { nic_bps: 25e9, nic_pps: 4e6 }],
+    ['profile', 'PROFILE NAS', 'nas', 'STORAGE', 840, 290, { nic_bps: 10e9, nic_pps: null }],
+  ]);
+  connect(topology, [['internet', 'gw', 40e9], ['gw', 'host-a', 25e9], ['gw', 'host-b', 25e9],
+    ['host-a', 'profile', 10e9], ['host-b', 'profile', 10e9]]);
+  // 데스크톱 세션은 오래 붙어 있다. 신규보다 동시 세션이 먼저 찬다.
+  for (const [id, target] of [['desk-a', 'host-a'], ['desk-b', 'host-b']]) {
+    addDemand(topology, { id, name: `${target.toUpperCase()} 데스크톱`, source: 'internet', target,
+      load: { forwarding_bps: 3e9, new_sessions_per_sec: 1.2e3, concurrent_sessions: 5.5e3, tls_full_handshakes_per_sec: 900, tls_resumed_handshakes_per_sec: 300, nic_bps: 3e9, nic_pps: 500e3 } });
+  }
+  return topology;
+}
+
+function paymentGateway() {
+  const topology = createEmptyTopology('결제 처리');
+  place(topology, [
+    ['internet', 'INTERNET', 'cloud', 'EDGE', 120, 290, { forwarding_bps: 40e9, forwarding_pps: 8e6 }],
+    ['waf', 'WAF', 'waf', 'DMZ', 340, 290, { forwarding_bps: 15e9, new_sessions_per_sec: 60e3, concurrent_sessions: 900e3, tls_full_handshakes_per_sec: 12e3 }],
+    ['app-a', 'PAY 01', 'web', 'SECURE', 590, 180, { nic_bps: 25e9, nic_pps: null, new_sessions_per_sec: 40e3 }],
+    ['app-b', 'PAY 02', 'web', 'SECURE', 590, 400, { nic_bps: 25e9, nic_pps: null, new_sessions_per_sec: 40e3 }],
+    ['ledger', 'LEDGER', 'storage', 'SECURE', 840, 290, { nic_bps: 12e9, nic_pps: null }],
+  ]);
+  connect(topology, [['internet', 'waf', 40e9], ['waf', 'app-a', 25e9], ['waf', 'app-b', 25e9],
+    ['app-a', 'ledger', 12e9], ['app-b', 'ledger', 12e9]]);
+  // 결제는 연결 재사용이 낮다. 대역폭은 한가한데 TLS 신규 핸드셰이크가 먼저 찬다.
+  for (const [id, target] of [['card-a', 'app-a'], ['card-b', 'app-b']]) {
+    addDemand(topology, { id, name: `${target.toUpperCase()} 카드 승인`, source: 'internet', target,
+      load: { forwarding_bps: 1.2e9, new_sessions_per_sec: 11e3, concurrent_sessions: 120e3, tls_full_handshakes_per_sec: 5.4e3, nic_bps: 1.2e9 } });
+  }
+  return topology;
+}
+
+function streaming() {
+  const topology = createEmptyTopology('스트리밍 배포');
+  place(topology, [
+    ['origin', 'ORIGIN', 'web', 'ORIGIN', 140, 290, { nic_bps: 40e9, nic_pps: null, new_sessions_per_sec: 5e3 }],
+    ['core', 'CORE SW', 'switch', 'FABRIC', 380, 290, { forwarding_bps: 40e9, forwarding_pps: 5e6 }],
+    ['edge-a', 'EDGE 01', 'router', 'POP', 640, 180, { forwarding_bps: 15e9, forwarding_pps: 2e6 }],
+    ['edge-b', 'EDGE 02', 'router', 'POP', 640, 400, { forwarding_bps: 15e9, forwarding_pps: 2e6 }],
+    ['viewers', 'VIEWERS', 'cloud', 'INTERNET', 870, 290, { forwarding_bps: 100e9, forwarding_pps: 20e6 }],
+  ]);
+  connect(topology, [['origin', 'core', 40e9], ['core', 'edge-a', 15e9], ['core', 'edge-b', 15e9],
+    ['edge-a', 'viewers', 40e9], ['edge-b', 'viewers', 40e9]]);
+  // 세션은 적고 바이트는 많다. 순수 대역폭 문제다.
+  addDemand(topology, { id: 'live', name: '라이브 배포', source: 'origin', target: 'viewers',
+    load: { forwarding_bps: 26e9, forwarding_pps: 2.4e6, new_sessions_per_sec: 800, concurrent_sessions: 90e3, nic_bps: 26e9 } });
+  return topology;
+}
+
+function iotGateway() {
+  const topology = createEmptyTopology('IoT 게이트웨이');
+  place(topology, [
+    ['field', 'FIELD', 'cloud', 'SITE', 120, 290, { forwarding_bps: 10e9, forwarding_pps: 20e6 }],
+    ['gw-a', 'GW 01', 'router', 'SITE', 340, 180, { forwarding_bps: 10e9, forwarding_pps: 1.4e6 }],
+    ['gw-b', 'GW 02', 'router', 'SITE', 340, 400, { forwarding_bps: 10e9, forwarding_pps: 1.4e6 }],
+    ['core', 'CORE SW', 'switch', 'FABRIC', 590, 290, { forwarding_bps: 20e9, forwarding_pps: 4e6 }],
+    ['ingest', 'INGEST', 'vm', 'PLATFORM', 840, 290, { nic_bps: 10e9, nic_pps: 6e6 }],
+  ]);
+  connect(topology, [['field', 'gw-a', 10e9], ['field', 'gw-b', 10e9], ['gw-a', 'core', 10e9], ['gw-b', 'core', 10e9], ['core', 'ingest', 10e9]]);
+  // 센서 텔레메트리는 작은 패킷이 아주 많다. 대역폭은 남는데 패킷 처리량이 먼저 찬다.
+  for (const [id, gw] of [['sensors-a', 'gw-a'], ['sensors-b', 'gw-b']]) {
+    addDemand(topology, { id, name: `${gw.toUpperCase()} 센서 수집`, source: 'field', target: 'ingest',
+      load: { forwarding_bps: 900e6, forwarding_pps: 1.3e6, nic_bps: 900e6, nic_pps: 1.3e6 } });
+  }
+  return topology;
+}
+
+function disasterRecovery() {
+  const topology = createEmptyTopology('재해복구 이중 사이트');
+  place(topology, [
+    ['app-p', 'APP PRI', 'vm', 'SITE A', 160, 200, { nic_bps: 25e9, nic_pps: 4e6 }],
+    ['sw-p', 'SW A', 'switch', 'SITE A', 380, 200, { forwarding_bps: 40e9, forwarding_pps: 5e6 }],
+    ['db-p', 'DB PRI', 'storage', 'SITE A', 160, 430, { nic_bps: 20e9, nic_pps: null }],
+    ['sw-s', 'SW B', 'switch', 'SITE B', 660, 200, { forwarding_bps: 40e9, forwarding_pps: 5e6 }],
+    ['db-s', 'DB SEC', 'storage', 'SITE B', 880, 200, { nic_bps: 20e9, nic_pps: null }],
+    ['app-s', 'APP SEC', 'vm', 'SITE B', 880, 430, { nic_bps: 25e9, nic_pps: 4e6 }],
+  ]);
+  // 사이트 간 회선만 좁다. 복제가 그 구간을 다 쓴다.
+  connect(topology, [['app-p', 'sw-p', 25e9], ['db-p', 'sw-p', 20e9], ['sw-p', 'sw-s', 4e9],
+    ['sw-s', 'db-s', 20e9], ['sw-s', 'app-s', 25e9]]);
+  addDemand(topology, { id: 'replica', name: 'DB 복제', source: 'db-p', target: 'db-s',
+    load: { forwarding_bps: 3.4e9, forwarding_pps: 500e3, nic_bps: 3.4e9 } });
+  addDemand(topology, { id: 'app-sync', name: '앱 상태 동기화', source: 'app-p', target: 'app-s',
+    load: { forwarding_bps: 400e6, forwarding_pps: 90e3, nic_bps: 400e6, nic_pps: 90e3 } });
+  return topology;
+}
+
 export const templates = [
   {
     id: 'dual-fabric', name: '이중 팹릭 API 클러스터',
     summary: 'ECMP 2경로에 방화벽과 리프 스위치를 둔 구성입니다.',
     teaches: '대역폭은 넉넉한데 방화벽의 신규 세션이 먼저 찹니다. 방화벽 하나를 끄면 남은 쪽이 두 배를 받습니다.',
+    tags: ['ECMP', '방화벽', '세션', '이중화'],
     build: () => cloneTopology(),
   },
   {
     id: 'inline-lb', name: '인라인 로드밸런싱',
     summary: '요청과 응답이 모두 로드밸런서를 지나는 풀 프록시 구성입니다.',
     teaches: '로드밸런서가 양방향 바이트를 전부 부담해 처리량이 94%로 먼저 찹니다. 아래 DSR 구성과 같은 토폴로지이니 나란히 열어 비교하세요.',
+    tags: ['로드밸런서', '프록시', '처리량', 'DSR'],
     build: () => balancedFarm('inline'),
   },
   {
     id: 'dsr-farm', name: 'DSR 로드밸런싱',
     summary: '응답이 로드밸런서를 거치지 않고 서버에서 클라이언트로 직행합니다.',
     teaches: '같은 부하인데 로드밸런서 처리량이 9%로 떨어집니다. 연결 추적 부담은 그대로라 제한 축이 TLS 재개 핸드셰이크로 옮겨갑니다.',
+    tags: ['로드밸런서', 'DSR', 'TLS', '세션'],
     build: () => balancedFarm('dsr'),
   },
   {
     id: 'three-tier', name: '3-tier 웹 서비스',
     summary: '웹·앱·데이터 계층을 직렬로 지나는 구성입니다.',
     teaches: '계층마다 보는 축이 다릅니다. 웹은 세션, 앱은 NIC 패킷, 데이터는 NIC 대역폭으로 판정됩니다.',
+    tags: ['웹', '계층', '데이터베이스'],
     build: threeTier,
   },
   {
     id: 'spine-leaf', name: '스파인-리프 팹릭',
     summary: '스파인 2대와 리프 3대를 모두 연결한 클로스 구성입니다.',
     teaches: 'East-West 트래픽이 두 스파인으로 갈립니다. 스파인 하나를 끄면 남은 쪽이 전부 받는 것을 볼 수 있습니다.',
+    tags: ['ECMP', '팹릭', '스위치', 'East-West'],
     build: spineLeaf,
   },
   {
     id: 'security-chain', name: '인라인 보안 체인',
     summary: '방화벽과 WAF를 직렬로 지나는 구성입니다.',
     teaches: '대역폭이 아니라 WAF의 TLS 신규 핸드셰이크가 먼저 찹니다. 방화벽은 세션 동기화가 없어 장애 시 재수립 폭증이 계산됩니다.',
+    tags: ['방화벽', 'WAF', 'TLS', '보안'],
     build: securityChain,
+  },
+  {
+    id: 'dmz', name: 'DMZ 이중 방화벽',
+    summary: '외부 방화벽과 내부 방화벽 사이에 DMZ를 둔 구성입니다.',
+    teaches: '같은 트래픽이 방화벽 두 대를 지납니다. 용량이 작은 내부 방화벽이 먼저 찹니다.',
+    tags: ['방화벽', 'DMZ', 'WAF', '보안'],
+    build: dmzTiers,
+  },
+  {
+    id: 'hybrid-cloud', name: '하이브리드 클라우드 연결',
+    summary: '온프레미스와 클라우드를 WAN 회선으로 잇는 구성입니다.',
+    teaches: '사이트 안은 넉넉한데 WAN 회선 하나가 전체를 결정합니다. 좁은 구간을 찾는 연습입니다.',
+    tags: ['WAN', '클라우드', '회선', '하이브리드'],
+    build: hybridCloud,
+  },
+  {
+    id: 'cdn-origin', name: 'CDN 오리진',
+    summary: '엣지 캐시가 앞에 있고 미스만 오리진으로 가는 구성입니다.',
+    teaches: '오리진으로 가는 양은 적은데 오리진의 신규 세션이 먼저 찹니다. 캐시 적중률이 왜 용량 문제인지 보여줍니다.',
+    tags: ['CDN', '캐시', '오리진', '세션'],
+    build: cdnOrigin,
+  },
+  {
+    id: 'microservices', name: 'East-West 마이크로서비스',
+    summary: '서비스끼리 서로 호출하는 다대다 구성입니다.',
+    teaches: '작은 패킷이 아주 많습니다. 대역폭은 남는데 스위치의 패킷 처리량이 먼저 찹니다.',
+    tags: ['마이크로서비스', 'East-West', 'PPS', '스위치'],
+    build: microservices,
+  },
+  {
+    id: 'backup', name: '백업 네트워크',
+    summary: '야간 백업과 아카이브가 스토리지로 몰리는 구성입니다.',
+    teaches: '세션은 몇 개 없는데 NIC 대역폭이 먼저 찹니다. 소수 대용량 플로우의 모습입니다.',
+    tags: ['백업', '스토리지', 'NAS', '대역폭'],
+    build: backupNetwork,
+  },
+  {
+    id: 'vdi', name: 'VDI 데스크톱 풀',
+    summary: '가상 데스크톱을 브로커 뒤에 둔 구성입니다.',
+    teaches: '데스크톱 세션은 오래 붙어 있습니다. 신규 세션보다 동시 세션이 먼저 찹니다.',
+    tags: ['VDI', '가상화', '동시 세션', '브로커'],
+    build: vdiPool,
+  },
+  {
+    id: 'payment', name: '결제 처리',
+    summary: 'WAF 뒤에 결제 애플리케이션과 원장을 둔 구성입니다.',
+    teaches: '연결 재사용이 낮아 대역폭은 한가한데 TLS 신규 핸드셰이크가 먼저 찹니다.',
+    tags: ['결제', 'TLS', 'WAF', '보안'],
+    build: paymentGateway,
+  },
+  {
+    id: 'streaming', name: '스트리밍 배포',
+    summary: '오리진에서 엣지를 거쳐 시청자로 내보내는 구성입니다.',
+    teaches: '세션은 적고 바이트는 많습니다. 순수 대역폭이 병목인 드문 경우입니다.',
+    tags: ['스트리밍', '대역폭', '엣지', 'CDN'],
+    build: streaming,
+  },
+  {
+    id: 'iot', name: 'IoT 게이트웨이',
+    summary: '현장 센서를 게이트웨이로 모아 수집 플랫폼에 넣는 구성입니다.',
+    teaches: '작은 패킷이 대량입니다. 대역폭은 9%인데 게이트웨이의 패킷 처리량이 먼저 찹니다.',
+    tags: ['IoT', 'PPS', '게이트웨이', '센서'],
+    build: iotGateway,
+  },
+  {
+    id: 'disaster-recovery', name: '재해복구 이중 사이트',
+    summary: '주 사이트와 보조 사이트를 좁은 회선으로 잇고 복제하는 구성입니다.',
+    teaches: '사이트 안은 넉넉한데 사이트 간 회선이 복제로 가득 찹니다.',
+    tags: ['DR', '복제', '회선', '이중 사이트'],
+    build: disasterRecovery,
   },
   {
     id: 'blank', name: '빈 설계',
     summary: '컴포넌트 탭에서 장비를 끌어다 직접 그립니다.',
     teaches: '',
+    tags: ['빈 캔버스'],
     build: () => createEmptyTopology('Untitled topology'),
   },
 ];

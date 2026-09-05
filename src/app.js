@@ -47,9 +47,9 @@ function resetScenario({ refreshBaseline = false } = {}) {
   recalculate();
 }
 
-function commitTopology(message) {
+function commitTopology(message, undo = null) {
   resetScenario({ refreshBaseline: true });
-  showToast(message);
+  showToast(message, undo);
 }
 
 function render() {
@@ -560,24 +560,55 @@ function nextDevicePosition() {
 }
 
 function openTemplatePicker() {
-  openEditorPanel('설계 템플릿', `<p class="editor-hint">템플릿마다 먼저 차는 축이 다릅니다. 불러온 뒤 장비를 눌러 어느 축이 병목인지 확인하세요.</p>
-    <div class="template-list">${templates.map((item) => `<button type="button" class="template-item" data-template="${escapeAttribute(item.id)}">
+  const cards = templates.map((item) => {
+    const haystack = [item.name, item.summary, item.teaches, ...(item.tags || [])].join(' ').toLowerCase();
+    return `<button type="button" class="template-item" data-template="${escapeAttribute(item.id)}" data-search="${escapeAttribute(haystack)}">
       <strong>${escapeText(item.name)}</strong><span>${escapeText(item.summary)}</span>${item.teaches ? `<em>${escapeText(item.teaches)}</em>` : ''}
-    </button>`).join('')}</div>`);
+      ${(item.tags || []).length ? `<span class="template-tags">${item.tags.map((tag) => `<i>${escapeText(tag)}</i>`).join('')}</span>` : ''}
+    </button>`;
+  }).join('');
+  openEditorPanel('설계 템플릿', `<p class="editor-hint">템플릿마다 먼저 차는 축이 다릅니다. 불러온 뒤 장비를 눌러 어느 축이 병목인지 확인하세요.</p>
+    <label class="template-search"><span class="visually-hidden">템플릿 검색</span>
+      <input type="search" id="template-search" placeholder="이름, 태그, 병목으로 검색 (예: TLS, 방화벽, 대역폭)" autocomplete="off"></label>
+    <p class="template-count" id="template-count" aria-live="polite">${templates.length}개</p>
+    <div class="template-list">${cards}</div>`);
+  element('template-search').focus();
+}
+
+function filterTemplates(query) {
+  const needle = query.trim().toLowerCase();
+  let shown = 0;
+  for (const item of document.querySelectorAll('.template-item')) {
+    const match = !needle || item.dataset.search.includes(needle);
+    item.hidden = !match;
+    if (match) shown += 1;
+  }
+  element('template-count').textContent = needle ? `${shown}개 일치` : `${templates.length}개`;
+}
+
+function loadTopology(next, message, undo = null) {
+  topology = next;
+  state.scale = 1; state.selectedId = topology.devices[0]?.id || null;
+  state.disabledDevices.clear(); state.disabledLinks.clear();
+  element('scale-input').value = '100';
+  closeEditorPanel();
+  commitTopology(message, undo);
+  centerCanvas();
 }
 
 function applyTemplate(id) {
   const chosen = templates.find((item) => item.id === id);
   if (!chosen) return;
-  const impact = `${topology.devices.length}개 장비, ${topology.links.length}개 링크, ${topology.demands.length}개 demand`;
-  if (!window.confirm(`현재 설계의 ${impact}를 버리고 ${chosen.name}을 불러옵니다. 저장하지 않은 변경은 복구할 수 없습니다. 계속하시겠습니까?`)) return;
-  topology = buildTemplate(id);
-  state.scale = 1; state.selectedId = topology.devices[0]?.id || null;
-  state.disabledDevices.clear(); state.disabledLinks.clear();
-  element('scale-input').value = '100';
-  closeEditorPanel();
-  commitTopology(`${chosen.name}을 불러왔습니다.`);
-  centerCanvas();
+  const previous = structuredClone(topology);
+  const restore = { scale: state.scale, devices: [...state.disabledDevices], links: [...state.disabledLinks], selectedId: state.selectedId };
+  loadTopology(buildTemplate(id), `${chosen.name}을 불러왔습니다.`, () => {
+    topology = previous;
+    state.scale = restore.scale; state.selectedId = restore.selectedId;
+    state.disabledDevices = new Set(restore.devices); state.disabledLinks = new Set(restore.links);
+    element('scale-input').value = String(restore.scale * 100);
+    commitTopology('이전 설계로 되돌렸습니다.');
+    centerCanvas();
+  });
 }
 
 function openDeviceForm(template = null) {
@@ -656,11 +687,15 @@ function toggleFailure(type, id) {
   recalculate();
 }
 
-function showToast(message) {
-  element('toast').textContent = message;
-  element('toast').classList.add('visible');
+let toastUndo = null;
+
+function showToast(message, undo = null) {
+  const toast = element('toast');
+  toastUndo = undo;
+  toast.innerHTML = `<span>${escapeText(message)}</span>${undo ? '<button type="button" data-toast-undo>되돌리기</button>' : ''}`;
+  toast.classList.add('visible');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => element('toast').classList.remove('visible'), 2200);
+  toastTimer = setTimeout(() => { toast.classList.remove('visible'); toastUndo = null; }, undo ? 6000 : 2200);
 }
 
 function exportResult() {
@@ -745,6 +780,9 @@ element('editor-panel-content').addEventListener('submit', (event) => {
     }
   } catch (error) { formError(form, error.message); }
 });
+element('editor-panel-content').addEventListener('input', (event) => {
+  if (event.target.id === 'template-search') filterTemplates(event.target.value);
+});
 element('editor-panel-content').addEventListener('click', (event) => {
   const template = event.target.closest('[data-template]');
   if (template) { applyTemplate(template.dataset.template); return; }
@@ -811,6 +849,13 @@ topologyScroll.addEventListener('pointerup', endPan);
 topologyScroll.addEventListener('pointercancel', endPan);
 topologyScroll.addEventListener('lostpointercapture', endPan);
 
+element('toast').addEventListener('click', (event) => {
+  if (!event.target.closest('[data-toast-undo]')) return;
+  const undo = toastUndo;
+  toastUndo = null;
+  element('toast').classList.remove('visible');
+  undo?.();
+});
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !element('editor-panel').hidden) closeEditorPanel();
 });

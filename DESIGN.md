@@ -317,6 +317,10 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Coverage:** Keep templates that fill different axes first. A set that all bottleneck on bandwidth teaches nothing.
 - **Pairs:** When two templates differ only by a mode, say so in both cards so the reader opens them together.
 - **Blank:** Keep an empty design in the same list. It is a choice, not a fallback.
+- **Search:** Once the list passes a screen, put a search field above it and focus it on open. Match the name, both description lines, and the tags.
+- **Tags:** Show the tags on the card. They teach the reader what the search accepts.
+- **Count:** State how many match, so an empty result reads as a result and not a broken list.
+- **Apply:** Load the template on click. Offer undo in the toast instead of asking for confirmation first.
 
 ### Device Behavior Mode
 
