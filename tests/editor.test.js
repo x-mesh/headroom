@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { cloneTopology } from '../src/data.js';
 import { addDemand, addDevice, addLink, createEmptyTopology, moveDevice, removeDevice } from '../src/editor.js';
 import { calculateScenario, findShortestPaths } from '../src/engine.js';
 
@@ -22,6 +23,16 @@ test('removes dependent links and demands with a device', () => {
   removeDevice(topology, 'a');
   assert.equal(topology.links.length, 0);
   assert.equal(topology.demands.length, 0);
+});
+
+test('a removed device leaves no dangling HA group member', () => {
+  const topology = cloneTopology();
+  removeDevice(topology, 'fw-a');
+  assert.deepEqual(topology.haGroups.find(({ id }) => id === 'fw-pair').members, ['fw-b']);
+  assert.doesNotThrow(() => calculateScenario(topology), 'a design must stay calculable after a device is deleted');
+  removeDevice(topology, 'fw-b');
+  assert.equal(topology.haGroups.some(({ id }) => id === 'fw-pair'), false, 'a group with no members left is not a group');
+  assert.doesNotThrow(() => calculateScenario(topology));
 });
 
 test('enumerates deterministic equal-cost shortest paths for endpoint demand', () => {

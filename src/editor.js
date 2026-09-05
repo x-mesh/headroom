@@ -95,6 +95,12 @@ export function removeDevice(topology, id) {
     if (demand.paths) demand.paths = demand.paths.filter((path) => !path.devices.includes(id) && path.links.every((linkId) => !removedLinks.has(linkId)));
     return !demand.paths || demand.paths.length > 0;
   });
+  // HA 그룹에 남은 멤버 id 는 검증에서 걸려 이후 계산 전체를 멈춘다.
+  if (Array.isArray(topology.haGroups)) {
+    topology.haGroups = topology.haGroups
+      .map((group) => (group.members?.includes(id) ? { ...group, members: group.members.filter((member) => member !== id) } : group))
+      .filter((group) => group.members?.length);
+  }
   return { removedDeviceId: id, removedLinkIds: [...removedLinks] };
 }
 
