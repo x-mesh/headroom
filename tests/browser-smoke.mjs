@@ -199,7 +199,7 @@ async function verify(viewport, screenshot, interact = false) {
     await page.mouse.down();
     await page.mouse.move(canvasBox.x + 240, canvasBox.y + 300, { steps: 10 });
     assert.equal(await page.locator('.palette-ghost').count(), 1, 'dragging must show a ghost');
-    assert.ok(await page.locator('#topology-canvas').evaluate((node) => node.classList.contains('drop-target')), 'the canvas must mark itself as a drop target');
+    assert.ok(await page.locator('.topology-scroll').evaluate((node) => node.classList.contains('drop-target')), 'the topology area must mark itself as a drop target');
     await page.mouse.up();
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 3);
     const dropped = await page.evaluate(() => {
@@ -214,8 +214,20 @@ async function verify(viewport, screenshot, interact = false) {
     assert.ok(dropped.states.every((state) => state === 'unknown'), 'a new device must keep its limits unknown');
     assert.equal(await page.locator('.palette-ghost').count(), 0, 'the ghost must not outlive the drop');
 
+    const scrollBox = await page.locator('.topology-scroll').boundingBox();
+    const beyond = Math.min(canvasBox.y + canvasBox.height + 60, scrollBox.y + scrollBox.height - 20);
+    assert.ok(beyond > canvasBox.y + canvasBox.height, 'the fixture needs slack below the canvas to drop into');
+    const beforeEdgeDrop = await page.evaluate(() => Math.round(parseFloat(getComputedStyle(document.querySelector('#topology-canvas')).height)));
+    const edgeItem = await page.locator('[data-palette-kind="storage"]').boundingBox();
+    await page.mouse.move(edgeItem.x + edgeItem.width / 2, edgeItem.y + edgeItem.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(canvasBox.x + 300, beyond, { steps: 10 });
+    await page.mouse.up();
+    await page.waitForFunction((base) => parseFloat(getComputedStyle(document.querySelector('#topology-canvas')).height) > base, beforeEdgeDrop);
+    assert.equal(await page.locator('.palette-ghost').count(), 0, 'the ghost must not outlive a drop past the canvas edge');
+
     await page.locator('[data-palette-kind="server"]').click();
-    await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 4);
+    await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 5);
     const placed = await page.evaluate(() => {
       const nodes = [...document.querySelectorAll('.mesh-node')].map((node) => ({ x: parseFloat(node.style.left), y: parseFloat(node.style.top) }));
       const last = nodes.at(-1);
@@ -237,7 +249,7 @@ async function verify(viewport, screenshot, interact = false) {
     spreadProject.topology.devices[1].position = { x: 1600, y: 900 };
     page.once('dialog', (dialog) => dialog.accept());
     await page.locator('#project-file-input').setInputFiles({ name: 'spread.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(spreadProject)) });
-    await page.waitForFunction(() => document.querySelector('#link-layer').getAttribute('viewBox') !== '0 0 940 580');
+    await page.waitForFunction(() => document.querySelector('#link-layer').getAttribute('viewBox').startsWith('-'));
     const spread = await canvasSize();
     const [originX, originY, spreadWidth, spreadHeight] = spread.viewBox.split(' ').map(Number);
     assert.ok(originX < 0 && originY < 0, `the origin must follow a device placed above and left, got ${spread.viewBox}`);

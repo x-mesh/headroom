@@ -217,12 +217,15 @@ function applyViewport() {
 }
 
 // 확대가 없으므로 CSS 픽셀과 캔버스 좌표는 1:1 이고, 원점만 viewport 만큼 밀려 있다.
+// 캔버스 밖에 놓아도 좌표를 가두지 않는다. 캔버스가 그 위치까지 자란다.
 function canvasPoint(event) {
-  const rect = element('topology-canvas').getBoundingClientRect();
-  const offsetX = event.clientX - rect.left;
-  const offsetY = event.clientY - rect.top;
-  return { x: offsetX + viewport.minX, y: offsetY + viewport.minY,
-    inside: offsetX >= 0 && offsetY >= 0 && offsetX <= rect.width && offsetY <= rect.height };
+  const canvas = element('topology-canvas').getBoundingClientRect();
+  const drop = document.querySelector('.topology-scroll').getBoundingClientRect();
+  return {
+    x: event.clientX - canvas.left + viewport.minX,
+    y: event.clientY - canvas.top + viewport.minY,
+    inside: event.clientX >= drop.left && event.clientX <= drop.right && event.clientY >= drop.top && event.clientY <= drop.bottom,
+  };
 }
 
 function nextDeviceName(kind) {
@@ -253,7 +256,7 @@ function endPaletteDrag() {
   paletteDrag = null;
   drag.ghost?.remove();
   drag.item.classList.remove('dragging');
-  element('topology-canvas').classList.remove('drop-target');
+  document.querySelector('.topology-scroll').classList.remove('drop-target');
   return drag;
 }
 
@@ -678,6 +681,9 @@ document.querySelector('[role="tablist"]').addEventListener('keydown', (event) =
 element('component-palette').addEventListener('pointerdown', (event) => {
   const item = event.target.closest('[data-palette-kind]');
   if (!item || event.button !== 0) return;
+  // 기본 동작을 막지 않으면 브라우저가 심볼을 네이티브 드래그로 집어가고, pointer 시퀀스가
+  // 끊기면서 고스트가 화면에 남는다.
+  event.preventDefault();
   item.setPointerCapture(event.pointerId);
   paletteDrag = { kind: item.dataset.paletteKind, pointerId: event.pointerId, item, startX: event.clientX, startY: event.clientY, ghost: null };
 });
@@ -693,17 +699,20 @@ element('component-palette').addEventListener('pointermove', (event) => {
   }
   const point = canvasPoint(event);
   paletteDrag.ghost.style.transform = `translate(${event.clientX}px, ${event.clientY}px) translate(-50%, -50%)`;
-  element('topology-canvas').classList.toggle('drop-target', point.inside);
+  document.querySelector('.topology-scroll').classList.toggle('drop-target', point.inside);
 });
 element('component-palette').addEventListener('pointerup', (event) => {
   if (!paletteDrag || event.pointerId !== paletteDrag.pointerId) return;
   const point = canvasPoint(event);
   const drag = endPaletteDrag();
   if (!drag.ghost) { createDeviceFromPalette(drag.kind, nextDevicePosition()); return; }
-  if (!point.inside) { showToast('캔버스 안에 놓아야 장비가 생성됩니다.'); return; }
+  if (!point.inside) { showToast('토폴로지 영역에 놓아야 장비가 생성됩니다.'); return; }
   createDeviceFromPalette(drag.kind, point);
 });
 element('component-palette').addEventListener('pointercancel', endPaletteDrag);
+element('component-palette').addEventListener('dragstart', (event) => event.preventDefault());
+document.addEventListener('pointercancel', endPaletteDrag);
+document.addEventListener('lostpointercapture', () => { if (paletteDrag) endPaletteDrag(); });
 
 reducedMotion.addEventListener('change', startTelemetry);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) updateTelemetry(); });

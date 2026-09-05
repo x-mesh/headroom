@@ -307,7 +307,8 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 
 - **Grid:** Show one cell for each device class in a two-column grid. Separate cells with one-pixel lines, not gaps.
 - **Cell:** Stack the class symbol, a Korean name, and the class code. Use the grab cursor.
-- **Drag:** Drag a cell onto the canvas to place a device. Show a ghost symbol under the pointer and outline the canvas as a drop target.
+- **Drag:** Drag a cell into the topology area to place a device. Show a ghost symbol under the pointer and outline that area as the drop target.
+- **Drop Past the Edge:** Accept a drop anywhere in the topology area, including beside or below the canvas. Keep the dropped coordinate and let the canvas grow to it.
 - **Click:** A click places the device in the first free grid slot. Keep this path working on touch.
 - **New Device:** Give the device the axes its class uses and leave every limit unknown. Select it so the inspector opens for the limits.
 
