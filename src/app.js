@@ -189,6 +189,7 @@ function setLeftPanel(name) {
 const CANVAS_MIN = { width: 940, height: 580 };
 const CANVAS_PAD = 40;
 const CANVAS_MAX = 12000;
+const STAGE_PAD = 300;
 const ZOOM_STEPS = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.6, 1.8, 2];
 const ZOOM_RANGE = { min: ZOOM_STEPS[0], max: ZOOM_STEPS.at(-1) };
 // 휠 한 눈금(픽셀 기준 약 100)이 배율을 5%쯤 움직이게 한다. 트랙패드는 이벤트가 훨씬
@@ -280,10 +281,17 @@ function stepZoom(direction) {
   setZoom(steps.find((step) => (direction > 0 ? step > state.zoom + 1e-6 : step < state.zoom - 1e-6)) ?? state.zoom);
 }
 
+function centerCanvas() {
+  const scroll = document.querySelector('.topology-scroll');
+  scroll.scrollLeft = STAGE_PAD - Math.max(0, (scroll.clientWidth - viewport.width * state.zoom) / 2);
+  scroll.scrollTop = STAGE_PAD - Math.max(0, (scroll.clientHeight - viewport.height * state.zoom) / 2);
+}
+
 function zoomToFit() {
   const scroll = document.querySelector('.topology-scroll');
   const fit = Math.min(scroll.clientWidth / viewport.width, scroll.clientHeight / viewport.height);
   setZoom(Math.min(1, fit));
+  centerCanvas();
 }
 
 let panState = null;
@@ -803,4 +811,5 @@ element('topology-stage').style.setProperty('--zoom', String(state.zoom));
 renderPalette();
 setLeftPanel(state.leftPanel);
 render();
+centerCanvas();
 startTelemetry();

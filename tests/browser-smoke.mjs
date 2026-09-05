@@ -281,19 +281,27 @@ async function verify(viewport, screenshot, interact = false) {
     assert.deepEqual([restored.width, restored.height], [940, 580], 'a layout that fits returns to the minimum canvas');
 
     // 확대: 무대가 스크롤 크기를 담고, 좌표는 배율만큼 되돌려 읽어야 한다.
-    const zoomState = () => page.evaluate(() => ({
-      label: document.querySelector('#zoom-level').textContent,
-      zoom: Number(getComputedStyle(document.querySelector('#topology-stage')).getPropertyValue('--zoom')),
-      stageWidth: Math.round(parseFloat(getComputedStyle(document.querySelector('#topology-stage')).width)),
-      nodeWidth: Math.round(document.querySelector('.mesh-node').getBoundingClientRect().width),
-    }));
+    const zoomState = () => page.evaluate(() => {
+      const stage = getComputedStyle(document.querySelector('#topology-stage'));
+      return {
+        label: document.querySelector('#zoom-level').textContent,
+        zoom: Number(stage.getPropertyValue('--zoom')),
+        pad: parseFloat(stage.getPropertyValue('--stage-pad')),
+        stageWidth: Math.round(parseFloat(stage.width)),
+        canvasWidth: Math.round(document.querySelector('#topology-canvas').getBoundingClientRect().width),
+        nodeWidth: Math.round(document.querySelector('.mesh-node').getBoundingClientRect().width),
+      };
+    });
     const atRest = await zoomState();
     assert.deepEqual([atRest.label, atRest.zoom, atRest.nodeWidth], ['100%', 1, 126]);
+    assert.ok(atRest.pad > 0, 'the stage must pad the canvas so there is always empty space to grab');
+    assert.equal(atRest.stageWidth, atRest.canvasWidth + atRest.pad * 2);
 
     await page.locator('[data-zoom="in"]').click();
     const zoomed = await zoomState();
     assert.ok(zoomed.zoom > 1 && zoomed.label === `${Math.round(zoomed.zoom * 100)}%`);
-    assert.equal(zoomed.stageWidth, Math.round(atRest.stageWidth * zoomed.zoom), 'the stage must carry the scaled size so the area can scroll');
+    assert.equal(zoomed.stageWidth, Math.round(atRest.canvasWidth * zoomed.zoom) + zoomed.pad * 2,
+      'the stage must carry the scaled canvas plus its padding so the area can scroll');
     assert.equal(zoomed.nodeWidth, Math.round(126 * zoomed.zoom), 'nodes scale with the canvas');
 
     // 확대한 상태에서 화면상 이동 거리는 캔버스 좌표에서 배율만큼 작아야 한다.
@@ -335,22 +343,49 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForTimeout(60);
     assert.equal((await zoomState()).zoom, 1, 'a wheel without ctrl must not zoom');
 
-    // 빈 공간을 끌면 화면이 그만큼 움직인다.
-    await page.evaluate(() => { document.querySelector('.topology-scroll').scrollLeft = 0; });
-    await page.mouse.move(spot.x, spot.y);
+    // 빈 공간을 끌면 화면이 그만큼 움직인다. 노드가 없는 지점을 실제로 찾아서 누른다.
+    const emptySpot = await page.evaluate(() => {
+      const area = document.querySelector('.topology-scroll');
+      const rect = area.getBoundingClientRect();
+      const left = Math.max(rect.left, 0);
+      const right = Math.min(rect.right, window.innerWidth);
+      const top = Math.max(rect.top, 0);
+      const bottom = Math.min(rect.bottom, window.innerHeight);
+      for (let y = bottom - 20; y > top; y -= 15) {
+        for (let x = left + 20; x < right; x += 15) {
+          const el = document.elementFromPoint(x, y);
+          if (el && el.closest('.topology-scroll') && !el.closest('.mesh-node, .link-hit')) {
+            return { x, y, cursor: getComputedStyle(el).cursor };
+          }
+        }
+      }
+      return null;
+    });
+    assert.ok(emptySpot, 'the topology area must expose empty space to grab');
+    assert.equal(emptySpot.cursor, 'grab', 'empty space must show the open hand');
+
+    const panBefore = await page.evaluate(() => {
+      const area = document.querySelector('.topology-scroll');
+      return { left: Math.round(area.scrollLeft), top: Math.round(area.scrollTop),
+        maxLeft: Math.round(area.scrollWidth - area.clientWidth), maxTop: Math.round(area.scrollHeight - area.clientHeight) };
+    });
+    assert.ok(panBefore.maxLeft > 0 && panBefore.maxTop > 0, 'the stage padding must leave room to pan in both directions');
+    await page.mouse.move(emptySpot.x, emptySpot.y);
     await page.mouse.down();
-    await page.mouse.move(spot.x - 160, spot.y, { steps: 8 });
     assert.equal(await page.locator('.topology-scroll.panning').count(), 1, 'panning must mark the area');
-    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.topology-scroll')).cursor), 'grabbing');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.topology-scroll')).cursor), 'grabbing',
+      'pressing empty space must show the closed hand');
+    await page.mouse.move(emptySpot.x - 120, emptySpot.y - 90, { steps: 8 });
     await page.mouse.up();
     await page.waitForTimeout(60);
-    const panned = await page.evaluate(() => {
+    const panAfter = await page.evaluate(() => {
       const area = document.querySelector('.topology-scroll');
-      return { left: Math.round(area.scrollLeft), max: Math.round(area.scrollWidth - area.clientWidth) };
+      return { left: Math.round(area.scrollLeft), top: Math.round(area.scrollTop) };
     });
-    assert.ok(panned.max > 0, 'the fixture needs a scrollable canvas to pan');
-    assert.ok(Math.abs(panned.left - Math.min(160, panned.max)) < 3,
-      `dragging empty space must scroll by the drag distance, got ${panned.left} of ${panned.max}`);
+    assert.ok(Math.abs(panAfter.left - Math.min(panBefore.left + 120, panBefore.maxLeft)) < 3,
+      `dragging empty space must scroll horizontally, ${panBefore.left} to ${panAfter.left}`);
+    assert.ok(Math.abs(panAfter.top - Math.min(panBefore.top + 90, panBefore.maxTop)) < 3,
+      `dragging empty space must scroll vertically, ${panBefore.top} to ${panAfter.top}`);
     assert.equal(await page.locator('.topology-scroll.panning').count(), 0, 'panning must end with the pointer');
 
     // 노드 위에서 시작한 드래그는 이동이지 팬이 아니다.
