@@ -1,0 +1,5 @@
+The icon sets and stencil libraries included in this software, and any derivatives thereof 
+(including conversions to other formats, traced reproductions, or substantially similar visual 
+representations), may not be displayed within, distributed for use with, or incorporated into 
+products distributed through the Atlassian marketplace or plugin ecosystem, without explicit 
+written permission.

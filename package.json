@@ -6,8 +6,11 @@
   "scripts": {
     "start": "node scripts/serve.mjs",
     "test": "node --test",
-    "check": "node --check src/data.js && node --check src/engine.js && node --check src/app.js && node --check scripts/serve.mjs && node --check tests/smoke.mjs",
-    "smoke": "node tests/smoke.mjs && node tests/browser-smoke.mjs"
+    "check": "node --check src/data.js && node --check src/engine.js && node --check src/app.js && node --check src/icons.js && node --check scripts/serve.mjs && node --check scripts/build-icons.mjs && node --check scripts/vendor-stencils.mjs && node --check tests/smoke.mjs && npm run icons:check",
+    "smoke": "node tests/smoke.mjs && node tests/browser-smoke.mjs",
+    "icons": "node scripts/build-icons.mjs",
+    "icons:check": "node scripts/build-icons.mjs --check",
+    "icons:vendor": "node scripts/vendor-stencils.mjs"
   },
   "devDependencies": {
     "playwright": "1.62.1"
