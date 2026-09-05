@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { server } from '../scripts/serve.mjs';
+import { cloneTopology } from '../src/data.js';
 
 await mkdir('.impeccable/review', { recursive: true });
 server.listen(0, '127.0.0.1');
@@ -141,6 +142,44 @@ async function verify(viewport, screenshot, interact = false) {
     await page.locator('#project-file-input').setInputFiles({ name: 'project.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) });
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 2);
     assert.equal(await page.locator('.link-group').count(), 1);
+
+    // invalid is unreachable through the editor: finite(min: EPSILON) rejects zero and negative
+    // limits, so a project import is the only way in. It must never paint as healthy.
+    const brokenTopology = cloneTopology();
+    brokenTopology.devices.find((device) => device.id === 'fw-a').limits.new_sessions_per_sec = 0;
+    brokenTopology.links.find((link) => link.id === 'edge-a-fw-a').capacity.forwarding_bps = 0;
+    const brokenProject = { schemaVersion: 1, product: 'Rack Mesh', topology: brokenTopology,
+      scenario: { scale: 1, disabledDevices: [], disabledLinks: [], selectedId: 'fw-a' } };
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.locator('#project-file-input').setInputFiles({ name: 'invalid.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(brokenProject)) });
+    await page.waitForFunction(() => document.querySelector('.link.invalid') && document.querySelector('.axis-row.invalid'));
+    const invalidPaint = await page.evaluate(() => {
+      const paint = (node, property) => getComputedStyle(node)[property];
+      const link = document.querySelector('.link.invalid');
+      const healthyLink = document.querySelector('.link.healthy');
+      const row = document.querySelector('.axis-row.invalid');
+      return {
+        linkStroke: paint(link, 'stroke'),
+        linkDash: paint(link, 'strokeDasharray'),
+        healthyStroke: healthyLink && paint(healthyLink, 'stroke'),
+        healthyDash: healthyLink && paint(healthyLink, 'strokeDasharray'),
+        rowColor: paint(row.querySelector('.axis-title span:last-child'), 'color'),
+        meterPattern: paint(row.querySelector('.axis-meter'), 'backgroundImage'),
+        headerColor: paint(document.querySelector('#resource-state'), 'color'),
+        headerText: document.querySelector('#resource-state').textContent,
+      };
+    });
+    assert.ok(invalidPaint.healthyStroke, 'the fixture must keep a healthy link to compare against');
+    assert.notEqual(invalidPaint.linkStroke, invalidPaint.healthyStroke, 'an invalid link must not paint as healthy');
+    assert.notEqual(invalidPaint.linkDash, invalidPaint.healthyDash, 'an invalid link must pair color with a dash pattern');
+    assert.equal(invalidPaint.rowColor, invalidPaint.linkStroke, 'the inspector axis must use the invalid state color');
+    assert.equal(invalidPaint.headerColor, invalidPaint.linkStroke, 'the inspector header must use the invalid state color');
+    assert.equal(invalidPaint.headerText, '입력 오류');
+    assert.match(invalidPaint.meterPattern, /gradient/, 'an invalid meter must carry a pattern, not color alone');
+
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.locator('#project-file-input').setInputFiles({ name: 'project.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) });
+    await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 2);
   }
   await page.screenshot({ path: screenshot, fullPage: true });
   await page.close();

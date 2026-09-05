@@ -322,14 +322,16 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Accessible Name:** Give the node one label that starts with the device name and states class, zone, state, and binding axis. Keep synthetic telemetry out of that label.
 - **Active Link:** Use a solid semantic stroke and one to three SVG packet dots.
 - **Packet Speed:** Reduce duration as utilization rises. Use 3.4s as the base and 1.25s as the minimum.
+- **Invalid Link:** Use a red stroke with a tight 2 3 dash pattern. Keep it distinct from the 7 7 pattern that marks a disabled link.
 - **Disabled Link:** Use a red dashed stroke, hide packet dots, and show DOWN.
 
 ### Axis Meter
 
 - **Track:** Use a seven-pixel sage track.
-- **Fill:** Use cyan, amber, red, or slate from the axis status.
+- **Fill:** Use cyan for healthy, amber for warning, red for overload and invalid, and slate for unknown.
 - **Labels:** Show axis name, status, utilization, load, and limit as text.
 - **Overload:** Add a diagonal red pattern to the track.
+- **Invalid:** A bad limit leaves the bar empty, so mark the track itself. Add a tight diagonal red pattern and keep it finer than the overload pattern.
 
 ### Project and Device Files
 

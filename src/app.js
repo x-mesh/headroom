@@ -203,7 +203,7 @@ function renderInspector() {
   const isDevice = 'kind' in resource;
   const source = isDevice ? resource.source : { label: '링크 정격', condition: '방향별 full-duplex capacity' };
   element('resource-state').textContent = resource.active ? stateLabel(resource.primaryStatus) : '비활성';
-  element('resource-state').style.color = `var(--${resource.active ? ({ overloaded: 'danger', warning: 'amber', unknown: 'unknown', healthy: 'cyan' })[resource.primaryStatus] || 'unknown' : 'danger'})`;
+  element('resource-state').style.color = `var(--${resource.active ? ({ overloaded: 'danger', warning: 'amber', invalid: 'danger', unknown: 'unknown', healthy: 'cyan' })[resource.primaryStatus] || 'unknown' : 'danger'})`;
   const binding = resource.axes[resource.bindingAxis];
   element('inspector-content').innerHTML = `
     <div class="resource-identity"><strong>${escapeText(resource.name || resource.id.toUpperCase())}</strong><span>${escapeText(isDevice ? `${resource.kind.toUpperCase()} · ${resource.zone}` : `${resource.source} → ${resource.target}`)}</span></div>

@@ -73,6 +73,7 @@ button { color: inherit; }
 [data-state="warning"] { --state-color: var(--amber); }
 [data-state="overloaded"] { --state-color: var(--danger); }
 [data-state="unknown"] { --state-color: var(--unknown); }
+[data-state="invalid"] { --state-color: var(--danger); }
 
 .summary-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--line); }
 .summary-strip > div { min-height: 106px; padding: 15px 22px; display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto 28px; align-content: center; gap: 7px 10px; border-right: 1px solid var(--line-soft); background: var(--surface); position: relative; overflow: hidden; }
@@ -149,7 +150,7 @@ button { color: inherit; }
 .zone-edge { left: 88px; }.zone-security { left: 270px; }.zone-fabric { left: 465px; }.zone-rack { left: 742px; }
 .link-layer, .node-layer { position: absolute; inset: 0; }
 .link { stroke: var(--cyan); stroke-width: 2; fill: none; vector-effect: non-scaling-stroke; opacity: .68; }
-.link.warning { stroke: var(--amber); }.link.overloaded { stroke: var(--danger); stroke-width: 3; }.link.disabled { stroke: var(--danger); stroke-dasharray: 7 7; opacity: .55; }
+.link.warning { stroke: var(--amber); }.link.overloaded { stroke: var(--danger); stroke-width: 3; }.link.invalid { stroke: var(--danger); stroke-dasharray: 2 3; }.link.disabled { stroke: var(--danger); stroke-dasharray: 7 7; opacity: .55; }
 .link-hit { stroke: transparent; stroke-width: 18; cursor: pointer; pointer-events: stroke; }
 .link-label { fill: var(--muted); font: 500 9px var(--font-data); paint-order: stroke; stroke: var(--canvas); stroke-width: 4px; }
 .packet-dot { fill: var(--signal-deep); stroke: var(--surface-raised); stroke-width: 1.5; filter: drop-shadow(0 1px 3px color-mix(in srgb, var(--signal-deep) 65%, transparent)); pointer-events: none; }
@@ -192,13 +193,14 @@ button { color: inherit; }
 .binding-callout strong { display: flex; justify-content: space-between; margin-top: 9px; color: var(--signal-deep); font: 600 14px/1 var(--font-data); }
 .axis-list { display: grid; gap: 18px; }
 .axis-row { --axis-color: var(--cyan); }
-.axis-row.warning { --axis-color: var(--amber); }.axis-row.overloaded { --axis-color: var(--danger); }.axis-row.unknown { --axis-color: var(--unknown); }
+.axis-row.warning { --axis-color: var(--amber); }.axis-row.overloaded { --axis-color: var(--danger); }.axis-row.unknown { --axis-color: var(--unknown); }.axis-row.invalid { --axis-color: var(--danger); }
 .axis-title, .axis-values { display: flex; justify-content: space-between; gap: 10px; }
 .axis-title { margin-bottom: 7px; font: 600 10px/1 var(--font-data); }
 .axis-title span:last-child { color: var(--axis-color); }
 .axis-meter { height: 7px; background: var(--surface-tint); overflow: hidden; }
 .axis-meter span { display: block; width: min(var(--axis-width), 100%); height: 100%; background: var(--axis-color); }
 .axis-row.overloaded .axis-meter { background-image: repeating-linear-gradient(135deg, color-mix(in srgb, var(--danger) 18%, var(--ground)) 0 4px, color-mix(in srgb, var(--danger) 32%, var(--ground)) 4px 8px); }
+.axis-row.invalid .axis-meter { background-image: repeating-linear-gradient(135deg, color-mix(in srgb, var(--danger) 26%, var(--ground)) 0 2px, transparent 2px 5px); }
 .axis-values { margin-top: 7px; color: var(--muted); font: 500 9px/1 var(--font-data); }
 .source-note { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 10px; line-height: 1.55; }
 .source-note strong { color: var(--text); }
