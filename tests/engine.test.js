@@ -276,3 +276,43 @@ test('states that a firewall placement mode does not change byte load', () => {
   };
   assert.equal(build('routed'), build('transparent'));
 });
+
+test('splits failover into a synchronised and a cold branch', () => {
+  const fault = { disabledDevices: ['fw-a'] };
+  const cps = (options) => calculateScenario(cloneTopology(), { ...fault, ...options })
+    .devices.find(({ id }) => id === 'fw-b').axes.new_sessions_per_sec;
+
+  // 선언된 구성은 세션 동기화. 대기 장비가 세션을 이어받으므로 폭증이 없다.
+  const synced = cps({});
+  assert.equal(Math.round(synced.load), 72000);
+  assert.equal(round4(synced.utilization), 1.7143);
+  assert.equal(synced.contributions, undefined);
+
+  // 세션이 소실되면 인계받은 40만 세션을 30초에 걸쳐 다시 맺는다.
+  const cold = cps({ sessionSync: 'none' });
+  assert.equal(Math.round(cold.load), 85333);
+  assert.equal(round4(cold.utilization), 2.0317);
+  assert.equal(Math.round(cold.contributions.steady), 72000);
+  assert.equal(Math.round(cold.contributions.failoverSurge), 13333);
+
+  // 창이 짧을수록 폭증이 크다.
+  assert.equal(Math.round(cps({ sessionSync: 'none', reestablishWindowSec: 10 }).load), 112000);
+});
+
+test('reports an unknown surge instead of assuming none', () => {
+  const topology = cloneTopology();
+  delete topology.haGroups.find(({ id }) => id === 'fw-pair').reestablishWindowSec;
+  const axis = calculateScenario(topology, { disabledDevices: ['fw-a'], sessionSync: 'none' })
+    .devices.find(({ id }) => id === 'fw-b').axes.new_sessions_per_sec;
+  // 재수립 창을 모르면 폭증량을 지어내지 않는다. 0 으로 치면 안전하다고 거짓말하게 된다.
+  assert.equal(axis.status, 'unknown');
+  assert.equal(axis.unknownReason, 'failover-surge-window-missing');
+  assert.equal(axis.utilization, null);
+});
+
+test('leaves a healthy scenario untouched whatever the sync policy says', () => {
+  const declared = calculateScenario(cloneTopology());
+  const cold = calculateScenario(cloneTopology(), { sessionSync: 'none' });
+  assert.equal(JSON.stringify(declared.devices), JSON.stringify(cold.devices));
+  assert.deepEqual(declared.failover.transfers, []);
+});

@@ -64,6 +64,10 @@ export const demoTopology = {
   name: 'Dual fabric API cluster',
   synthetic: true,
   warningThreshold: 0.8,
+  haGroups: [
+    { id: 'fw-pair', name: 'Perimeter firewalls', members: ['fw-a', 'fw-b'], sessionSync: 'stateful', reestablishWindowSec: 30 },
+    { id: 'edge-pair', name: 'Edge routers', members: ['edge-a', 'edge-b'], sessionSync: 'stateful' },
+  ],
   devices: [
     device('edge-a', 'EDGE A', 'router', 'EDGE', 110, 115, { forwarding_bps: 10e9, forwarding_pps: 2.4e6 }),
     device('edge-b', 'EDGE B', 'router', 'EDGE', 110, 430, { forwarding_bps: 10e9, forwarding_pps: 2.4e6 }),

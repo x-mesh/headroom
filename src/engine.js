@@ -1,5 +1,7 @@
 import { axisCatalog, behaviorCatalog, DEFAULT_RESPONSE_SHARE } from './data.js';
 
+export const SESSION_SYNC_DEFAULT = 'stateful';
+
 const EPSILON = 1e-9;
 
 // 초과분이 곧 드롭인 축과, 신규 연결만 거절되는 축을 나눈다. 세션 테이블이 넘쳤다고
@@ -37,6 +39,10 @@ function validateTopology(topology) {
   if (deviceIds.size !== topology.devices.length || linkIds.size !== topology.links.length) throw new Error('Topology IDs must be unique');
   for (const link of topology.links) {
     if (!deviceIds.has(link.source) || !deviceIds.has(link.target)) throw new Error(`Link ${link.id} has a missing endpoint`);
+  }
+  for (const group of topology.haGroups || []) {
+    if (!Array.isArray(group.members) || !group.members.length) throw new Error(`HA group ${group.id} requires members`);
+    for (const member of group.members) if (!deviceIds.has(member)) throw new Error(`HA group ${group.id} has a missing member`);
   }
   for (const demand of topology.demands) {
     if (!demand.paths?.length && !(demand.source && demand.target)) throw new Error(`Demand ${demand.id} requires paths or endpoints`);
@@ -188,8 +194,21 @@ export function calculateScenario(topology, options = {}) {
     });
   }
 
+  const failover = failoverSurge(topology, options, disabledDevices, disabledLinks, scale, resolvedPaths);
+  for (const [deviceId, cps] of Object.entries(failover.surge)) {
+    deviceLoads[deviceId].new_sessions_per_sec = (deviceLoads[deviceId].new_sessions_per_sec || 0) + cps;
+  }
+
   const devices = topology.devices.map((device) => {
     const axes = Object.fromEntries(Object.entries(device.limits).map(([axis, limit]) => [axis, axisResult(deviceLoads[device.id][axis] || 0, limit, warningThreshold)]));
+    const surge = failover.surge[device.id];
+    if (surge && axes.new_sessions_per_sec) {
+      axes.new_sessions_per_sec.contributions = { steady: axes.new_sessions_per_sec.load - surge, failoverSurge: surge };
+    }
+    // 폭증량을 모르면 0 으로 치지 않는다. 모르는 것을 안전으로 바꾸면 안 된다.
+    if (failover.unknownSurge.has(device.id) && axes.new_sessions_per_sec) {
+      axes.new_sessions_per_sec = { ...axes.new_sessions_per_sec, utilization: null, headroom: null, status: 'unknown', unknownReason: 'failover-surge-window-missing' };
+    }
     return { ...device, active: !disabledDevices.has(device.id), load: deviceLoads[device.id], axes, ...summarizeAxes(axes) };
   });
   const links = topology.links.map((link) => {
@@ -304,7 +323,46 @@ export function calculateScenario(topology, options = {}) {
       warningCount: activeResources.filter(({ primaryStatus }) => primaryStatus === 'warning').length,
       activeFaults: disabledDevices.size + disabledLinks.size,
     },
+    failover: failover.report,
   };
+}
+
+function failoverSurge(topology, options, disabledDevices, disabledLinks, scale, currentPaths) {
+  const groups = topology.haGroups || [];
+  const override = options.sessionSync && options.sessionSync !== 'declared' ? options.sessionSync : null;
+  const report = {
+    assumptionSource: override ? 'scenario-override' : groups.length ? 'declared' : 'default',
+    sessionSync: override || null, groups: groups.map(({ id, members, sessionSync, reestablishWindowSec }) => ({ id, members, sessionSync, reestablishWindowSec: reestablishWindowSec ?? null })),
+    transfers: [],
+  };
+  const surge = {};
+  const unknownSurge = new Set();
+  if (!disabledDevices.size) return { surge, unknownSurge, report };
+
+  const baselinePaths = resolveDemandPaths(topology, new Set(), new Set(), options);
+  for (const failedId of disabledDevices) {
+    const group = groups.find(({ members }) => members.includes(failedId));
+    const sessionSync = override || group?.sessionSync || SESSION_SYNC_DEFAULT;
+    if (sessionSync !== 'none') continue;
+    const windowSec = options.reestablishWindowSec ?? group?.reestablishWindowSec ?? null;
+    for (const demand of topology.demands) {
+      const before = baselinePaths.get(demand.id).activePaths;
+      const after = currentPaths.get(demand.id).activePaths;
+      if (!before.length || !after.length) continue;
+      const lost = before.filter((path) => path.devices.includes(failedId)).length / before.length;
+      const transferred = (demand.load.concurrent_sessions || 0) * scale * lost;
+      if (!transferred) continue;
+      if (!Number.isFinite(windowSec) || windowSec <= 0) {
+        for (const path of after) for (const deviceId of new Set(path.devices)) unknownSurge.add(deviceId);
+        report.transfers.push({ demandId: demand.id, failedId, transferred, surge: null, status: 'unknown', reason: 'reestablish-window-missing' });
+        continue;
+      }
+      const share = 1 / after.length;
+      for (const path of after) for (const deviceId of new Set(path.devices)) surge[deviceId] = (surge[deviceId] || 0) + (transferred / windowSec) * share;
+      report.transfers.push({ demandId: demand.id, failedId, transferred, surge: transferred / windowSec, windowSec, status: 'known', derivation: 'transferred_sessions / reestablish_window_sec' });
+    }
+  }
+  return { surge, unknownSurge, report };
 }
 
 function scaledLoad(load, scale) {
