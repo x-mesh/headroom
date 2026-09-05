@@ -320,6 +320,57 @@ function branchVpn() {
   return topology;
 }
 
+// 같은 부하를 같은 총용량으로 받되, 큰 장비 한 대와 작은 장비 두 대로 나눠 짓는다.
+// 무장애 사용률은 둘 다 75%로 같다. 갈라지는 것은 한 대가 죽은 뒤다.
+const STACK_LOAD = { forwarding_bps: 6e9, forwarding_pps: 900e3, new_sessions_per_sec: 20e3, concurrent_sessions: 400e3,
+  tls_full_handshakes_per_sec: 1.5e3, tls_resumed_handshakes_per_sec: 12e3, nic_bps: 6e9, nic_pps: 900e3 };
+
+function stackDemands(topology) {
+  for (const target of ['web-a', 'web-b']) {
+    addDemand(topology, { id: `${target}-traffic`, name: `${target.toUpperCase()} 트래픽`, source: 'internet', target, load: STACK_LOAD });
+  }
+  return topology;
+}
+
+function singleStack() {
+  const topology = createEmptyTopology('단일 경로 웹 서비스');
+  place(topology, [
+    ['internet', 'INTERNET', 'cloud', 'EDGE', 110, 290, { forwarding_bps: 40e9, forwarding_pps: 8e6 }],
+    ['fw', 'FW', 'firewall', 'SECURITY', 340, 290, { forwarding_bps: 16e9, forwarding_pps: 2.4e6, new_sessions_per_sec: 60e3, concurrent_sessions: 1.2e6 }],
+    ['lb', 'LB', 'lb', 'SERVICE', 570, 290,
+      { forwarding_bps: 16e9, new_sessions_per_sec: 60e3, concurrent_sessions: 1.2e6, tls_full_handshakes_per_sec: 6e3, tls_resumed_handshakes_per_sec: 48e3 }],
+    ['web-a', 'WEB 01', 'web', 'RACK 01', 800, 180, { nic_bps: 8e9, nic_pps: 1.6e6, new_sessions_per_sec: 30e3 }],
+    ['web-b', 'WEB 02', 'web', 'RACK 02', 800, 400, { nic_bps: 8e9, nic_pps: 1.6e6, new_sessions_per_sec: 30e3 }],
+  ]);
+  connect(topology, [['internet', 'fw', 20e9], ['fw', 'lb', 20e9], ['lb', 'web-a', 10e9], ['lb', 'web-b', 10e9]]);
+  return stackDemands(topology);
+}
+
+function dualStack() {
+  const topology = createEmptyTopology('이중화 웹 서비스');
+  topology.haGroups = [
+    { id: 'fw-pair', name: 'Perimeter firewalls', members: ['fw-a', 'fw-b'], sessionSync: 'none', reestablishWindowSec: 30 },
+    { id: 'lb-pair', name: 'Load balancers', members: ['lb-a', 'lb-b'], sessionSync: 'stateful', reestablishWindowSec: 30 },
+  ];
+  place(topology, [
+    ['internet', 'INTERNET', 'cloud', 'EDGE', 110, 290, { forwarding_bps: 40e9, forwarding_pps: 8e6 }],
+    ['fw-a', 'FW A', 'firewall', 'SECURITY', 340, 180, { forwarding_bps: 8e9, forwarding_pps: 1.2e6, new_sessions_per_sec: 30e3, concurrent_sessions: 600e3 }],
+    ['fw-b', 'FW B', 'firewall', 'SECURITY', 340, 400, { forwarding_bps: 8e9, forwarding_pps: 1.2e6, new_sessions_per_sec: 30e3, concurrent_sessions: 600e3 }],
+    ['lb-a', 'LB A', 'lb', 'SERVICE', 570, 180,
+      { forwarding_bps: 8e9, new_sessions_per_sec: 30e3, concurrent_sessions: 600e3, tls_full_handshakes_per_sec: 3e3, tls_resumed_handshakes_per_sec: 24e3 }],
+    ['lb-b', 'LB B', 'lb', 'SERVICE', 570, 400,
+      { forwarding_bps: 8e9, new_sessions_per_sec: 30e3, concurrent_sessions: 600e3, tls_full_handshakes_per_sec: 3e3, tls_resumed_handshakes_per_sec: 24e3 }],
+    ['web-a', 'WEB 01', 'web', 'RACK 01', 800, 180, { nic_bps: 8e9, nic_pps: 1.6e6, new_sessions_per_sec: 30e3 }],
+    ['web-b', 'WEB 02', 'web', 'RACK 02', 800, 400, { nic_bps: 8e9, nic_pps: 1.6e6, new_sessions_per_sec: 30e3 }],
+  ]);
+  connect(topology, [
+    ['internet', 'fw-a', 10e9], ['internet', 'fw-b', 10e9],
+    ['fw-a', 'lb-a', 10e9], ['fw-a', 'lb-b', 10e9], ['fw-b', 'lb-a', 10e9], ['fw-b', 'lb-b', 10e9],
+    ['lb-a', 'web-a', 10e9], ['lb-a', 'web-b', 10e9], ['lb-b', 'web-a', 10e9], ['lb-b', 'web-b', 10e9],
+  ]);
+  return stackDemands(topology);
+}
+
 export const templates = [
   {
     id: 'dual-fabric', name: '이중 팹릭 API 클러스터',
@@ -327,6 +378,20 @@ export const templates = [
     teaches: '대역폭은 넉넉한데 방화벽의 신규 세션이 먼저 찹니다. 방화벽 하나를 끄면 남은 쪽이 두 배를 받습니다.',
     tags: ['ECMP', '방화벽', '세션', '이중화'],
     build: () => cloneTopology(),
+  },
+  {
+    id: 'single-stack', name: '단일 경로 웹 서비스',
+    summary: '방화벽과 로드밸런서를 각각 한 대로 세운 구성입니다.',
+    teaches: '무장애일 때는 모든 축이 75%로 아래 이중화 구성과 똑같습니다. 방화벽 한 대가 죽는 순간 트래픽 전부가 끊깁니다. 둘을 나란히 열어 비교하세요.',
+    tags: ['단일 장애점', '이중화', '비교', '방화벽'],
+    build: singleStack,
+  },
+  {
+    id: 'dual-stack', name: '이중화 웹 서비스',
+    summary: '같은 부하를 같은 총용량으로 받되 절반짜리 장비 두 대로 나눈 구성입니다.',
+    teaches: '방화벽 한 대가 죽어도 끊기지 않습니다. 대신 남은 쪽 대역폭이 150%가 되고, 세션 동기화가 없어 재수립 폭증까지 겹친 신규 세션은 178%가 됩니다. 이중화했다고 용량이 따라오는 것은 아닙니다.',
+    tags: ['이중화', '단일 장애점', '비교', 'ECMP'],
+    build: dualStack,
   },
   {
     id: 'inline-lb', name: '인라인 로드밸런싱',

@@ -392,3 +392,24 @@ test('the sweep counts demand endpoints apart and never calls an unknown design 
   const blank = sweepSingleFaults(buildTemplate('blank'));
   assert.deepEqual([blank.grade, blank.resources.length], ['unknown', 0]);
 });
+
+test('the paired templates differ only after one device dies', () => {
+  const single = calculateScenario(buildTemplate('single-stack'));
+  const dual = calculateScenario(buildTemplate('dual-stack'));
+  // 같은 부하를 같은 총용량으로 받으므로 무장애 상태는 구분되지 않는다.
+  assert.equal(Math.round(single.summary.minHeadroom * 100), Math.round(dual.summary.minHeadroom * 100));
+
+  const singleSweep = sweepSingleFaults(buildTemplate('single-stack'));
+  const dualSweep = sweepSingleFaults(buildTemplate('dual-stack'));
+  assert.equal(singleSweep.resources.find(({ id }) => id === 'fw').verdict, 'severs');
+  assert.equal(dualSweep.resources.find(({ id }) => id === 'fw-a').verdict, 'overloads');
+  assert.deepEqual([singleSweep.grade, dualSweep.grade], ['single-point', 'partial']);
+
+  // 이중화해도 용량이 따라오지 않는다는 것이 이 쌍의 요점이다.
+  const survivor = calculateScenario(buildTemplate('dual-stack'), { disabledDevices: ['fw-a'] })
+    .devices.find(({ id }) => id === 'fw-b');
+  assert.equal(Math.round(survivor.axes.forwarding_bps.utilization * 100), 150);
+  // 세션 동기화가 없으므로 재수립 폭증이 신규 세션에 얹힌다.
+  assert.ok(survivor.axes.new_sessions_per_sec.utilization > 1.7);
+  assert.ok(survivor.axes.new_sessions_per_sec.contributions.failoverSurge > 0);
+});

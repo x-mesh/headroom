@@ -116,6 +116,10 @@ button { color: inherit; }
 .template-item[hidden] { display: none; }
 .template-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
 .template-tags i { padding: 2px 6px; background: var(--surface-tint); color: var(--muted); font: 500 9px/1.4 var(--font-data); font-style: normal; }
+.template-grade { justify-self: start; padding: 2px 7px; border: 1px solid currentColor; color: var(--muted); font: 600 8px/1.4 var(--font-data); letter-spacing: .06em; }
+.template-grade[data-grade="single-point"] { color: var(--danger); }
+.template-grade[data-grade="partial"] { color: var(--amber); }
+.template-grade[data-grade="redundant"] { color: var(--signal-deep); }
 .template-item { display: grid; gap: 5px; padding: 13px 14px; border: 0; background: var(--surface); color: var(--text); cursor: pointer; text-align: left; }
 .template-item:hover { background: var(--surface-raised); }
 .template-item strong { font: 600 12px/1.2 var(--font-ui); }

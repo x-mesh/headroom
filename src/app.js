@@ -681,11 +681,24 @@ function nextDevicePosition() {
   return deviceSlot(topology.devices.length);
 }
 
+const GRADE_LABEL = { 'single-point': '단일 장애점', partial: '이중화 · 용량 부족', redundant: '이중화', unknown: '판정 불가' };
+let templateGrades = null;
+function templateGrade(id) {
+  if (!templateGrades) {
+    templateGrades = new Map(templates.map((item) => [item.id, sweepSingleFaults(buildTemplate(item.id))]));
+  }
+  return templateGrades.get(id);
+}
+
 function openTemplatePicker() {
   const cards = templates.map((item) => {
-    const haystack = [item.name, item.summary, item.teaches, ...(item.tags || [])].join(' ').toLowerCase();
+    const grade = templateGrade(item.id);
+    const gradeLabel = grade.resources.length
+      ? `${GRADE_LABEL[grade.grade]}${grade.grade === 'single-point' ? ` ${grade.severs}` : ''}`
+      : '';
+    const haystack = [item.name, item.summary, item.teaches, gradeLabel, ...(item.tags || [])].join(' ').toLowerCase();
     return `<button type="button" class="template-item" data-template="${escapeAttribute(item.id)}" data-search="${escapeAttribute(haystack)}">
-      <strong>${escapeText(item.name)}</strong><span>${escapeText(item.summary)}</span>${item.teaches ? `<em>${escapeText(item.teaches)}</em>` : ''}
+      <strong>${escapeText(item.name)}</strong>${gradeLabel ? `<b class="template-grade" data-grade="${escapeAttribute(grade.grade)}">${escapeText(gradeLabel)}</b>` : ''}<span>${escapeText(item.summary)}</span>${item.teaches ? `<em>${escapeText(item.teaches)}</em>` : ''}
       ${(item.tags || []).length ? `<span class="template-tags">${item.tags.map((tag) => `<i>${escapeText(tag)}</i>`).join('')}</span>` : ''}
     </button>`;
   }).join('');
