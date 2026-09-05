@@ -237,7 +237,8 @@ async function verify(viewport, screenshot, interact = false) {
     assert.equal(await page.locator('#tab-palette').getAttribute('aria-selected'), 'true');
     assert.equal(await page.locator('#panel-failure').isHidden(), true, 'switching tabs must hide the failure panel');
     assert.equal(await page.locator('#failure-count').isHidden(), true, 'the active-fault badge belongs to the failure tab');
-    assert.equal(await page.locator('.palette-item').count(), 12, 'the palette covers the classes a real design uses');
+    assert.equal(await page.locator('.palette-item').count(), 22, 'the palette covers the classes a real design uses');
+    assert.equal(await page.locator('.palette-group').count(), 4, 'the palette groups its classes so a long list stays findable');
     assert.ok(await page.evaluate(() => [...document.querySelectorAll('.palette-item use')]
       .every((use) => document.querySelector(use.getAttribute('href')) && use.getBBox().width > 0)), 'every palette symbol must resolve');
 

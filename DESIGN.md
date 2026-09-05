@@ -342,6 +342,8 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 ### Component Palette
 
 - **Grid:** Show one cell for each device class in a two-column grid. Separate cells with one-pixel lines, not gaps.
+- **Groups:** Sort the classes into named groups: network, security and traffic, servers and storage, external and endpoints. Put the group name on its own full-width row above its cells.
+- **Odd Group:** If a group holds an odd number of classes, make its last cell span both columns. An empty half cell must not show.
 - **Cell:** Stack the class symbol, a Korean name, and the class code. Use the grab cursor.
 - **Drag:** Drag a cell into the topology area to place a device. Show a ghost symbol under the pointer and outline that area as the drop target.
 - **Drop Past the Edge:** Accept a drop anywhere in the topology area, including beside or below the canvas. Keep the dropped coordinate and let the canvas grow to it.

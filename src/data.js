@@ -3,6 +3,7 @@ export const axisCatalog = {
   forwarding_pps: { label: '패킷 처리량', shortLabel: 'PPS', unit: 'pps', nodeLabel: 'PPS', deliveryRole: 'throughput' },
   new_sessions_per_sec: { label: '신규 세션', shortLabel: 'CPS', unit: 'cps', nodeLabel: 'CPS', deliveryRole: 'admission' },
   concurrent_sessions: { label: '동시 세션', shortLabel: 'SESS', unit: 'sessions', nodeLabel: 'SESS', deliveryRole: 'admission' },
+  vpn_tunnels: { label: '동시 VPN 터널', shortLabel: 'VPN', unit: 'tunnels', nodeLabel: 'VPN', deliveryRole: 'admission' },
   nic_bps: { label: 'NIC 처리량', shortLabel: 'NIC', unit: 'bps', nodeLabel: 'NIC', deliveryRole: 'throughput' },
   nic_pps: { label: 'NIC 패킷', shortLabel: 'NIC PPS', unit: 'pps', nodeLabel: 'NPPS', deliveryRole: 'throughput' },
   tls_full_handshakes_per_sec: { label: 'TLS 신규 핸드셰이크', shortLabel: 'TLS FULL', unit: 'tps', nodeLabel: 'TLSF', deliveryRole: 'admission' },
@@ -45,7 +46,7 @@ export const behaviorCatalog = {
 };
 
 // 세션 축을 갖는 클래스. 페일오버 두 갈래 계산의 대상이다.
-export const STATEFUL_KINDS = new Set(['firewall', 'lb']);
+export const STATEFUL_KINDS = new Set(['firewall', 'lb', 'vpn', 'sslvpn', 'ips', 'waf']);
 
 const source = {
   type: 'estimate',

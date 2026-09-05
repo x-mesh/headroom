@@ -146,7 +146,10 @@ button { color: inherit; }
 .panel-tabs button:hover { color: var(--text); }
 .panel-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--signal-deep); }
 .component-palette { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; padding: 1px; background: var(--line-soft); }
+.palette-group { grid-column: 1 / -1; margin: 0; padding: 11px 10px 5px; background: var(--surface); color: var(--muted); font: 600 9px/1 var(--font-data); letter-spacing: .08em; }
+.palette-group:first-child { padding-top: 8px; }
 .palette-item { --icon-line: currentColor; --icon-fill: var(--surface); --icon-accent: var(--surface-raised); display: grid; gap: 6px; justify-items: center; padding: 12px 8px; border: 0; background: var(--surface); color: var(--text); cursor: grab; touch-action: none; user-select: none; -webkit-user-drag: none; }
+.palette-item[data-wide] { grid-column: 1 / -1; }
 .palette-item > * { pointer-events: none; }
 .palette-item:hover { background: var(--surface-raised); color: var(--signal-deep); }
 .palette-item.dragging { opacity: .4; }

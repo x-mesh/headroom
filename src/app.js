@@ -53,10 +53,13 @@ function commitTopology(message, undo = null) {
 }
 
 // 받침에 따라 조사를 고른다. 한글이 아니면 받침 없는 쪽으로 읽는다.
-function withParticle(word, withBatchim, without) {
+// 종성 ㄹ 은 '으로'가 아니라 '로'를 쓴다. '이/가'에는 그 예외가 없다.
+const PARTICLES = { subject: ['이', '가'], instrumental: ['으로', '로'] };
+function withParticle(word, kind) {
+  const [withBatchim, without] = PARTICLES[kind];
   const last = String(word).codePointAt(String(word).length - 1);
-  const hangul = last >= 0xac00 && last <= 0xd7a3;
-  return `${word}${hangul && (last - 0xac00) % 28 !== 0 ? withBatchim : without}`;
+  const coda = last >= 0xac00 && last <= 0xd7a3 ? (last - 0xac00) % 28 : 0;
+  return `${word}${coda !== 0 && !(coda === 8 && kind === 'instrumental') ? withBatchim : without}`;
 }
 
 function resourceName(resource) {
@@ -69,7 +72,7 @@ function resourceName(resource) {
 }
 
 // bps·pps·cps 는 formatCompact 가 단위를 붙여 준다. 나머지는 뒤에 한 번만 붙인다.
-const AXIS_UNIT_SUFFIX = { sessions: ' 세션', tps: ' tps' };
+const AXIS_UNIT_SUFFIX = { sessions: ' 세션', tps: ' tps', tunnels: ' 터널' };
 
 // 캔버스 아래에 "지금 무엇이 막고 있는가"를 문장으로 적는다. 숫자는 위에 다 있지만
 // 어느 것을 봐야 하는지는 적어 주어야 읽힌다.
@@ -87,8 +90,8 @@ function renderBottleneck() {
     const direction = binding.bindingDirection ? `${binding.bindingDirection === 'forward' ? '정방향 ' : '역방향 '}` : '';
     const suffix = AXIS_UNIT_SUFFIX[catalog.unit] || '';
     const scale = `${formatCompact(axis.load, catalog.unit)} / ${formatCompact(axis.limit, catalog.unit)}${suffix}`;
-    parts.push(`${resourceName(binding)}의 ${withParticle(`${direction}${catalog.label}`, '이', '가')} ${axis.status === 'overloaded' ? '한계를 넘었습니다' : '가장 빠듯합니다'}.`);
-    parts.push(`${withParticle(scale, '으로', '로')} ${formatPercent(axis.utilization)}입니다.`);
+    parts.push(`${resourceName(binding)}의 ${withParticle(`${direction}${catalog.label}`, 'subject')} ${axis.status === 'overloaded' ? '한계를 넘었습니다' : '가장 빠듯합니다'}.`);
+    parts.push(`${withParticle(scale, 'instrumental')} ${formatPercent(axis.utilization)}입니다.`);
   }
   if (current.summary.droppedLoadBps > 0) parts.push(`병목을 지나지 못한 ${formatCompact(current.summary.droppedLoadBps, 'bps')}가 버려집니다.`);
   if (current.summary.refusedSessionsPerSec > 0) parts.push(`신규 세션 ${formatCompact(current.summary.refusedSessionsPerSec, 'cps')}가 거절됩니다. 이미 맺힌 연결은 계속 흐릅니다.`);
@@ -214,26 +217,46 @@ function nodeAccessibleName(device) {
 }
 
 const PALETTE = [
-  { kind: 'switch', label: '스위치', limits: { forwarding_bps: null, forwarding_pps: null } },
-  { kind: 'router', label: '라우터', limits: { forwarding_bps: null, forwarding_pps: null } },
-  { kind: 'hub', label: '허브', limits: { forwarding_bps: null, forwarding_pps: null } },
-  { kind: 'cloud', label: '외부망', limits: { forwarding_bps: null, forwarding_pps: null } },
-  { kind: 'firewall', label: '방화벽', limits: { forwarding_bps: null, forwarding_pps: null, new_sessions_per_sec: null, concurrent_sessions: null } },
-  { kind: 'lb', label: '로드밸런서', limits: { forwarding_bps: null, new_sessions_per_sec: null, concurrent_sessions: null, tls_full_handshakes_per_sec: null, tls_resumed_handshakes_per_sec: null } },
-  { kind: 'waf', label: 'WAF · 프록시', limits: { forwarding_bps: null, new_sessions_per_sec: null, concurrent_sessions: null, tls_full_handshakes_per_sec: null } },
-  { kind: 'server', label: '서버', limits: { nic_bps: null, nic_pps: null } },
-  { kind: 'web', label: '웹 서버', limits: { nic_bps: null, nic_pps: null, new_sessions_per_sec: null } },
-  { kind: 'vm', label: '가상 서버', limits: { nic_bps: null, nic_pps: null } },
-  { kind: 'storage', label: '스토리지', limits: { nic_bps: null, nic_pps: null } },
-  { kind: 'nas', label: 'NAS', limits: { nic_bps: null, nic_pps: null } },
+  { kind: 'switch', label: '스위치', group: '네트워크', limits: { forwarding_bps: null, forwarding_pps: null } },
+  { kind: 'router', label: '라우터', group: '네트워크', limits: { forwarding_bps: null, forwarding_pps: null } },
+  { kind: 'hub', label: '허브', group: '네트워크', limits: { forwarding_bps: null, forwarding_pps: null } },
+  { kind: 'wireless', label: '무선 AP', group: '네트워크', limits: { forwarding_bps: null, concurrent_sessions: null } },
+  { kind: 'modem', label: '회선 종단', group: '네트워크', limits: { forwarding_bps: null } },
+  { kind: 'firewall', label: '방화벽', group: '보안 · 트래픽', limits: { forwarding_bps: null, forwarding_pps: null, new_sessions_per_sec: null, concurrent_sessions: null } },
+  { kind: 'ips', label: 'IPS · IDS', group: '보안 · 트래픽', limits: { forwarding_bps: null, forwarding_pps: null, concurrent_sessions: null } },
+  { kind: 'waf', label: 'WAF · 프록시', group: '보안 · 트래픽', limits: { forwarding_bps: null, new_sessions_per_sec: null, concurrent_sessions: null, tls_full_handshakes_per_sec: null } },
+  { kind: 'lb', label: '로드밸런서', group: '보안 · 트래픽', limits: { forwarding_bps: null, new_sessions_per_sec: null, concurrent_sessions: null, tls_full_handshakes_per_sec: null, tls_resumed_handshakes_per_sec: null } },
+  { kind: 'vpn', label: 'IPsec VPN', group: '보안 · 트래픽', limits: { forwarding_bps: null, forwarding_pps: null, vpn_tunnels: null } },
+  { kind: 'sslvpn', label: 'SSL VPN', group: '보안 · 트래픽', limits: { forwarding_bps: null, concurrent_sessions: null, vpn_tunnels: null, tls_full_handshakes_per_sec: null } },
+  { kind: 'server', label: '서버', group: '서버 · 스토리지', limits: { nic_bps: null, nic_pps: null } },
+  { kind: 'web', label: '웹 서버', group: '서버 · 스토리지', limits: { nic_bps: null, nic_pps: null, new_sessions_per_sec: null } },
+  { kind: 'vm', label: '가상 서버', group: '서버 · 스토리지', limits: { nic_bps: null, nic_pps: null } },
+  { kind: 'db', label: 'DB 서버', group: '서버 · 스토리지', limits: { nic_bps: null, nic_pps: null, concurrent_sessions: null } },
+  { kind: 'mail', label: '메일 서버', group: '서버 · 스토리지', limits: { nic_bps: null, new_sessions_per_sec: null } },
+  { kind: 'mainframe', label: '메인프레임', group: '서버 · 스토리지', limits: { nic_bps: null, nic_pps: null } },
+  { kind: 'storage', label: '스토리지', group: '서버 · 스토리지', limits: { nic_bps: null, nic_pps: null } },
+  { kind: 'nas', label: 'NAS', group: '서버 · 스토리지', limits: { nic_bps: null, nic_pps: null } },
+  { kind: 'backup', label: '백업 서버', group: '서버 · 스토리지', limits: { nic_bps: null } },
+  { kind: 'cloud', label: '외부망', group: '외부 · 단말', limits: { forwarding_bps: null, forwarding_pps: null } },
+  { kind: 'client', label: '클라이언트', group: '외부 · 단말', limits: { nic_bps: null } },
 ];
 const PALETTE_DRAG_THRESHOLD = 4;
 let paletteDrag = null;
 
 function renderPalette() {
-  element('component-palette').innerHTML = PALETTE.map(({ kind, label }) => `<button type="button" class="palette-item" data-palette-kind="${kind}" aria-label="${escapeAttribute(label)} 추가">
-    <span class="palette-glyph"><svg aria-hidden="true" focusable="false"><use href="#${ICONS[kind].id}"></use></svg></span><span class="palette-label">${escapeText(label)}</span><span class="palette-kind">${kind.toUpperCase()}</span>
-  </button>`).join('');
+  const counts = PALETTE.reduce((map, item) => map.set(item.group, (map.get(item.group) || 0) + 1), new Map());
+  let group = null;
+  let index = 0;
+  element('component-palette').innerHTML = PALETTE.map((item) => {
+    const heading = item.group === group ? '' : `<h3 class="palette-group">${escapeText(item.group)}</h3>`;
+    index = item.group === group ? index + 1 : 0;
+    group = item.group;
+    // 2열 격자에서 홀수 그룹의 마지막 칸은 빈 자리로 남는다. 그 항목을 한 줄로 늘려 메운다.
+    const wide = counts.get(item.group) % 2 === 1 && index === counts.get(item.group) - 1 ? ' data-wide=""' : '';
+    return `${heading}<button type="button" class="palette-item"${wide} data-palette-kind="${item.kind}" aria-label="${escapeAttribute(item.label)} 추가">
+    <span class="palette-glyph"><svg aria-hidden="true" focusable="false"><use href="#${ICONS[item.kind].id}"></use></svg></span><span class="palette-label">${escapeText(item.label)}</span><span class="palette-kind">${item.kind.toUpperCase()}</span>
+  </button>`;
+  }).join('');
 }
 
 function setLeftPanel(name) {

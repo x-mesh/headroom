@@ -282,6 +282,44 @@ function disasterRecovery() {
   return topology;
 }
 
+function remoteAccess() {
+  const topology = createEmptyTopology('원격 접속 VPN');
+  topology.haGroups = [{ id: 'vpn-pair', name: 'SSL VPN gateways', members: ['sslvpn'], sessionSync: 'none', reestablishWindowSec: 60 }];
+  place(topology, [
+    ['remote', 'REMOTE', 'cloud', 'EDGE', 110, 290, { forwarding_bps: 10e9, forwarding_pps: 2e6 }],
+    ['fw', 'FW', 'firewall', 'EDGE', 300, 290, { forwarding_bps: 10e9, forwarding_pps: 2e6, new_sessions_per_sec: 40e3, concurrent_sessions: 800e3 }],
+    ['sslvpn', 'SSL VPN', 'sslvpn', 'SECURITY', 490, 290,
+      { forwarding_bps: 5e9, concurrent_sessions: 200e3, vpn_tunnels: 10e3, tls_full_handshakes_per_sec: 4e3 }],
+    ['ips', 'IPS', 'ips', 'SECURITY', 680, 290, { forwarding_bps: 8e9, forwarding_pps: 1.6e6, concurrent_sessions: 500e3 }],
+    ['sw', 'SW', 'switch', 'CORE', 870, 290, { forwarding_bps: 20e9, forwarding_pps: 4e6 }],
+    ['app', 'APP 01', 'server', 'RACK 01', 1050, 180, { nic_bps: 10e9, nic_pps: 2e6 }],
+    ['file', 'FILE', 'nas', 'RACK 01', 1050, 400, { nic_bps: 10e9, nic_pps: 2e6 }],
+  ]);
+  connect(topology, [['remote', 'fw', 10e9], ['fw', 'sslvpn', 10e9], ['sslvpn', 'ips', 10e9],
+    ['ips', 'sw', 10e9], ['sw', 'app', 10e9], ['sw', 'file', 10e9]]);
+  addDemand(topology, { id: 'workers', name: '원격 근무자', source: 'remote', target: 'app',
+    load: { forwarding_bps: 1.4e9, forwarding_pps: 320e3, new_sessions_per_sec: 9e3, concurrent_sessions: 110e3, vpn_tunnels: 9.2e3, tls_full_handshakes_per_sec: 2.4e3, nic_bps: 1.4e9, nic_pps: 320e3 } });
+  addDemand(topology, { id: 'files', name: '파일 접근', source: 'remote', target: 'file',
+    load: { forwarding_bps: 900e6, forwarding_pps: 180e3, new_sessions_per_sec: 2e3, concurrent_sessions: 24e3, nic_bps: 900e6, nic_pps: 180e3 } });
+  return topology;
+}
+
+function branchVpn() {
+  const topology = createEmptyTopology('지사 IPsec 연결');
+  place(topology, [
+    ['branch', 'BRANCH', 'cloud', 'REMOTE SITE', 110, 290, { forwarding_bps: 4e9, forwarding_pps: 900e3 }],
+    ['wan', 'WAN', 'modem', 'REMOTE SITE', 290, 290, { forwarding_bps: 4e9 }],
+    ['vpn', 'IPSEC GW', 'vpn', 'EDGE', 470, 290, { forwarding_bps: 2e9, forwarding_pps: 700e3, vpn_tunnels: 2e3 }],
+    ['fw', 'FW', 'firewall', 'EDGE', 660, 290, { forwarding_bps: 10e9, forwarding_pps: 2e6, new_sessions_per_sec: 30e3, concurrent_sessions: 600e3 }],
+    ['sw', 'SW', 'switch', 'CORE', 850, 290, { forwarding_bps: 20e9, forwarding_pps: 4e6 }],
+    ['erp', 'ERP', 'server', 'RACK 02', 1030, 290, { nic_bps: 10e9, nic_pps: 2e6 }],
+  ]);
+  connect(topology, [['branch', 'wan', 4e9], ['wan', 'vpn', 4e9], ['vpn', 'fw', 10e9], ['fw', 'sw', 10e9], ['sw', 'erp', 10e9]]);
+  addDemand(topology, { id: 'branch-traffic', name: '지사 업무 트래픽', source: 'branch', target: 'erp',
+    load: { forwarding_bps: 1.85e9, forwarding_pps: 420e3, new_sessions_per_sec: 6e3, concurrent_sessions: 140e3, vpn_tunnels: 1.2e3, nic_bps: 1.85e9, nic_pps: 420e3 } });
+  return topology;
+}
+
 export const templates = [
   {
     id: 'dual-fabric', name: '이중 팹릭 API 클러스터',
@@ -324,6 +362,20 @@ export const templates = [
     teaches: '대역폭이 아니라 WAF의 TLS 신규 핸드셰이크가 먼저 찹니다. 방화벽은 세션 동기화가 없어 장애 시 재수립 폭증이 계산됩니다.',
     tags: ['방화벽', 'WAF', 'TLS', '보안'],
     build: securityChain,
+  },
+  {
+    id: 'remote-access', name: '원격 접속 VPN',
+    summary: '원격 근무자가 SSL VPN 게이트웨이를 지나 내부 자원에 닿는 구성입니다.',
+    teaches: '대역폭과 세션은 절반도 안 찼는데 동시 VPN 터널이 먼저 한계에 닿습니다. VPN 장비는 바이트보다 터널 수로 규격이 정해집니다.',
+    tags: ['VPN', 'SSL', '원격 근무', '터널'],
+    build: remoteAccess,
+  },
+  {
+    id: 'branch-vpn', name: '지사 IPsec 연결',
+    summary: '지사를 WAN 회선과 IPsec 게이트웨이로 본사에 잇는 구성입니다.',
+    teaches: '암호화 처리량이 회선보다 먼저 찹니다. 회선을 늘려도 게이트웨이를 바꾸지 않으면 그대로입니다.',
+    tags: ['VPN', 'IPsec', '지사', '암호화'],
+    build: branchVpn,
   },
   {
     id: 'dmz', name: 'DMZ 이중 방화벽',
