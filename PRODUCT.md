@@ -18,7 +18,7 @@ Learners are a secondary audience. They use presets to understand why a design r
 
 ## Product Purpose
 
-Rack Mesh places physical infrastructure on a topology and applies traffic to it. It identifies the device and capacity axis that reaches its limit first. It recalculates overloads and disconnected demand after a device or link failure.
+Rack Mesh places physical infrastructure on a topology and applies traffic to it. It identifies the device and capacity axis that reaches its limit first. It recalculates overloads and disconnected demand after a device or link failure. It also turns each resource off in turn, so a design states whether one loss severs the service, overloads the survivors, or is absorbed.
 
 ## Positioning
 

@@ -318,6 +318,7 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Unknown:** Say when a delivery ratio is an upper bound because a limit is missing.
 - **Empty:** With no known limit, say so and point at where to enter one. Never leave the line blank.
 - **Naming:** Read a link by its endpoints, never by its id.
+- **Redundancy:** Close with what the design is, not with what the current scenario is. State how many single points it has and name one, or state that nothing severs it and what the worst loss costs.
 
 ### Design Template Picker
 
@@ -330,6 +331,8 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Tags:** Show the tags on the card. They teach the reader what the search accepts.
 - **Count:** State how many match, so an empty result reads as a result and not a broken list.
 - **Apply:** Load the template on click. Offer undo in the toast instead of asking for confirmation first.
+- **Grade:** Compute the redundancy grade from the fault sweep. Never write it by hand. A card must not claim redundancy the design does not have.
+- **Grade Search:** Put the grade text in the search haystack, so a reader can find every single-point design at once.
 
 ### Device Behavior Mode
 
@@ -355,6 +358,12 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Shape:** Use a 52px minimum height and 9px by 18px padding.
 - **State:** Show UP or DOWN text and update `aria-pressed`.
 - **Active:** Use a red inner square, red border, and red DOWN text.
+- **Coverage:** List every device and every link. Never filter by device class or by an id pattern.
+- **Forecast:** Put the sweep verdict on each row as a third line: the service severs, only a percentage gets delivered, or the survivors absorb the loss. The reader must know the result before the click.
+- **Bounded Forecast:** When an unknown limit makes "absorbs" an upper bound, say so on the row. Never let an unknown design read as spare capacity.
+- **Order:** Sort rows by how bad the loss is. Put a demand endpoint that severs its own traffic last, because that is not a redundancy problem.
+- **Grade Line:** Head the panel with the counts for severed, short, and spare resources.
+- **Color:** Let the words carry the verdict. Color is secondary.
 
 ### Canvas Zoom
 
@@ -390,6 +399,7 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **State Token:** Pair each state color with its token. Use a period for healthy, an exclamation mark for warning, a greater-than sign for overload, a question mark for unknown, and the letter x for invalid.
 - **Compact Load:** Drop the unit from the node value. The axis name carries the unit. Keep the unit in the inspector.
 - **Unknown Axis:** Print the measured load and an em dash. Never print zero percent for an unknown limit.
+- **Single Point:** Add a SPOF token to the meta line of a device whose loss severs the service. Do not add an axis row for it.
 - **Binding Axis:** Give the binding axis row full-strength label text. Keep the other axis labels muted.
 - **Name and Meta:** Show the device name in 11px data type. Show the class and the zone in 8px label type. Clip overflow.
 - **Selected:** Use a two-pixel state-color outline. Do not change the layout.
