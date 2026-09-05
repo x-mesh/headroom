@@ -180,6 +180,47 @@ async function verify(viewport, screenshot, interact = false) {
     page.once('dialog', (dialog) => dialog.accept());
     await page.locator('#project-file-input').setInputFiles({ name: 'project.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) });
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 2);
+
+    // 컴포넌트 팔레트: 탭 분리, 캔버스 드롭, 클릭 폴백
+    await page.locator('#tab-palette').click();
+    assert.equal(await page.locator('#tab-palette').getAttribute('aria-selected'), 'true');
+    assert.equal(await page.locator('#panel-failure').isHidden(), true, 'switching tabs must hide the failure panel');
+    assert.equal(await page.locator('#failure-count').isHidden(), true, 'the active-fault badge belongs to the failure tab');
+    assert.equal(await page.locator('.palette-item').count(), 6);
+    assert.ok(await page.evaluate(() => [...document.querySelectorAll('.palette-item use')]
+      .every((use) => document.querySelector(use.getAttribute('href')) && use.getBBox().width > 0)), 'every palette symbol must resolve');
+
+    const paletteItem = await page.locator('[data-palette-kind="firewall"]').boundingBox();
+    const canvasBox = await page.locator('#topology-canvas').boundingBox();
+    await page.mouse.move(paletteItem.x + paletteItem.width / 2, paletteItem.y + paletteItem.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(canvasBox.x + 240, canvasBox.y + 300, { steps: 10 });
+    assert.equal(await page.locator('.palette-ghost').count(), 1, 'dragging must show a ghost');
+    assert.ok(await page.locator('#topology-canvas').evaluate((node) => node.classList.contains('drop-target')), 'the canvas must mark itself as a drop target');
+    await page.mouse.up();
+    await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 3);
+    const dropped = await page.evaluate(() => {
+      const node = document.querySelector('.mesh-node.selected');
+      return { left: node.style.left, top: node.style.top, glyph: node.querySelector('use').getAttribute('href'),
+        axes: node.querySelectorAll('.node-axis').length, states: [...node.querySelectorAll('.node-axis')].map((row) => row.dataset.axisState) };
+    });
+    assert.equal(dropped.left, '240px');
+    assert.equal(dropped.top, '300px');
+    assert.equal(dropped.glyph, '#icon-firewall');
+    assert.equal(dropped.axes, 4, 'a firewall must start with the four axes its class uses');
+    assert.ok(dropped.states.every((state) => state === 'unknown'), 'a new device must keep its limits unknown');
+    assert.equal(await page.locator('.palette-ghost').count(), 0, 'the ghost must not outlive the drop');
+
+    await page.locator('[data-palette-kind="server"]').click();
+    await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 4);
+    const placed = await page.evaluate(() => {
+      const nodes = [...document.querySelectorAll('.mesh-node')].map((node) => ({ x: parseFloat(node.style.left), y: parseFloat(node.style.top) }));
+      const last = nodes.at(-1);
+      return nodes.slice(0, -1).every((other) => Math.abs(other.x - last.x) >= 140 || Math.abs(other.y - last.y) >= 150);
+    });
+    assert.ok(placed, 'click placement must find a free slot instead of stacking on an existing node');
+    await page.locator('#tab-failure').click();
+    assert.equal(await page.locator('#panel-palette').isHidden(), true);
   }
   await page.screenshot({ path: screenshot, fullPage: true });
   await page.close();

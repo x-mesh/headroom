@@ -296,6 +296,21 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Telemetry:** Add about ±1–2% synthetic variation to the presentation layer. Keep scenario values unchanged.
 - **Cadence:** Refresh visible motion every 820ms. Pause refresh work while the document is hidden.
 
+### Design Board Tabs
+
+- **Tabs:** Split the left board into a failure tab and a component tab. Keep the failure tab first and open by default.
+- **Shape:** Use a two-pixel underline on the open tab. Use no corner radius and no filled tab body.
+- **Badge:** Show the active-fault count only on the failure tab. Hide it on the component tab.
+- **Keyboard:** Move between tabs with the arrow keys, Home, and End. Keep only the open tab in the tab order.
+
+### Component Palette
+
+- **Grid:** Show one cell for each device class in a two-column grid. Separate cells with one-pixel lines, not gaps.
+- **Cell:** Stack the class symbol, a Korean name, and the class code. Use the grab cursor.
+- **Drag:** Drag a cell onto the canvas to place a device. Show a ghost symbol under the pointer and outline the canvas as a drop target.
+- **Click:** A click places the device in the first free grid slot. Keep this path working on touch.
+- **New Device:** Give the device the axes its class uses and leave every limit unknown. Select it so the inspector opens for the limits.
+
 ### Failure Switch
 
 - **Shape:** Use a 52px minimum height and 9px by 18px padding.

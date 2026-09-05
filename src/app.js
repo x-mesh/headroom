@@ -1,12 +1,12 @@
 import { axisCatalog, cloneTopology } from './data.js';
 import { calculateScenario, compareScenarios, createExport } from './engine.js';
-import { addDemand, addDevice, addLink, createEmptyTopology, moveDevice, removeDemand, removeDevice, removeLink, updateDemand, updateDevice, updateLink } from './editor.js';
+import { addDemand, addDevice, addLink, createEmptyTopology, moveDevice, normalizeId, removeDemand, removeDevice, removeLink, updateDemand, updateDevice, updateLink } from './editor.js';
 import { importDeviceDefinition } from './device-import.js';
 import { parseProject, serializeProject } from './project.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
 
 let topology = cloneTopology();
-const state = { scale: 1, selectedId: 'fw-a', disabledDevices: new Set(), disabledLinks: new Set(), editorMode: 'select', connectSource: null };
+const state = { scale: 1, selectedId: 'fw-a', disabledDevices: new Set(), disabledLinks: new Set(), editorMode: 'select', connectSource: null, leftPanel: 'failure' };
 let baseline = calculateScenario(topology);
 let current = baseline;
 let toastTimer;
@@ -114,6 +114,7 @@ const KIND_ALIAS = { 'load-balancer': 'lb', loadbalancer: 'lb', balancer: 'lb', 
 // 노드 폭 안에 들어가도록 단위를 떼고 5자 이내로 줄인다. 단위는 축 이름 열이 지시한다.
 function formatNodeValue(value) {
   if (value == null || !Number.isFinite(value)) return '\u2014';
+  if (value === 0) return '0';
   const [factor, suffix] = SI_STEPS.find(([step]) => Math.abs(value) >= step) || [1, ''];
   const scaled = value / factor;
   return `${scaled >= 100 ? Math.round(scaled) : scaled.toFixed(scaled >= 10 ? 1 : 2)}${suffix}`;
@@ -155,6 +156,75 @@ function nodeAccessibleName(device) {
   const axes = Object.values(device.axes);
   const alerts = axes.filter(({ status }) => status === 'overloaded' || status === 'warning').length;
   return `${head} \u00b7 ${stateLabel(device.primaryStatus)} \u00b7 ${bindingText} \u00b7 축 ${axes.length}개 중 주의 이상 ${alerts}개`;
+}
+
+const PALETTE = [
+  { kind: 'switch', label: '스위치', limits: { forwarding_bps: null, forwarding_pps: null } },
+  { kind: 'router', label: '라우터', limits: { forwarding_bps: null, forwarding_pps: null } },
+  { kind: 'firewall', label: '방화벽', limits: { forwarding_bps: null, forwarding_pps: null, new_sessions_per_sec: null, concurrent_sessions: null } },
+  { kind: 'lb', label: '로드밸런서', limits: { forwarding_bps: null, new_sessions_per_sec: null, concurrent_sessions: null } },
+  { kind: 'server', label: '서버', limits: { nic_bps: null, nic_pps: null } },
+  { kind: 'storage', label: '스토리지', limits: { nic_bps: null, nic_pps: null } },
+];
+const PALETTE_DRAG_THRESHOLD = 4;
+let paletteDrag = null;
+
+function renderPalette() {
+  element('component-palette').innerHTML = PALETTE.map(({ kind, label }) => `<button type="button" class="palette-item" data-palette-kind="${kind}" aria-label="${escapeAttribute(label)} 추가">
+    <span class="palette-glyph"><svg aria-hidden="true" focusable="false"><use href="#${ICONS[kind].id}"></use></svg></span><span class="palette-label">${escapeText(label)}</span><span class="palette-kind">${kind.toUpperCase()}</span>
+  </button>`).join('');
+}
+
+function setLeftPanel(name) {
+  state.leftPanel = name;
+  document.querySelectorAll('[data-panel-tab]').forEach((tab) => {
+    const selected = tab.dataset.panelTab === name;
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+    element(`panel-${tab.dataset.panelTab}`).hidden = !selected;
+  });
+  element('failure-count').hidden = name !== 'failure';
+}
+
+// 캔버스는 940x580 고정이고 확대가 없으므로 CSS 픽셀과 캔버스 좌표가 1:1 이다.
+function canvasPoint(event) {
+  const rect = element('topology-canvas').getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  return { x, y, inside: x >= 0 && y >= 0 && x <= rect.width && y <= rect.height };
+}
+
+function nextDeviceName(kind) {
+  const used = new Set(topology.devices.map(({ id }) => id));
+  for (let index = 1; index <= 999; index += 1) {
+    const name = `${kind.toUpperCase()} ${index}`;
+    if (!used.has(normalizeId(name))) return name;
+  }
+  return `${kind.toUpperCase()} ${Date.now()}`;
+}
+
+function createDeviceFromPalette(kind, position) {
+  const preset = PALETTE.find((item) => item.kind === kind);
+  if (!preset) return;
+  try {
+    const device = addDevice(topology, {
+      name: nextDeviceName(kind), kind, limits: preset.limits,
+      position: { x: Math.min(Math.max(position.x, 0), 940), y: Math.min(Math.max(position.y, 0), 580) },
+    });
+    state.selectedId = device.id;
+    closeEditorPanel();
+    commitTopology(`${device.name} 장비를 추가했습니다. 인스펙터에서 한계값을 입력하세요.`);
+  } catch (error) { showToast(error.message); }
+}
+
+function endPaletteDrag() {
+  if (!paletteDrag) return null;
+  const drag = paletteDrag;
+  paletteDrag = null;
+  drag.ghost?.remove();
+  drag.item.classList.remove('dragging');
+  element('topology-canvas').classList.remove('drop-target');
+  return drag;
 }
 
 function renderTopology() {
@@ -338,9 +408,16 @@ function openEditorPanel(title, html) {
 function closeEditorPanel() { element('editor-panel').hidden = true; element('editor-panel-content').innerHTML = ''; }
 function formError(form, message) { const target = form.querySelector('.editor-error'); if (target) target.textContent = message; }
 function deviceOptions(selected = '') { return topology.devices.map(({ id, name }) => `<option value="${id}" ${id === selected ? 'selected' : ''}>${escapeAttribute(name)} · ${id}</option>`).join(''); }
+// 팔레트 클릭은 놓을 자리를 사용자가 고르지 않으므로 비어 있는 슬롯을 찾아 준다.
+const deviceSlot = (index) => ({ x: 130 + (index % 4) * 220, y: 110 + (Math.floor(index / 4) % 3) * 165 });
 function nextDevicePosition() {
-  const index = topology.devices.length;
-  return { x: 130 + (index % 4) * 220, y: 110 + (Math.floor(index / 4) % 3) * 165 };
+  const taken = topology.devices.map(({ position }) => position);
+  const free = (spot) => !taken.some((position) => Math.abs(position.x - spot.x) < 140 && Math.abs(position.y - spot.y) < 150);
+  for (let index = 0; index < 12; index += 1) {
+    const spot = deviceSlot(index);
+    if (free(spot)) return spot;
+  }
+  return deviceSlot(topology.devices.length);
 }
 
 function openDeviceForm(template = null) {
@@ -549,9 +626,58 @@ element('project-file-input').addEventListener('change', async (event) => {
 element('device-file-input').addEventListener('change', async (event) => {
   try { const text = await readFile(event.target); if (!text) return; const template = importDeviceDefinition(text); openDeviceForm(template); const form = element('editor-panel-content').querySelector('form'); form._deviceTemplate = template; showToast(`${template.schema} 장비 정의를 읽었습니다.`); } catch (error) { showToast(`가져오기 실패: ${error.message}`); }
 });
+document.querySelector('[role="tablist"]').addEventListener('click', (event) => {
+  const tab = event.target.closest('[data-panel-tab]');
+  if (tab) setLeftPanel(tab.dataset.panelTab);
+});
+document.querySelector('[role="tablist"]').addEventListener('keydown', (event) => {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  const tabs = [...document.querySelectorAll('[data-panel-tab]')];
+  const current = tabs.findIndex((tab) => tab.dataset.panelTab === state.leftPanel);
+  const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? tabs.length - 1 : null;
+  const next = step === null ? tabs[event.key === 'Home' ? 0 : tabs.length - 1] : tabs[(current + step) % tabs.length];
+  event.preventDefault();
+  setLeftPanel(next.dataset.panelTab);
+  next.focus();
+});
+
+// 팔레트에서 캔버스로 끌어다 놓는다. 노드 드래그와 같은 pointer 방식이라 터치에서도 동작하고,
+// 임계값을 넘지 않은 입력은 클릭으로 보아 자동 배치 자리에 놓는다.
+element('component-palette').addEventListener('pointerdown', (event) => {
+  const item = event.target.closest('[data-palette-kind]');
+  if (!item || event.button !== 0) return;
+  item.setPointerCapture(event.pointerId);
+  paletteDrag = { kind: item.dataset.paletteKind, pointerId: event.pointerId, item, startX: event.clientX, startY: event.clientY, ghost: null };
+});
+element('component-palette').addEventListener('pointermove', (event) => {
+  if (!paletteDrag || event.pointerId !== paletteDrag.pointerId) return;
+  if (!paletteDrag.ghost) {
+    if (Math.hypot(event.clientX - paletteDrag.startX, event.clientY - paletteDrag.startY) <= PALETTE_DRAG_THRESHOLD) return;
+    paletteDrag.ghost = document.createElement('div');
+    paletteDrag.ghost.className = 'palette-ghost';
+    paletteDrag.ghost.innerHTML = `<svg aria-hidden="true" focusable="false"><use href="#${ICONS[paletteDrag.kind].id}"></use></svg>`;
+    document.body.append(paletteDrag.ghost);
+    paletteDrag.item.classList.add('dragging');
+  }
+  const point = canvasPoint(event);
+  paletteDrag.ghost.style.transform = `translate(${event.clientX}px, ${event.clientY}px) translate(-50%, -50%)`;
+  element('topology-canvas').classList.toggle('drop-target', point.inside);
+});
+element('component-palette').addEventListener('pointerup', (event) => {
+  if (!paletteDrag || event.pointerId !== paletteDrag.pointerId) return;
+  const point = canvasPoint(event);
+  const drag = endPaletteDrag();
+  if (!drag.ghost) { createDeviceFromPalette(drag.kind, nextDevicePosition()); return; }
+  if (!point.inside) { showToast('캔버스 안에 놓아야 장비가 생성됩니다.'); return; }
+  createDeviceFromPalette(drag.kind, point);
+});
+element('component-palette').addEventListener('pointercancel', endPaletteDrag);
+
 reducedMotion.addEventListener('change', startTelemetry);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) updateTelemetry(); });
 
 element('icon-sprite').innerHTML = ICON_SPRITE;
+renderPalette();
+setLeftPanel(state.leftPanel);
 render();
 startTelemetry();
