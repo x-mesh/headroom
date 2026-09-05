@@ -45,10 +45,10 @@
           <output id="scale-output" for="scale-input">1.00×</output>
         </label>
         <div class="scenario-legend" aria-label="용량 상태 범례">
-          <span data-state="healthy">정상</span>
-          <span data-state="warning">주의</span>
-          <span data-state="overloaded">초과</span>
-          <span data-state="unknown">미확인</span>
+          <span data-state="healthy"><i>.</i> 정상</span>
+          <span data-state="warning"><i>!</i> 주의</span>
+          <span data-state="overloaded"><i>&gt;</i> 초과</span>
+          <span data-state="unknown"><i>?</i> 미확인</span>
         </div>
       </section>
 
@@ -149,6 +149,7 @@
       </section>
     </main>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <div id="icon-sprite" aria-hidden="true"></div>
     <script type="module" src="./src/app.js"></script>
   </body>
 </html>

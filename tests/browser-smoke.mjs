@@ -33,6 +33,41 @@ async function verify(viewport, screenshot, interact = false) {
   assert.notEqual(liveBefore, liveAfter, 'synthetic telemetry must update the displayed value');
   const bodyOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   assert.ok(bodyOverflow <= 1, `body overflows horizontally by ${bodyOverflow}px`);
+
+  const symbols = await page.evaluate(() => {
+    const canvas = document.querySelector('#topology-canvas').getBoundingClientRect();
+    const svg = document.querySelector('#link-layer').getBoundingClientRect();
+    return [...document.querySelectorAll('.mesh-node')].map((node) => {
+      const use = node.querySelector('.node-glyph use');
+      const box = use?.getBBox();
+      const symbol = node.querySelector('.node-symbol').getBoundingClientRect();
+      return {
+        id: node.dataset.deviceId,
+        resolved: !!(use && document.querySelector(use.getAttribute('href'))),
+        painted: !!box && box.width * box.height > 0,
+        insideCanvas: node.getBoundingClientRect().bottom <= canvas.bottom + 1,
+        center: [symbol.left + symbol.width / 2 - svg.left, symbol.top + symbol.height / 2 - svg.top],
+      };
+    });
+  });
+  assert.equal(symbols.length, await page.locator('.mesh-node').count());
+  for (const symbol of symbols) {
+    assert.ok(symbol.resolved, `${symbol.id}: <use> href does not resolve to a symbol`);
+    assert.ok(symbol.painted, `${symbol.id}: symbol renders an empty box`);
+    assert.ok(symbol.insideCanvas, `${symbol.id}: node overflows the canvas bottom`);
+  }
+  const anchored = await page.evaluate(() => {
+    const line = document.querySelector('[data-link-id="edge-a-fw-a"] .link');
+    return [Number(line.getAttribute('x2')), Number(line.getAttribute('y2'))];
+  });
+  const target = symbols.find((symbol) => symbol.id === 'fw-a').center;
+  assert.ok(Math.abs(target[0] - anchored[0]) < 1.5 && Math.abs(target[1] - anchored[1]) < 1.5,
+    `link endpoint ${anchored} must land on the symbol center ${target.map((value) => Math.round(value))}`);
+  assert.equal(await page.locator('[data-device-id="fw-a"] .node-axis').count(), 4, 'firewall shows one row per configured axis');
+  assert.equal(await page.locator('[data-device-id="api-a"] .node-axis').count(), 2, 'server shows one row per configured axis');
+  const unknownAxis = await page.locator('[data-device-id="api-a"] .node-axis').last().innerText();
+  assert.match(unknownAxis, /—/, 'an unknown limit must read as an em dash');
+  assert.doesNotMatch(unknownAxis, /\d%/, 'an unknown limit must never read as a percentage');
   if (viewport.width <= 760) {
     assert.equal(await page.locator('.mobile-fault-tray').isVisible(), true);
     assert.match(await page.locator('.mobile-pan-cue').textContent(), /좌우로 탐색/);
@@ -46,6 +81,8 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
     assert.equal(await failure.getAttribute('aria-pressed'), 'true');
     assert.equal(await page.locator('#run-state').textContent(), 'CAPACITY EXCEEDED');
+    await page.waitForTimeout(900);
+    assert.match(await page.locator('[data-device-id="fw-a"]').innerText(), /OFFLINE[\s\S]*DOWN/, 'a disabled node must stay DOWN across telemetry ticks');
     assert.match(await page.locator('#comparison-grid').textContent(), /CHANGED/);
     await page.locator('[data-device-id="fw-b"]').click();
     assert.match(await page.locator('#inspector-content').textContent(), /신규 세션/);

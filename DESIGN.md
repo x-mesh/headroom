@@ -130,7 +130,7 @@ components:
 
 **Creative North Star: "The Daylight Telemetry Console"**
 
-Rack Mesh uses a pale sage work surface and a deep green control frame. White topology nodes stay distinct on the tinted canvas.
+Rack Mesh uses a pale sage work surface and a deep green control frame. Device symbols and their axis labels sit directly on the tinted canvas.
 
 The interface treats telemetry motion as a presentation layer. Deterministic scenario results remain the source for state, comparison, and export.
 
@@ -138,7 +138,7 @@ A compact toolbar and inline task panel extend the console into a topology edito
 
 **Key Characteristics:**
 
-- Light sage ground, quiet surfaces, and white raised topology nodes.
+- Light sage ground, quiet surfaces, and borderless device symbols on a tinted canvas.
 - Deep green top and mobile control bars.
 - Square controls, thin rules, and compact data typography.
 - Four summary sparklines and status-aware topology motion.
@@ -165,7 +165,7 @@ The palette separates a calm daylight workspace from a deep operational frame. S
 
 - **Sage Ground** (#e7f0ea): Use for the page ground.
 - **Quiet Surface** (#f7faf7): Use for control panels, summary cells, and inspectors.
-- **White Raised Surface** (#ffffff): Use for topology nodes and small markers.
+- **White Raised Surface** (#ffffff): Use for small markers and symbol highlights.
 - **Sage Surface Tint** (#dceae2): Use for topology and comparison regions.
 - **Deep Forest Panel** (#16332d): Use for the top bar, toast, and mobile failure tray.
 - **Canvas Sage** (#eaf2ed): Use for the fixed topology canvas and its label masks.
@@ -247,7 +247,7 @@ The system uses square geometry. Buttons, badges, nodes, panels, meters, switche
 
 Use one-pixel borders for structure. Use dashed borders for disabled nodes and a 7 7 dash pattern for disabled links.
 
-Use five-pixel status rails on nodes. Use seven-pixel axis meters for clear load comparison.
+Use three-pixel status rails under node symbols. Use seven-pixel axis meters for clear load comparison.
 
 ## Components
 
@@ -304,12 +304,22 @@ Use five-pixel status rails on nodes. Use seven-pixel axis meters for clear load
 
 ### Topology Node and Link
 
-- **Node:** Use a white 126px container with a five-pixel state rail.
-- **Node State:** Show the binding axis and utilization as text in the state color.
-- **Selected:** Change the border and add a state-color glow.
-- **Drag:** Use the grab cursor, stronger saturation, and a larger state glow while a node moves.
+- **Node:** Stack a 112 by 44 device symbol over a label block in a 126px column. Use no card border, no card surface, and no shadow.
+- **Anchor:** Keep the device position at the center of the symbol box. Offset the node by half the symbol height, never by half the node height.
+- **Symbol:** Draw one inline sprite symbol for each device. Map the device class to a symbol and fall back to the rack symbol. Paint the symbol with text color, never with state color. Shape carries the class. Color and token carry the state.
+- **Symbol Fill:** Fill the symbol with the canvas color. Links stop at the shape edge.
+- **State Rail:** Put a three-pixel state rail under the symbol. Hatch it for overload. Dash it for unknown and offline.
+- **Axis Rows:** Show one monospace row for each configured axis: state token, four-character axis name, compact load, and utilization. Show at most four rows and count the rest in the meta line.
+- **State Token:** Pair each state color with its token. Use a period for healthy, an exclamation mark for warning, a greater-than sign for overload, a question mark for unknown, and the letter x for invalid.
+- **Compact Load:** Drop the unit from the node value. The axis name carries the unit. Keep the unit in the inspector.
+- **Unknown Axis:** Print the measured load and an em dash. Never print zero percent for an unknown limit.
+- **Binding Axis:** Give the binding axis row full-strength label text. Keep the other axis labels muted.
+- **Name and Meta:** Show the device name in 11px data type. Show the class and the zone in 8px label type. Clip overflow.
+- **Selected:** Use a two-pixel state-color outline. Do not change the layout.
+- **Drag:** Use the grab cursor and stronger saturation while a node moves.
 - **Connect:** Enter a two-node mode. Outline the source and prompt for the target before link creation.
-- **Disabled Node:** Reduce opacity, use a dashed border, and show OFFLINE and DOWN.
+- **Disabled Node:** Reduce opacity, mute the symbol, dash the rail, and show OFFLINE and DOWN.
+- **Accessible Name:** Give the node one label that starts with the device name and states class, zone, state, and binding axis. Keep synthetic telemetry out of that label.
 - **Active Link:** Use a solid semantic stroke and one to three SVG packet dots.
 - **Packet Speed:** Reduce duration as utilization rises. Use 3.4s as the base and 1.25s as the minimum.
 - **Disabled Link:** Use a red dashed stroke, hide packet dots, and show DOWN.
@@ -354,7 +364,7 @@ Use five-pixel status rails on nodes. Use seven-pixel axis meters for clear load
 ### Do:
 
 - **Do** keep the light sage workspace and deep green control frame.
-- **Do** use white raised cards for topology nodes.
+- **Do** draw topology nodes as a device symbol over a label stack.
 - **Do** label all synthetic telemetry as synthetic.
 - **Do** keep presentation variation separate from deterministic scenario results.
 - **Do** pair each status color with text, shape, or a line pattern.

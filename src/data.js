@@ -1,10 +1,10 @@
 export const axisCatalog = {
-  forwarding_bps: { label: '처리량', shortLabel: 'BPS', unit: 'bps' },
-  forwarding_pps: { label: '패킷 처리량', shortLabel: 'PPS', unit: 'pps' },
-  new_sessions_per_sec: { label: '신규 세션', shortLabel: 'CPS', unit: 'cps' },
-  concurrent_sessions: { label: '동시 세션', shortLabel: 'SESS', unit: 'sessions' },
-  nic_bps: { label: 'NIC 처리량', shortLabel: 'NIC', unit: 'bps' },
-  nic_pps: { label: 'NIC 패킷', shortLabel: 'NIC PPS', unit: 'pps' },
+  forwarding_bps: { label: '처리량', shortLabel: 'BPS', unit: 'bps', nodeLabel: 'BPS' },
+  forwarding_pps: { label: '패킷 처리량', shortLabel: 'PPS', unit: 'pps', nodeLabel: 'PPS' },
+  new_sessions_per_sec: { label: '신규 세션', shortLabel: 'CPS', unit: 'cps', nodeLabel: 'CPS' },
+  concurrent_sessions: { label: '동시 세션', shortLabel: 'SESS', unit: 'sessions', nodeLabel: 'SESS' },
+  nic_bps: { label: 'NIC 처리량', shortLabel: 'NIC', unit: 'bps', nodeLabel: 'NIC' },
+  nic_pps: { label: 'NIC 패킷', shortLabel: 'NIC PPS', unit: 'pps', nodeLabel: 'NPPS' },
 };
 
 const source = {
@@ -28,9 +28,9 @@ export const demoTopology = {
   warningThreshold: 0.8,
   devices: [
     device('edge-a', 'EDGE A', 'router', 'EDGE', 110, 115, { forwarding_bps: 10e9, forwarding_pps: 2.4e6 }),
-    device('edge-b', 'EDGE B', 'router', 'EDGE', 110, 465, { forwarding_bps: 10e9, forwarding_pps: 2.4e6 }),
+    device('edge-b', 'EDGE B', 'router', 'EDGE', 110, 430, { forwarding_bps: 10e9, forwarding_pps: 2.4e6 }),
     device('fw-a', 'FW A', 'firewall', 'SECURITY', 300, 115, { forwarding_bps: 10e9, forwarding_pps: 1.5e6, new_sessions_per_sec: 42e3, concurrent_sessions: 700e3 }),
-    device('fw-b', 'FW B', 'firewall', 'SECURITY', 300, 465, { forwarding_bps: 10e9, forwarding_pps: 1.5e6, new_sessions_per_sec: 42e3, concurrent_sessions: 700e3 }),
+    device('fw-b', 'FW B', 'firewall', 'SECURITY', 300, 430, { forwarding_bps: 10e9, forwarding_pps: 1.5e6, new_sessions_per_sec: 42e3, concurrent_sessions: 700e3 }),
     device('spine-a', 'SPINE A', 'switch', 'FABRIC', 490, 175, { forwarding_bps: 20e9, forwarding_pps: 3.2e6 }),
     device('spine-b', 'SPINE B', 'switch', 'FABRIC', 490, 405, { forwarding_bps: 20e9, forwarding_pps: 3.2e6 }),
     device('leaf-a', 'LEAF A', 'switch', 'RACK 04', 675, 175, { forwarding_bps: 12e9, forwarding_pps: 2.4e6 }),

@@ -3,6 +3,7 @@ import { calculateScenario, compareScenarios, createExport } from './engine.js';
 import { addDemand, addDevice, addLink, createEmptyTopology, moveDevice, removeDemand, removeDevice, removeLink, updateDemand, updateDevice, updateLink } from './editor.js';
 import { importDeviceDefinition } from './device-import.js';
 import { parseProject, serializeProject } from './project.js';
+import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
 
 let topology = cloneTopology();
 const state = { scale: 1, selectedId: 'fw-a', disabledDevices: new Set(), disabledLinks: new Set(), editorMode: 'select', connectSource: null };
@@ -104,6 +105,58 @@ function renderFailures() {
   });
 }
 
+const STATE_TOKEN = { healthy: '.', warning: '!', overloaded: '>', unknown: '?', invalid: 'x', disabled: 'x' };
+const NODE_AXIS_LIMIT = 4;
+const AXIS_RANK = { overloaded: 0, invalid: 1, warning: 2, healthy: 3, unknown: 4 };
+const SI_STEPS = [[1e12, 'T'], [1e9, 'G'], [1e6, 'M'], [1e3, 'K']];
+const KIND_ALIAS = { 'load-balancer': 'lb', loadbalancer: 'lb', balancer: 'lb', host: 'server', compute: 'server', vm: 'server', nas: 'storage', san: 'storage' };
+
+// 노드 폭 안에 들어가도록 단위를 떼고 5자 이내로 줄인다. 단위는 축 이름 열이 지시한다.
+function formatNodeValue(value) {
+  if (value == null || !Number.isFinite(value)) return '\u2014';
+  const [factor, suffix] = SI_STEPS.find(([step]) => Math.abs(value) >= step) || [1, ''];
+  const scaled = value / factor;
+  return `${scaled >= 100 ? Math.round(scaled) : scaled.toFixed(scaled >= 10 ? 1 : 2)}${suffix}`;
+}
+
+// kind는 임의 문자열이라 목록 밖 값이 들어온다. 화이트리스트를 통과한 값만 href에 넣는다.
+function symbolId(kind) {
+  const key = String(kind ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const exact = KIND_ALIAS[key] || key;
+  if (ICONS[exact]) return ICONS[exact].id;
+  return ICONS[ICON_KINDS.find((name) => key.includes(name)) || ICON_FALLBACK].id;
+}
+
+const nodeAxisLabel = (key) => axisCatalog[key]?.nodeLabel || key.replace(/[^a-z0-9]/gi, '').slice(0, 4).toUpperCase();
+
+// 선별은 심각도 순으로, 렌더는 limits 삽입 순서로. 문제 축은 반드시 노출하면서 행 순서는 흔들리지 않는다.
+function nodeAxes(device) {
+  const entries = Object.entries(device.axes);
+  if (entries.length <= NODE_AXIS_LIMIT) return { rows: entries, hidden: 0 };
+  const keep = new Set([...entries]
+    .sort((a, b) => (AXIS_RANK[a[1].status] ?? 9) - (AXIS_RANK[b[1].status] ?? 9) || (b[1].utilization ?? -1) - (a[1].utilization ?? -1) || a[0].localeCompare(b[0]))
+    .slice(0, NODE_AXIS_LIMIT).map(([key]) => key));
+  return { rows: entries.filter(([key]) => keep.has(key)), hidden: entries.length - keep.size };
+}
+
+function nodeAxisRow(device, key, axis) {
+  // unknown·invalid 축에는 data-live-util을 붙이지 않는다. 텔레메트리가 미확인 값을 숫자로 덮어쓰면 안 된다.
+  const live = axis.utilization == null ? '' : ` data-live-util="${axis.utilization}" data-live-seed="${escapeAttribute(device.id)}:${key}"`;
+  const percent = axis.status === 'unknown' ? '\u2014' : axis.status === 'invalid' ? 'ERR' : formatPercent(axis.utilization);
+  return `<span class="node-axis" data-axis-state="${axis.status}"${key === device.bindingAxis ? ' data-binding=""' : ''}><i>${STATE_TOKEN[axis.status] || '?'}</i><b>${escapeText(nodeAxisLabel(key))}</b><em>${formatNodeValue(axis.load)}</em><s${live}>${percent}</s></span>`;
+}
+
+// 축 토큰은 시각 축약이라 읽히면 소음이다. 접근 가능한 이름은 요약만 담고 흔들리는 값을 넣지 않는다.
+function nodeAccessibleName(device) {
+  const head = `${device.name} \u00b7 ${device.kind} \u00b7 ${device.zone}`;
+  if (!device.active) return `${head} \u00b7 비활성`;
+  const binding = device.axes[device.bindingAxis];
+  const bindingText = binding ? `제한 축 ${axisCatalog[device.bindingAxis]?.label || device.bindingAxis} ${formatPercent(binding.utilization)}` : '한계 미확인';
+  const axes = Object.values(device.axes);
+  const alerts = axes.filter(({ status }) => status === 'overloaded' || status === 'warning').length;
+  return `${head} \u00b7 ${stateLabel(device.primaryStatus)} \u00b7 ${bindingText} \u00b7 축 ${axes.length}개 중 주의 이상 ${alerts}개`;
+}
+
 function renderTopology() {
   const devices = new Map(current.devices.map((item) => [item.id, item]));
   element('link-layer').innerHTML = current.links.map((link) => {
@@ -128,9 +181,14 @@ function renderTopology() {
   }).join('');
 
   element('node-layer').innerHTML = current.devices.map((device) => {
-    const axis = device.axes[device.bindingAxis];
-    return `<button type="button" class="mesh-node ${device.active ? device.primaryStatus : 'disabled'} ${state.selectedId === device.id ? 'selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x}px;top:${device.position.y}px" aria-pressed="${state.selectedId === device.id}">
-      <span class="node-rail"></span><span class="node-body"><span class="node-kind">${escapeText(device.kind.toUpperCase())}</span><span class="node-name">${escapeText(device.name)}</span><span class="node-utilization"><span>${device.active ? escapeText(axisCatalog[device.bindingAxis]?.shortLabel || 'UNKNOWN') : 'OFFLINE'}</span><span data-live-util="${device.active ? axis?.utilization ?? '' : ''}" data-live-seed="${escapeAttribute(device.id)}">${device.active ? formatPercent(axis?.utilization) : 'DOWN'}</span></span><span class="node-zone">${escapeText(device.zone)}</span></span>
+    const status = device.active ? device.primaryStatus : 'disabled';
+    const { rows, hidden } = nodeAxes(device);
+    const meta = [device.kind.toUpperCase(), device.zone, hidden ? `+${hidden}` : ''].filter(Boolean).join(' \u00b7 ');
+    const axes = device.active
+      ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis)).join('')
+      : '<span class="node-axis" data-axis-state="disabled"><i>x</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>';
+    return `<button type="button" class="mesh-node ${status} ${state.selectedId === device.id ? 'selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x}px;top:${device.position.y}px" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
+      <span class="node-symbol"><svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolId(device.kind)}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span><span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
     </button>`;
   }).join('');
 }
@@ -150,7 +208,7 @@ function renderInspector() {
   element('inspector-content').innerHTML = `
     <div class="resource-identity"><strong>${escapeText(resource.name || resource.id.toUpperCase())}</strong><span>${escapeText(isDevice ? `${resource.kind.toUpperCase()} · ${resource.zone}` : `${resource.source} → ${resource.target}`)}</span></div>
     <div class="binding-callout"><span>BINDING AXIS</span><strong><span>${axisCatalog[resource.bindingAxis]?.label || resource.bindingAxis || '알려진 축 없음'}</span><span data-live-util="${binding?.utilization ?? ''}" data-live-seed="${resource.id}-binding">${binding ? formatPercent(binding.utilization) : '—'}</span></strong></div>
-    <div class="axis-list">${Object.entries(resource.axes).map(([axis, result]) => renderAxis(axis, result)).join('')}</div>
+    <div class="axis-list">${Object.entries(resource.axes).map(([axis, result]) => renderAxis(axis, result, resource.id)).join('')}</div>
     <div class="source-note"><strong>${escapeText(source.label)}</strong><br>${escapeText(source.condition)}<br>실제 설계에는 동일 조건의 측정값을 사용하세요.</div>
     ${isDevice ? renderDeviceEditor(resource) : renderLinkEditor(resource)}`;
 }
@@ -176,13 +234,13 @@ function renderLinkEditor(resource) {
 function escapeAttribute(value) { return String(value ?? '').replaceAll('&', '&amp;').replaceAll('\"', '&quot;').replaceAll('<', '&lt;'); }
 function escapeText(value) { return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
 
-function renderAxis(axis, result) {
+function renderAxis(axis, result, resourceId) {
   const catalog = axisCatalog[axis] || { label: axis, shortLabel: axis, unit: '' };
   const width = result.utilization == null ? 0 : Math.max(2, result.utilization * 100);
   return `<div class="axis-row ${result.status}">
-    <div class="axis-title"><span>${catalog.label}</span><span>${stateLabel(result.status)} · <b data-live-util="${result.utilization ?? ''}" data-live-seed="${axis}">${formatPercent(result.utilization)}</b></span></div>
+    <div class="axis-title"><span>${catalog.label}</span><span>${stateLabel(result.status)} · <b data-live-util="${result.utilization ?? ''}" data-live-seed="${resourceId}:${axis}">${formatPercent(result.utilization)}</b></span></div>
     <div class="axis-meter" aria-label="${catalog.label} ${formatPercent(result.utilization)}"><span style="--axis-width:${width}%"></span></div>
-    <div class="axis-values"><span data-live-load="${result.load}" data-live-unit="${catalog.unit}" data-live-seed="${axis}-load">${formatCompact(result.load, catalog.unit)} load</span><span>${formatCompact(result.limit, catalog.unit)} limit</span></div>
+    <div class="axis-values"><span data-live-load="${result.load}" data-live-unit="${catalog.unit}" data-live-seed="${resourceId}:${axis}-load">${formatCompact(result.load, catalog.unit)} load</span><span>${formatCompact(result.limit, catalog.unit)} limit</span></div>
   </div>`;
 }
 
@@ -222,11 +280,13 @@ function updateTelemetry() {
   telemetryTick += 1;
   const motionScale = reducedMotion.matches ? 0 : 1;
   document.querySelectorAll('[data-live-util]').forEach((target) => {
+    if (target.dataset.liveUtil === '') return;
     const base = Number(target.dataset.liveUtil);
     if (!Number.isFinite(base)) return;
     target.textContent = formatPercent(Math.max(0, base * (1 + telemetryWave(target.dataset.liveSeed || 'util') * motionScale)));
   });
   document.querySelectorAll('[data-live-load]').forEach((target) => {
+    if (target.dataset.liveLoad === '') return;
     const base = Number(target.dataset.liveLoad);
     if (!Number.isFinite(base)) return;
     const value = Math.max(0, base * (1 + telemetryWave(target.dataset.liveSeed || 'load', 0.012) * motionScale));
@@ -280,7 +340,7 @@ function formError(form, message) { const target = form.querySelector('.editor-e
 function deviceOptions(selected = '') { return topology.devices.map(({ id, name }) => `<option value="${id}" ${id === selected ? 'selected' : ''}>${escapeAttribute(name)} · ${id}</option>`).join(''); }
 function nextDevicePosition() {
   const index = topology.devices.length;
-  return { x: 130 + (index % 4) * 220, y: 110 + (Math.floor(index / 4) % 3) * 180 };
+  return { x: 130 + (index % 4) * 220, y: 110 + (Math.floor(index / 4) % 3) * 165 };
 }
 
 function openDeviceForm(template = null) {
@@ -492,5 +552,6 @@ element('device-file-input').addEventListener('change', async (event) => {
 reducedMotion.addEventListener('change', startTelemetry);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) updateTelemetry(); });
 
+element('icon-sprite').innerHTML = ICON_SPRITE;
 render();
 startTelemetry();
