@@ -1,0 +1,15 @@
+{
+  "name": "rack-mesh",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/serve.mjs",
+    "test": "node --test",
+    "check": "node --check src/data.js && node --check src/engine.js && node --check src/app.js && node --check scripts/serve.mjs && node --check tests/smoke.mjs",
+    "smoke": "node tests/smoke.mjs && node tests/browser-smoke.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

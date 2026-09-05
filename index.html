@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#e7f0ea">
+    <title>Rack Mesh · Infrastructure constraint simulator</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace">워크스페이스로 건너뛰기</a>
+    <main class="app-shell" id="workspace">
+      <header class="topbar">
+        <div class="brand" aria-label="Rack Mesh">
+          <svg class="brand-mark" viewBox="0 0 36 36" aria-hidden="true">
+            <path d="M6 8h24M6 18h24M6 28h24M10 5v26M26 5v26"/>
+            <circle cx="10" cy="8" r="2"/><circle cx="26" cy="18" r="2"/><circle cx="10" cy="28" r="2"/>
+          </svg>
+          <div>
+            <strong>RACK MESH</strong>
+            <span>INFRASTRUCTURE CONSTRAINT SIMULATOR</span>
+          </div>
+        </div>
+        <div class="run-state" aria-live="polite">
+          <span class="status-lamp" id="run-lamp"></span>
+          <span id="run-state">BASELINE STABLE</span>
+        </div>
+        <div class="top-actions">
+          <button class="text-button" id="reset-button" type="button">장애 초기화</button>
+          <button class="solid-button" id="export-button" type="button">결과 내보내기</button>
+        </div>
+      </header>
+
+      <section class="control-deck" aria-label="시나리오 제어">
+        <div class="scenario-copy">
+          <span class="section-code">SCENARIO / 01</span>
+          <div>
+            <strong>Dual fabric API cluster</strong>
+            <span>합성 데모 · 단일 데이터센터 · 정상 상태 계산</span>
+          </div>
+        </div>
+        <label class="scale-control" for="scale-input">
+          <span>워크로드 배율</span>
+          <input id="scale-input" type="range" min="50" max="180" value="100" step="5">
+          <output id="scale-output" for="scale-input">1.00×</output>
+        </label>
+        <div class="scenario-legend" aria-label="용량 상태 범례">
+          <span data-state="healthy">정상</span>
+          <span data-state="warning">주의</span>
+          <span data-state="overloaded">초과</span>
+          <span data-state="unknown">미확인</span>
+        </div>
+      </section>
+
+      <section class="editor-deck" aria-label="토폴로지 편집 도구">
+        <div class="editor-tools" role="toolbar" aria-label="설계 편집">
+          <button type="button" data-editor-action="new">새 설계</button>
+          <button type="button" data-editor-action="device">장비 추가</button>
+          <button type="button" data-editor-action="connect" aria-pressed="false">링크 연결</button>
+          <button type="button" data-editor-action="demand">Traffic demand</button>
+          <span class="tool-separator" aria-hidden="true"></span>
+          <button type="button" data-editor-action="save">프로젝트 저장</button>
+          <button type="button" data-editor-action="open">프로젝트 열기</button>
+          <button type="button" data-editor-action="import-device">장비 JSON 가져오기</button>
+        </div>
+        <div class="editor-mode" id="editor-mode" aria-live="polite"><span></span>SELECT MODE</div>
+        <input class="visually-hidden" id="project-file-input" type="file" accept="application/json,.json">
+        <input class="visually-hidden" id="device-file-input" type="file" accept="application/json,.json">
+      </section>
+
+      <section class="editor-panel" id="editor-panel" aria-labelledby="editor-panel-heading" hidden>
+        <header><div><span class="section-code">EDITOR TASK</span><h2 id="editor-panel-heading">설계 편집</h2></div><button type="button" id="editor-close" aria-label="편집 패널 닫기">닫기</button></header>
+        <div class="editor-panel-content" id="editor-panel-content"></div>
+      </section>
+
+      <section class="summary-strip" aria-label="시나리오 요약">
+        <div class="summary-metric summary-metric-primary"><span>최소 headroom</span><strong id="summary-headroom">···</strong><small id="summary-binding">계산 중</small><svg class="metric-sparkline" data-series="headroom" viewBox="0 0 120 28" aria-label="최근 headroom 계측 추이"><path></path><circle r="2.5"></circle></svg></div>
+        <div class="summary-metric"><span>과부하 자원</span><strong id="summary-overloaded">···</strong><small id="summary-warning">계산 중</small><svg class="metric-sparkline" data-series="utilization" viewBox="0 0 120 28" aria-label="최근 최대 사용률 추이"><path></path><circle r="2.5"></circle></svg></div>
+        <div class="summary-metric"><span>전달 실패</span><strong id="summary-unreachable">···</strong><small id="summary-unreachable-load">계산 중</small><svg class="metric-sparkline" data-series="delivery" viewBox="0 0 120 28" aria-label="최근 전달률 추이"><path></path><circle r="2.5"></circle></svg></div>
+        <div class="summary-metric"><span>활성 장애</span><strong id="summary-faults">···</strong><small id="summary-delta">기준선 계산 중</small><svg class="metric-sparkline" data-series="traffic" viewBox="0 0 120 28" aria-label="최근 전체 트래픽 추이"><path></path><circle r="2.5"></circle></svg></div>
+      </section>
+
+      <section class="mobile-fault-tray" aria-label="빠른 장애 주입">
+        <div><span class="section-code">QUICK FAILURE</span><strong>토폴로지를 보며 장애 주입</strong></div>
+        <button type="button" data-quick-failure="fw-a" aria-pressed="false">FW A <span>UP</span></button>
+        <button type="button" data-quick-failure="fw-b" aria-pressed="false">FW B <span>UP</span></button>
+        <a href="#failure-heading">전체 목록</a>
+      </section>
+
+      <section class="main-grid">
+        <aside class="failure-panel" aria-labelledby="failure-heading">
+          <header class="panel-heading">
+            <div>
+              <span class="section-code">FAILURE BOARD</span>
+              <h2 id="failure-heading">장애 주입</h2>
+            </div>
+            <span class="count-badge" id="failure-count">0 ACTIVE</span>
+          </header>
+          <p class="panel-note">장비나 링크를 끄면 활성 경로로 부하를 다시 분배합니다.</p>
+          <div class="failure-list" id="failure-list"></div>
+        </aside>
+
+        <section class="topology-panel" aria-labelledby="topology-heading">
+          <header class="panel-heading topology-heading">
+            <div>
+              <span class="section-code">LIVE TOPOLOGY</span>
+              <h1 id="topology-heading">어느 축이 먼저 한계에 닿는가</h1>
+            </div>
+            <div class="topology-live-status"><span><i></i> LIVE · SYNTHETIC TELEMETRY</span><div class="path-readout" id="path-readout">2 DEMANDS · 4 ACTIVE PATHS</div></div>
+          </header>
+          <div class="topology-scroll">
+            <div class="mobile-pan-cue" aria-hidden="true"><span>←</span> 좌우로 탐색 <span>→</span></div>
+            <div class="topology-canvas" id="topology-canvas">
+              <div class="zone-label zone-edge">EDGE</div>
+              <div class="zone-label zone-security">SECURITY</div>
+              <div class="zone-label zone-fabric">FABRIC</div>
+              <div class="zone-label zone-rack">COMPUTE RACKS</div>
+              <svg class="link-layer" id="link-layer" viewBox="0 0 940 580" role="img" aria-label="장비 연결 링크"></svg>
+              <div class="node-layer" id="node-layer"></div>
+            </div>
+          </div>
+          <footer class="canvas-footer">
+            <span>노드를 드래그해 이동하고, 선택해 축별 한계와 편집 항목을 확인하세요.</span>
+            <span id="calculation-note">DETERMINISTIC · ECMP EQUAL SPLIT</span>
+          </footer>
+        </section>
+
+        <aside class="inspector-panel" aria-labelledby="inspector-heading">
+          <header class="panel-heading inspector-heading">
+            <div>
+              <span class="section-code">AXIS INSPECTOR</span>
+              <h2 id="inspector-heading">장비 검사</h2>
+            </div>
+            <span class="resource-state" id="resource-state">계산 중</span>
+          </header>
+          <div id="inspector-content" class="inspector-content"></div>
+        </aside>
+      </section>
+
+      <section class="comparison-panel" aria-labelledby="comparison-heading">
+        <header>
+          <div>
+            <span class="section-code">BASELINE COMPARISON</span>
+            <h2 id="comparison-heading">설계 변화</h2>
+          </div>
+          <p>기준선은 최초 활성 상태에 고정됩니다.</p>
+        </header>
+        <div class="comparison-grid" id="comparison-grid"></div>
+      </section>
+    </main>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
