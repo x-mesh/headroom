@@ -162,6 +162,7 @@ button { color: inherit; }
 .topology-scroll.drop-target { outline: 2px dashed var(--signal-deep); outline-offset: -2px; }
 .failure-list { display: grid; }
 .failure-group h3 { margin: 0; padding: 16px 18px 8px; color: var(--muted); font: 600 9px/1 var(--font-data); letter-spacing: .12em; }
+.failure-empty { margin: 0; padding: 4px 18px 14px; color: var(--muted); font: 500 11px/1.4 var(--font-ui); }
 .failure-switch { width: 100%; min-height: 52px; padding: 9px 18px; display: grid; grid-template-columns: 20px 1fr auto; align-items: center; gap: 10px; border: 0; border-top: 1px solid var(--line-soft); background: transparent; text-align: left; cursor: pointer; }
 .failure-switch:hover { background: var(--surface-raised); }
 .failure-switch .switch-glyph { width: 15px; height: 15px; border: 1px solid var(--muted); position: relative; }

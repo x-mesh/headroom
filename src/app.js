@@ -134,21 +134,22 @@ function renderSummary() {
 }
 
 function renderFailures() {
+  // 예전에는 kind 와 링크 id 패턴으로 걸러 데모 이외의 설계에서는 끌 대상이 거의 없었다.
   const groups = [
-    { title: '장비', items: topology.devices.filter(({ kind }) => ['firewall', 'switch'].includes(kind)), set: state.disabledDevices, type: 'device' },
-    { title: '링크', items: topology.links.filter(({ id }) => id.includes('spine-') && id.includes('-leaf-')), set: state.disabledLinks, type: 'link' },
+    { title: '장비', items: topology.devices, set: state.disabledDevices, type: 'device' },
+    { title: '링크', items: topology.links, set: state.disabledLinks, type: 'link' },
   ];
   element('failure-count').textContent = `${state.disabledDevices.size + state.disabledLinks.size} ACTIVE`;
   element('failure-list').innerHTML = groups.map((group) => `
     <section class="failure-group">
       <h3>${group.title}</h3>
-      ${group.items.map((item) => {
+      ${group.items.length ? group.items.map((item) => {
         const active = group.set.has(item.id);
-        const label = item.name || item.id.replaceAll('-', ' → ').toUpperCase();
+        const detail = group.type === 'device' ? item.zone : formatCompact(item.capacity?.forwarding_bps, 'bps');
         return `<button class="failure-switch ${active ? 'active' : ''}" type="button" data-failure-type="${group.type}" data-failure-id="${escapeAttribute(item.id)}" aria-pressed="${active}">
-          <span class="switch-glyph" aria-hidden="true"></span><span><strong>${escapeText(label)}</strong><small>${escapeText(group.type === 'device' ? item.zone : 'ECMP MEMBER')}</small></span><span class="switch-state">${active ? 'DOWN' : 'UP'}</span>
+          <span class="switch-glyph" aria-hidden="true"></span><span><strong>${escapeText(resourceName(item))}</strong><small>${escapeText(detail)}</small></span><span class="switch-state">${active ? 'DOWN' : 'UP'}</span>
         </button>`;
-      }).join('')}
+      }).join('') : '<p class="failure-empty">아직 없습니다.</p>'}
     </section>`).join('');
   document.querySelectorAll('[data-quick-failure]').forEach((button) => {
     const active = state.disabledDevices.has(button.dataset.quickFailure);
