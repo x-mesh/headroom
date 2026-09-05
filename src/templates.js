@@ -15,7 +15,6 @@ function connect(topology, pairs) {
 
 function balancedFarm(mode) {
   const topology = createEmptyTopology(mode === 'dsr' ? 'DSR 로드밸런싱' : '인라인 로드밸런싱');
-  topology.haGroups = [{ id: 'lb-pair', name: 'Load balancers', members: ['lb'], sessionSync: 'stateful', reestablishWindowSec: 30 }];
   place(topology, [
     ['internet', 'INTERNET', 'cloud', 'EDGE', 110, 290, { forwarding_bps: 40e9, forwarding_pps: 8e6 }],
     ['edge', 'EDGE', 'router', 'EDGE', 300, 290, { forwarding_bps: 20e9, forwarding_pps: 4e6 }],
@@ -36,7 +35,6 @@ function balancedFarm(mode) {
 
 function securityChain() {
   const topology = createEmptyTopology('인라인 보안 체인');
-  topology.haGroups = [{ id: 'fw-pair', name: 'Perimeter firewalls', members: ['fw'], sessionSync: 'none', reestablishWindowSec: 30 }];
   place(topology, [
     ['internet', 'INTERNET', 'cloud', 'EDGE', 105, 290, { forwarding_bps: 40e9, forwarding_pps: 8e6 }],
     ['edge', 'EDGE', 'router', 'EDGE', 265, 290, { forwarding_bps: 20e9, forwarding_pps: 4e6 }],
@@ -101,7 +99,6 @@ function spineLeaf() {
 
 function dmzTiers() {
   const topology = createEmptyTopology('DMZ 이중 방화벽');
-  topology.haGroups = [{ id: 'inner-pair', name: 'Inner firewalls', members: ['fw-in'], sessionSync: 'none', reestablishWindowSec: 30 }];
   place(topology, [
     ['internet', 'INTERNET', 'cloud', 'EDGE', 110, 290, { forwarding_bps: 40e9, forwarding_pps: 8e6 }],
     ['fw-out', 'FW OUT', 'firewall', 'DMZ', 290, 290, { forwarding_bps: 20e9, forwarding_pps: 3e6, new_sessions_per_sec: 60e3, concurrent_sessions: 1.2e6 }],
@@ -284,7 +281,6 @@ function disasterRecovery() {
 
 function remoteAccess() {
   const topology = createEmptyTopology('원격 접속 VPN');
-  topology.haGroups = [{ id: 'vpn-pair', name: 'SSL VPN gateways', members: ['sslvpn'], sessionSync: 'none', reestablishWindowSec: 60 }];
   place(topology, [
     ['remote', 'REMOTE', 'cloud', 'EDGE', 110, 290, { forwarding_bps: 10e9, forwarding_pps: 2e6 }],
     ['fw', 'FW', 'firewall', 'EDGE', 300, 290, { forwarding_bps: 10e9, forwarding_pps: 2e6, new_sessions_per_sec: 40e3, concurrent_sessions: 800e3 }],

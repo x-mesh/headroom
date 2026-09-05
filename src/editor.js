@@ -1,6 +1,8 @@
 import { behaviorCatalog } from './data.js';
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+// 장비가 스스로 선언하는 세션 동기화. topology.haGroups 의 sessionSync('stateful' | 'none')는
+// HA 쌍의 정책이라 어휘가 다르고, 폭증 계산에 쓰이는 쪽은 그룹이다.
 const SESSION_SYNC = new Set(['synced', 'none', 'unknown']);
 
 // 카탈로그를 통과한 조합만 남긴다. 모드를 갖지 않는 클래스에는 behavior 를 붙이지 않는다.
