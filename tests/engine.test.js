@@ -325,13 +325,17 @@ test('each template puts a different axis at the limit', () => {
   }));
   assert.deepEqual(bindings, {
     'dual-fabric': ['leaf-b-api-b', 'forwarding_bps'],
-    'dsr-farm': ['lb', 'forwarding_bps'],
+    'inline-lb': ['lb', 'forwarding_bps'],
+    // 같은 토폴로지인데 모드만 다르다. 그래서 제한 축이 다르다.
+    'dsr-farm': ['lb', 'tls_resumed_handshakes_per_sec'],
+    'three-tier': ['db', 'nic_bps'],
+    'spine-leaf': ['leaf-a', 'forwarding_pps'],
     'security-chain': ['waf', 'tls_full_handshakes_per_sec'],
   });
 });
 
 test('switching the demo balancer to DSR moves its limit off throughput', () => {
-  const topology = buildTemplate('dsr-farm');
+  const topology = buildTemplate('inline-lb');
   const inline = calculateScenario(topology).devices.find(({ id }) => id === 'lb');
   topology.devices.find(({ id }) => id === 'lb').behavior.mode = 'dsr';
   const dsr = calculateScenario(topology).devices.find(({ id }) => id === 'lb');

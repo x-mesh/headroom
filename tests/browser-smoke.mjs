@@ -94,16 +94,21 @@ async function verify(viewport, screenshot, interact = false) {
 
     // 새 설계는 템플릿 목록을 연다. 각 템플릿은 서로 다른 축이 먼저 차는 구성이다.
     await page.locator('[data-editor-action="new"]').click();
-    assert.ok(await page.locator('.template-item').count() >= 3, 'the picker must offer architectures, not just a blank sheet');
+    assert.ok(await page.locator('.template-item').count() >= 6, 'the picker must offer architectures, not just a blank sheet');
     page.once('dialog', (dialog) => dialog.accept());
-    await page.locator('[data-template="dsr-farm"]').click();
+    await page.locator('[data-template="inline-lb"]').click();
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 5);
-    const balancer = await page.evaluate(() => {
-      const node = document.querySelector('[data-device-id="lb"]');
-      return { glyph: node.querySelector('use').getAttribute('href'), meta: node.querySelector('.node-meta').textContent };
-    });
-    assert.equal(balancer.glyph, '#icon-lb');
-    assert.match(balancer.meta, /LB/);
+    await page.locator('[data-device-id="lb"]').click();
+    assert.equal(await page.locator('.behavior-choice input:checked').inputValue(), 'inline');
+    // 바꾸기 전에 결과가 보여야 한다. 토글하고 기억해서 비교하게 만들지 않는다.
+    const preview = await page.locator('.behavior-preview').textContent();
+    assert.match(preview, /처리량 94% → 9%/);
+    assert.match(preview, /제한 축: 처리량 →/);
+
+    await page.locator('.behavior-choice input[value="dsr"]').check();
+    await page.waitForFunction(() => document.querySelector('#summary-binding').textContent.includes('TLS'));
+    assert.match(await page.locator('[data-device-id="lb"] .node-meta').textContent(), /LB/);
+    assert.equal(await page.locator('.behavior-choice input:checked').inputValue(), 'dsr');
 
     await page.locator('[data-editor-action="new"]').click();
     page.once('dialog', (dialog) => dialog.accept());

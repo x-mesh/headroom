@@ -303,6 +303,22 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Badge:** Show the active-fault count only on the failure tab. Hide it on the component tab.
 - **Keyboard:** Move between tabs with the arrow keys, Home, and End. Keep only the open tab in the tab order.
 
+### Design Template Picker
+
+- **Entry:** Make the new-design action open a template list, not a blank canvas.
+- **Card:** Stack the name, one line on what the architecture is, and one line on which axis it teaches.
+- **Coverage:** Keep templates that fill different axes first. A set that all bottleneck on bandwidth teaches nothing.
+- **Pairs:** When two templates differ only by a mode, say so in both cards so the reader opens them together.
+- **Blank:** Keep an empty design in the same list. It is a choice, not a fallback.
+
+### Device Behavior Mode
+
+- **Placement:** Put the mode block between the axis list and the edit form, only for classes that have modes.
+- **Control:** Use a segmented radio group, never a select. Both choices must read without opening anything.
+- **Preview:** Show what the other mode would do before the user commits: each axis from and to, and whether the binding axis moves.
+- **No Change:** When a mode does not alter byte load, say that in words instead of showing an empty preview.
+- **Scope:** State that a device mode does not change link load, so a DSR balancer is not read as relieving the wire.
+
 ### Component Palette
 
 - **Grid:** Show one cell for each device class in a two-column grid. Separate cells with one-pixel lines, not gaps.

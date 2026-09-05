@@ -1,4 +1,4 @@
-import { axisCatalog, cloneTopology } from './data.js';
+import { axisCatalog, behaviorCatalog, cloneTopology } from './data.js';
 import { calculateScenario, compareScenarios, createExport } from './engine.js';
 import { addDemand, addDevice, addLink, moveDevice, normalizeId, removeDemand, removeDevice, removeLink, updateDemand, updateDevice, updateLink } from './editor.js';
 import { importDeviceDefinition } from './device-import.js';
@@ -373,8 +373,47 @@ function renderInspector() {
     <div class="resource-identity"><strong>${escapeText(resource.name || resource.id.toUpperCase())}</strong><span>${escapeText(isDevice ? `${resource.kind.toUpperCase()} · ${resource.zone}` : `${resource.source} → ${resource.target}`)}</span></div>
     <div class="binding-callout"><span>BINDING AXIS</span><strong><span>${axisCatalog[resource.bindingAxis]?.label || resource.bindingAxis || '알려진 축 없음'}</span><span data-live-util="${binding?.utilization ?? ''}" data-live-seed="${resource.id}-binding">${binding ? formatPercent(binding.utilization) : '—'}</span></strong></div>
     <div class="axis-list">${Object.entries(resource.axes).map(([axis, result]) => renderAxis(axis, result, resource.id)).join('')}</div>
+    ${isDevice ? renderBehavior(resource) : ''}
     <div class="source-note"><strong>${escapeText(source.label)}</strong><br>${escapeText(source.condition)}<br>실제 설계에는 동일 조건의 측정값을 사용하세요.</div>
     ${isDevice ? renderDeviceEditor(resource) : renderLinkEditor(resource)}`;
+}
+
+function scenarioOptions() {
+  return { scale: state.scale, disabledDevices: [...state.disabledDevices], disabledLinks: [...state.disabledLinks] };
+}
+
+function behaviorPreview(resource, mode) {
+  const probe = structuredClone(topology);
+  const device = probe.devices.find(({ id }) => id === resource.id);
+  if (!device) return '';
+  device.behavior = { ...device.behavior, mode };
+  const after = calculateScenario(probe, scenarioOptions()).devices.find(({ id }) => id === resource.id);
+  const rows = Object.keys(resource.axes)
+    .filter((axis) => resource.axes[axis].utilization != null && after.axes[axis].utilization != null)
+    .map((axis) => `<b>${escapeText(axisCatalog[axis]?.label || axis)} ${formatPercent(resource.axes[axis].utilization)} → ${formatPercent(after.axes[axis].utilization)}</b>`)
+    .join('');
+  if (!rows) return '';
+  const moved = resource.bindingAxis !== after.bindingAxis
+    ? `<s>제한 축: ${escapeText(axisCatalog[resource.bindingAxis]?.label || resource.bindingAxis)} → ${escapeText(axisCatalog[after.bindingAxis]?.label || after.bindingAxis)}</s>`
+    : '<s>제한 축은 그대로입니다.</s>';
+  return `<div class="behavior-preview"><span>${escapeText(behaviorCatalog[resource.kind].options[mode].label)}로 바꾸면</span>${rows}${moved}
+    <small>링크 부하는 그대로입니다. 장비만 우회합니다.</small></div>`;
+}
+
+function renderBehavior(resource) {
+  const catalog = behaviorCatalog[resource.kind];
+  if (!catalog) return '';
+  const current = resource.behavior?.mode ?? catalog.default;
+  const other = Object.keys(catalog.options).find((mode) => mode !== current);
+  return `<div class="behavior-block">
+    <span class="behavior-code">${escapeText(catalog.label)}</span>
+    <div class="behavior-choice" role="radiogroup" aria-label="${escapeAttribute(catalog.label)}">
+      ${Object.entries(catalog.options).map(([mode, meta]) => `<label><input type="radio" name="behavior-mode" value="${escapeAttribute(mode)}"${mode === current ? ' checked' : ''}><span>${escapeText(meta.token)}</span></label>`).join('')}
+    </div>
+    <p class="behavior-note">${escapeText(catalog.options[current].note)}</p>
+    ${catalog.affectsLoad && other ? behaviorPreview(resource, other)
+      : '<p class="behavior-note">이 모드는 지나는 바이트를 바꾸지 않습니다. 세션 소유와 장애 도메인만 달라집니다.</p>'}
+  </div>`;
 }
 
 function renderDeviceEditor(resource) {
@@ -708,6 +747,13 @@ element('editor-panel-content').addEventListener('click', (event) => {
   const demand = topology.demands.find(({ id }) => id === button.dataset.deleteDemand);
   if (!window.confirm(`${demand?.name || button.dataset.deleteDemand} demand와 해당 부하 정의를 삭제합니다. 계속하시겠습니까?`)) return;
   try { removeDemand(topology, button.dataset.deleteDemand); commitTopology('Traffic demand를 삭제했습니다.'); openDemandManager(); } catch (error) { showToast(error.message); }
+});
+element('inspector-content').addEventListener('change', (event) => {
+  if (event.target.name !== 'behavior-mode') return;
+  try {
+    const device = updateDevice(topology, state.selectedId, { behavior: { ...deviceById(state.selectedId)?.behavior, mode: event.target.value } });
+    commitTopology(`${device.name}을 ${behaviorCatalog[device.kind].options[event.target.value].label}로 바꿨습니다.`);
+  } catch (error) { showToast(error.message); }
 });
 element('inspector-content').addEventListener('submit', (event) => {
   event.preventDefault(); const form = event.target; const data = new FormData(form);
