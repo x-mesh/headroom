@@ -107,6 +107,14 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForTimeout(1800);
     assert.equal(await page.locator('[data-link-id="spine-a-leaf-a"] .link-label').textContent(), 'DOWN',
       'a disabled link must stay DOWN across telemetry ticks, not drift to 0%');
+    // 끈 것은 fw-a 하나인데 거기 붙은 링크도 트래픽이 흐를 수 없다.
+    assert.equal(await page.locator('[data-link-id="edge-a-fw-a"] .link').getAttribute('class'), 'link disabled',
+      'a link hanging off a dead device must not draw as an idle healthy line');
+    assert.equal(await page.locator('[data-link-id="edge-a-fw-a"] .link-label').textContent(), 'DOWN');
+    assert.match(await page.locator('[data-link-id="edge-a-fw-a"] .link-hit').getAttribute('aria-label'), /끊김/);
+    const cross = await page.locator('[data-device-id="fw-a"] .node-symbol')
+      .evaluate((node) => getComputedStyle(node, '::before').width);
+    assert.equal(cross, '38px', 'a dead device must carry a cross over its symbol, not colour alone');
     await page.locator('[data-failure-type="link"][data-failure-id="spine-a-leaf-a"]').click();
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
     assert.match(await page.locator('#comparison-grid').textContent(), /CHANGED/);

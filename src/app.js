@@ -449,14 +449,17 @@ function endPaletteDrag() {
 function renderTopology() {
   applyViewport();
   const devices = new Map(current.devices.map((item) => [item.id, item]));
+  // 끊긴 demand 가 무장애였다면 지났을 링크. 살아 있지만 이 트래픽은 지나지 못한다.
+  const severedPathLinks = new Set(current.demands.flatMap(({ severedPaths }) => (severedPaths || []).flatMap(({ links }) => links)));
   element('link-layer').innerHTML = current.links.map((link) => {
     const source = devices.get(link.source).position;
     const target = devices.get(link.target).position;
-    const status = link.active ? link.primaryStatus : 'disabled';
+    const onSeveredPath = !link.severed && severedPathLinks.has(link.id);
+    const status = link.severed ? 'disabled' : onSeveredPath ? 'on-severed-path' : link.primaryStatus;
     const middleX = (source.x + target.x) / 2;
     const middleY = (source.y + target.y) / 2 - 7;
     const utilization = link.axes.forwarding_bps?.utilization;
-    const packetCount = link.active && utilization > 0 ? Math.min(3, Math.max(1, Math.ceil(utilization * 3))) : 0;
+    const packetCount = !link.severed && !onSeveredPath && utilization > 0 ? Math.min(3, Math.max(1, Math.ceil(utilization * 3))) : 0;
     const packetDuration = Math.max(1.25, 3.4 - Math.min(utilization || 0, 1.5) * 1.25);
     const packetDots = Array.from({ length: packetCount }, (_, index) => `<circle class="packet-dot ${status}" r="3">
       <animate attributeName="cx" values="${source.x};${target.x}" dur="${packetDuration.toFixed(2)}s" begin="-${(packetDuration * index / packetCount).toFixed(2)}s" repeatCount="indefinite"></animate>
@@ -464,9 +467,9 @@ function renderTopology() {
     </circle>`).join('');
     return `<g class="link-group" data-link-id="${escapeAttribute(link.id)}">
       <line class="link ${status}" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}"></line>
-      <line class="link-hit" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}" tabindex="0" role="button" aria-label="${escapeAttribute(link.id)} 링크 검사"></line>
+      <line class="link-hit" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}" tabindex="0" role="button" aria-label="${escapeAttribute(`${resourceName(link)} 링크 검사${link.severed ? ' · 끊김' : onSeveredPath ? ' · 경로 단절' : ''}`)}"></line>
       ${packetDots}
-      <text class="link-label"${link.active ? ` data-live-util="${utilization ?? ''}" data-live-seed="${link.id}"` : ''} x="${middleX}" y="${middleY}" text-anchor="middle">${link.active ? formatPercent(utilization) : 'DOWN'}</text>
+      <text class="link-label"${link.severed ? '' : ` data-live-util="${utilization ?? ''}" data-live-seed="${link.id}"`} x="${middleX}" y="${middleY}" text-anchor="middle">${link.severed ? 'DOWN' : formatPercent(utilization)}</text>
     </g>`;
   }).join('');
 
@@ -474,8 +477,9 @@ function renderTopology() {
     const status = device.active ? device.primaryStatus : 'disabled';
     const { rows, hidden } = nodeAxes(device);
     const verdict = sweep.resources.find(({ id }) => id === device.id);
-    const spof = verdict?.verdict === 'severs' && !verdict.endpoint;
-    const meta = [device.kind.toUpperCase(), behaviorToken(device), device.zone, spof ? 'SPOF' : '', hidden ? `+${hidden}` : ''].filter(Boolean).join(' \u00b7 ');
+    // 이미 죽은 장비에 "이게 죽으면 끊긴다"와 숨긴 축 개수를 붙이는 것은 소음이다.
+    const spof = device.active && verdict?.verdict === 'severs' && !verdict.endpoint;
+    const meta = [device.kind.toUpperCase(), behaviorToken(device), device.zone, spof ? 'SPOF' : '', device.active && hidden ? `+${hidden}` : ''].filter(Boolean).join(' \u00b7 ');
     const axes = device.active
       ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis)).join('')
       : '<span class="node-axis" data-axis-state="disabled"><i>x</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>';

@@ -292,6 +292,7 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 
 - **Structure:** Present four equal summary cells. Keep 28 recent samples in each SVG sparkline.
 - **Series:** Show headroom, maximum utilization, delivery, and total traffic.
+- **Legend:** Name every state the canvas can paint, disabled included. A state the canvas draws but the legend omits is unreadable.
 - **Color:** Use cyan, amber, red, and deep signal green in that order.
 - **Telemetry:** Add about ±1–2% synthetic variation to the presentation layer. Keep scenario values unchanged.
 - **Cadence:** Refresh visible motion every 820ms. Pause refresh work while the document is hidden.
@@ -396,7 +397,7 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Symbol Fill:** Fill the symbol with the canvas color. Links stop at the shape edge.
 - **State Rail:** Put a three-pixel state rail under the symbol. Hatch it for overload. Dash it for unknown and offline.
 - **Axis Rows:** Show one monospace row for each configured axis: state token, four-character axis name, compact load, and utilization. Show at most four rows and count the rest in the meta line.
-- **State Token:** Pair each state color with its token. Use a period for healthy, an exclamation mark for warning, a greater-than sign for overload, a question mark for unknown, and the letter x for invalid.
+- **State Token:** Pair each state color with its token. Use a period for healthy, an exclamation mark for warning, a greater-than sign for overload, a question mark for unknown, and the letter x for invalid and for disabled. The axis name and value separate those two: an invalid axis keeps its own name and reads ERR, a disabled node reads OFFLINE and DOWN.
 - **Compact Load:** Drop the unit from the node value. The axis name carries the unit. Keep the unit in the inspector.
 - **Unknown Axis:** Print the measured load and an em dash. Never print zero percent for an unknown limit.
 - **Single Point:** Add a SPOF token to the meta line of a device whose loss severs the service. Do not add an axis row for it.
@@ -405,13 +406,16 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Selected:** Use a two-pixel state-color outline. Do not change the layout.
 - **Drag:** Use the grab cursor and stronger saturation while a node moves.
 - **Connect:** Enter a two-node mode. Outline the source and prompt for the target before link creation.
-- **Disabled Node:** Reduce opacity, mute the symbol, dash the rail, and show OFFLINE and DOWN.
+- **Disabled Node:** Dash the rail and show OFFLINE and DOWN. Draw a cross over the symbol and fade the symbol behind it. Keep the label block readable — on a dead device the state text must read, not the icon.
+- **Disabled Meta:** Drop the SPOF token and the hidden-axis count from a dead device. Neither says anything once the device is off.
 - **Accessible Name:** Give the node one label that starts with the device name and states class, zone, state, and binding axis. Keep synthetic telemetry out of that label.
 - **Active Link:** Use a solid semantic stroke and one to three SVG packet dots.
 - **Packet Speed:** Reduce duration as utilization rises. Use 3.4s as the base and 1.25s as the minimum.
 - **Unknown Link:** Use a slate stroke with a 5 4 dash pattern. A link with no known capacity must never read as healthy.
 - **Invalid Link:** Use a red stroke with a tight 2 3 dash pattern. Keep it distinct from the 7 7 pattern that marks a disabled link.
-- **Disabled Link:** Use a red dashed stroke, hide packet dots, and show DOWN.
+- **Disabled Link:** Use a red dashed stroke, hide packet dots, and show DOWN. Treat a link whose endpoint device is off the same way — traffic cannot cross it either.
+- **Severed Path:** When a demand has no route left, draw the links it used to take with a fine red dotted stroke at low opacity. The break must read from end to end, not stop at the dead device.
+- **Dead Label:** Give a severed link no live telemetry hook. Its utilization is a true zero, and a live hook turns DOWN into 0% one tick later.
 
 ### Axis Meter
 
