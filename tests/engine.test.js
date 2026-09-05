@@ -78,8 +78,8 @@ test('holds the healthy demo calculation', () => {
   assert.deepEqual(snapshot(calculateScenario(cloneTopology())), {
     links: {
       'edge-a-fw-a': 0.36, 'edge-b-fw-b': 0.36, 'fw-a-spine-a': 0.36, 'fw-b-spine-b': 0.36,
-      'spine-a-leaf-a': 0.61, 'spine-b-leaf-a': 0.25, 'spine-a-leaf-b': 0.25, 'spine-b-leaf-b': 0.61,
-      'leaf-a-api-a': 0.86, 'leaf-b-api-b': 0.86,
+      'spine-a-leaf-a': 0.36, 'spine-b-leaf-a': 0.25, 'spine-a-leaf-b': 0.25, 'spine-b-leaf-b': 0.61,
+      'leaf-a-api-a': 0.5, 'leaf-b-api-b': 0.86,
     },
     devices: {
       'edge-a': ['forwarding_bps', 0.64, 'healthy'], 'edge-b': ['forwarding_bps', 0.64, 'healthy'],
@@ -88,8 +88,8 @@ test('holds the healthy demo calculation', () => {
       'leaf-a': ['forwarding_bps', 0.2833, 'healthy'], 'leaf-b': ['forwarding_bps', 0.2833, 'healthy'],
       'api-a': ['nic_bps', 0.2833, 'unknown'], 'api-b': ['nic_bps', 0.2833, 'unknown'],
     },
-    binding: ['leaf-a-api-a', 'forwarding_bps', 0.14],
-    counts: [0, 4, 0],
+    binding: ['leaf-b-api-b', 'forwarding_bps', 0.14],
+    counts: [0, 3, 0],
     delivery: [['public-api', 'delivered', 1, 2], ['east-west', 'delivered', 1, 2]],
   });
 });
@@ -116,4 +116,52 @@ test('holds the demo calculation with the primary firewall down', () => {
   // 오늘의 거짓말을 명시적으로 고정한다. leaf-b-api-b 가 122% 인데 전부 전달됐다고 보고한다.
   assert.equal(scenario.links.find(({ id }) => id === 'leaf-b-api-b').axes.forwarding_bps.status, 'overloaded');
   assert.equal(scenario.demands.every(({ deliveredRatio }) => deliveredRatio === 1), true);
+});
+
+test('splits a link that carries traffic both ways', () => {
+  const scenario = calculateScenario(cloneTopology());
+  const shared = scenario.links.find(({ id }) => id === 'leaf-a-api-a');
+  const oneWay = scenario.links.find(({ id }) => id === 'leaf-b-api-b');
+  // 두 링크는 합산으로 보면 똑같이 86% 다. api-a 는 east-west 의 출발지, api-b 는 도착지라서
+  // 실제로는 전혀 다른 링크다.
+  assert.equal(round4(shared.directions.forward.axes.forwarding_bps.utilization), 0.36);
+  assert.equal(round4(shared.directions.reverse.axes.forwarding_bps.utilization), 0.5);
+  assert.equal(shared.bindingDirection, 'reverse');
+  assert.equal(round4(shared.axes.forwarding_bps.utilization), 0.5);
+  assert.equal(round4(oneWay.directions.forward.axes.forwarding_bps.utilization), 0.86);
+  assert.equal(round4(oneWay.directions.reverse.axes.forwarding_bps.utilization), 0);
+  assert.equal(oneWay.bindingDirection, 'forward');
+});
+
+test('judges an asymmetric link on the direction that is short', () => {
+  const topology = cloneTopology();
+  // 상행이 좁은 회선. 합산 모델에서는 드러나지 않는 상태다.
+  topology.links.find(({ id }) => id === 'leaf-a-api-a').capacityByDirection = { reverse: { forwarding_bps: 4e9 } };
+  const link = calculateScenario(topology).links.find(({ id }) => id === 'leaf-a-api-a');
+  assert.equal(link.directions.forward.axes.forwarding_bps.status, 'healthy');
+  assert.equal(link.directions.reverse.axes.forwarding_bps.status, 'overloaded');
+  assert.equal(round4(link.directions.reverse.axes.forwarding_bps.utilization), 1.25);
+  assert.equal(link.primaryStatus, 'overloaded');
+  assert.equal(link.bindingDirection, 'reverse');
+});
+
+test('reports a discontiguous path as invalid without refusing the file', () => {
+  const topology = cloneTopology();
+  // 링크 순서를 뒤집어 hop 이 어긋나게 만든다.
+  const path = topology.demands[0].paths[0];
+  path.links = [path.links[1], path.links[0], ...path.links.slice(2)];
+  const demand = calculateScenario(topology).demands.find(({ id }) => id === 'public-api');
+  assert.equal(demand.validity, 'invalid');
+  assert.deepEqual(demand.invalidPaths.map(({ id, reason }) => [id, reason]), [['public-a', 'hop-endpoint-mismatch']]);
+  assert.equal(demand.status, 'delivered', 'the remaining path still carries the demand');
+  assert.equal(demand.paths.length, 1);
+  assert.throws(() => calculateScenario(topology, { strictPaths: true }), /not contiguous/);
+});
+
+test('produces the same result every time', () => {
+  const topology = cloneTopology();
+  const first = JSON.stringify(calculateScenario(topology, { disabledDevices: ['fw-a'] }));
+  for (let run = 0; run < 20; run += 1) {
+    assert.equal(JSON.stringify(calculateScenario(cloneTopology(), { disabledDevices: ['fw-a'] })), first);
+  }
 });

@@ -66,16 +66,49 @@ export function findShortestPaths(topology, source, target, options = {}) {
   return paths;
 }
 
-export function resolveDemandPaths(topology, disabledDevices = new Set(), disabledLinks = new Set()) {
+export const LINK_DIRECTIONS = ['forward', 'reverse'];
+
+// 경로가 각 링크를 어느 쪽으로 지나는지 정한다. links[i] 는 devices[i] 와 devices[i+1] 을
+// 이어야 한다. 어긋난 경로는 던지지 않고 invalid 로 보고한다. 손으로 편집한 오래된 파일을
+// 열지 못하게 만들 이유가 없고, PRD 는 입력 오류를 valid|invalid 갈래로 다루라고 한다.
+function resolveHops(path, linkIndex) {
+  const devices = path.devices || [];
+  const linkIds = path.links || [];
+  if (devices.length < 2) return { valid: false, reason: 'path-too-short' };
+  if (linkIds.length !== devices.length - 1) return { valid: false, reason: 'hop-count-mismatch' };
+  const hops = [];
+  for (let index = 0; index < linkIds.length; index += 1) {
+    const link = linkIndex.get(linkIds[index]);
+    const from = devices[index];
+    const to = devices[index + 1];
+    const direction = link.source === from && link.target === to ? 'forward'
+      : link.source === to && link.target === from ? 'reverse' : null;
+    if (!direction) return { valid: false, reason: 'hop-endpoint-mismatch', hopIndex: index };
+    hops.push({ linkId: link.id, direction });
+  }
+  return { valid: true, hops };
+}
+
+export function resolveDemandPaths(topology, disabledDevices = new Set(), disabledLinks = new Set(), options = {}) {
+  const linkIndex = new Map(topology.links.map((link) => [link.id, link]));
   const resolved = new Map();
   for (const demand of topology.demands) {
     const candidatePaths = demand.paths?.length
       ? demand.paths
       : findShortestPaths(topology, demand.source, demand.target, { disabledDevices, disabledLinks });
-    const activePaths = candidatePaths.filter((path) =>
-      path.devices.every((id) => !disabledDevices.has(id)) && path.links.every((id) => !disabledLinks.has(id)),
-    );
-    resolved.set(demand.id, { candidatePaths, activePaths });
+    const activePaths = [];
+    const invalidPaths = [];
+    for (const path of candidatePaths) {
+      if (path.devices.some((id) => disabledDevices.has(id)) || path.links.some((id) => disabledLinks.has(id))) continue;
+      const walk = resolveHops(path, linkIndex);
+      if (!walk.valid) {
+        if (options.strictPaths) throw new Error(`Path ${path.id} is not contiguous: ${walk.reason}`);
+        invalidPaths.push({ id: path.id, reason: walk.reason, ...(walk.hopIndex == null ? {} : { hopIndex: walk.hopIndex }) });
+        continue;
+      }
+      activePaths.push({ ...path, hops: walk.hops });
+    }
+    resolved.set(demand.id, { candidatePaths, activePaths, invalidPaths });
   }
   return resolved;
 }
@@ -109,23 +142,24 @@ export function calculateScenario(topology, options = {}) {
   const disabledLinks = new Set(options.disabledLinks || []);
   const warningThreshold = topology.warningThreshold ?? 0.8;
   const deviceLoads = Object.fromEntries(topology.devices.map(({ id }) => [id, {}]));
-  const linkLoads = Object.fromEntries(topology.links.map(({ id }) => [id, {}]));
+  const linkLoads = Object.fromEntries(topology.links.map(({ id }) => [id, { forward: {}, reverse: {} }]));
   const demandResults = [];
-  const resolvedPaths = resolveDemandPaths(topology, disabledDevices, disabledLinks);
+  const resolvedPaths = resolveDemandPaths(topology, disabledDevices, disabledLinks, options);
 
   for (const demand of topology.demands) {
-    const { activePaths } = resolvedPaths.get(demand.id);
+    const { activePaths, invalidPaths } = resolvedPaths.get(demand.id);
+    const validity = invalidPaths.length ? 'invalid' : 'valid';
     if (!activePaths.length) {
-      demandResults.push({ id: demand.id, name: demand.name, status: 'unreachable', deliveredRatio: 0, paths: [], load: scaledLoad(demand.load, scale) });
+      demandResults.push({ id: demand.id, name: demand.name, status: 'unreachable', validity, invalidPaths, deliveredRatio: 0, paths: [], load: scaledLoad(demand.load, scale) });
       continue;
     }
     const share = 1 / activePaths.length;
     for (const path of activePaths) {
       for (const deviceId of new Set(path.devices)) addLoad(deviceLoads[deviceId], demand.load, scale * share);
-      for (const linkId of new Set(path.links)) addLoad(linkLoads[linkId], demand.load, scale * share);
+      for (const hop of path.hops) addLoad(linkLoads[hop.linkId][hop.direction], demand.load, scale * share);
     }
     demandResults.push({
-      id: demand.id, name: demand.name, status: 'delivered', deliveredRatio: 1, load: scaledLoad(demand.load, scale),
+      id: demand.id, name: demand.name, status: 'delivered', validity, invalidPaths, deliveredRatio: 1, load: scaledLoad(demand.load, scale),
       paths: activePaths.map(({ id }) => ({ id, share })),
     });
   }
@@ -135,8 +169,30 @@ export function calculateScenario(topology, options = {}) {
     return { ...device, active: !disabledDevices.has(device.id), load: deviceLoads[device.id], axes, ...summarizeAxes(axes) };
   });
   const links = topology.links.map((link) => {
-    const axes = Object.fromEntries(Object.entries(link.capacity).map(([axis, limit]) => [axis, axisResult(linkLoads[link.id][axis] || 0, limit, warningThreshold)]));
-    return { ...link, active: !disabledLinks.has(link.id), load: linkLoads[link.id], axes, ...summarizeAxes(axes) };
+    const directions = Object.fromEntries(LINK_DIRECTIONS.map((direction) => {
+      const capacity = { ...link.capacity, ...(link.capacityByDirection?.[direction] || {}) };
+      const load = linkLoads[link.id][direction];
+      const axes = Object.fromEntries(Object.entries(capacity).map(([axis, limit]) => [axis, axisResult(load[axis] || 0, limit, warningThreshold)]));
+      return [direction, { load, axes }];
+    }));
+    // 평면 axes 는 사용률이 큰 방향을 고른다. 동률이면 forward. UI 는 이 형태를 그대로 읽는다.
+    const axes = {};
+    const load = {};
+    for (const axis of Object.keys(link.capacity)) {
+      const forward = directions.forward.axes[axis];
+      const reverse = directions.reverse.axes[axis];
+      const pick = (reverse?.utilization ?? -1) > (forward?.utilization ?? -1) ? 'reverse' : 'forward';
+      axes[axis] = { ...directions[pick].axes[axis], direction: pick };
+      load[axis] = directions[pick].load[axis] || 0;
+    }
+    // 상태 요약은 양방향 전부를 본다. 한쪽만 unknown 이어도 안전하다고 말하지 않는다.
+    const spread = {};
+    for (const direction of LINK_DIRECTIONS) {
+      for (const [axis, result] of Object.entries(directions[direction].axes)) spread[`${direction}:${axis}`] = result;
+    }
+    const summary = summarizeAxes(spread);
+    const [bindingDirection, bindingAxis] = summary.bindingAxis ? summary.bindingAxis.split(':') : [null, null];
+    return { ...link, active: !disabledLinks.has(link.id), load, axes, directions, ...summary, bindingAxis, bindingDirection };
   });
   const activeResources = [...devices.filter(({ active }) => active), ...links.filter(({ active }) => active)];
   const binding = activeResources
