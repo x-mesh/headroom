@@ -707,7 +707,7 @@ element('project-file-input').addEventListener('change', async (event) => {
     const incoming = `${project.topology.devices.length}개 장비, ${project.topology.links.length}개 링크, ${project.topology.demands.length}개 demand`;
     const currentImpact = `${topology.devices.length}개 장비, ${topology.links.length}개 링크, ${topology.demands.length}개 demand`;
     if (!window.confirm(`${incoming}를 포함한 프로젝트를 엽니다. 현재 설계의 ${currentImpact}는 교체됩니다. 계속하시겠습니까?`)) return;
-    topology = project.topology; state.scale = project.scenario.scale; state.disabledDevices = new Set(project.scenario.disabledDevices); state.disabledLinks = new Set(project.scenario.disabledLinks); state.selectedId = project.scenario.selectedId; element('scale-input').value = String(state.scale * 100); baseline = calculateScenario(topology); closeEditorPanel(); recalculate(); showToast('프로젝트를 검증하고 복원했습니다.');
+    topology = project.topology; state.scale = project.scenario.scale; state.disabledDevices = new Set(project.scenario.disabledDevices); state.disabledLinks = new Set(project.scenario.disabledLinks); state.selectedId = project.scenario.selectedId; element('scale-input').value = String(state.scale * 100); baseline = calculateScenario(topology); closeEditorPanel(); recalculate(); showToast(project.notices?.[0]?.message || '프로젝트를 검증하고 복원했습니다.');
   } catch (error) { showToast(`열기 실패: ${error.message}`); }
 });
 element('device-file-input').addEventListener('change', async (event) => {

@@ -1,6 +1,17 @@
 import { calculateScenario } from './engine.js';
 
-export const PROJECT_SCHEMA_VERSION = 1;
+export const PROJECT_SCHEMA_VERSION = 2;
+const SUPPORTED_SCHEMAS = new Set([1, 2]);
+
+// v1 은 링크 용량을 양방향 합산으로 읽히던 파일이다. 숫자는 그대로 두고 의미만 바로잡는다.
+// 인스펙터가 처음부터 그 입력을 방향별 용량이라고 라벨링해 왔으므로 값이 틀린 게 아니다.
+function migrationNotices(schemaVersion) {
+  if (schemaVersion !== 1) return [];
+  return [{
+    code: 'link-capacity-reinterpreted',
+    message: '링크 용량을 방향별 값으로 해석합니다. 양방향 트래픽이 흐르는 링크의 사용률이 이전보다 낮게 표시됩니다.',
+  }];
+}
 
 function plainObject(value) { return value && typeof value === 'object' && !Array.isArray(value); }
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -27,7 +38,7 @@ export function createProject(topology, scenario = {}) {
 
 export function validateProject(input) {
   if (!plainObject(input)) throw new Error('Project must be an object');
-  if (input.schemaVersion !== PROJECT_SCHEMA_VERSION) {
+  if (!SUPPORTED_SCHEMAS.has(input.schemaVersion)) {
     if (Number(input.schemaVersion) > PROJECT_SCHEMA_VERSION) throw new Error(`Project schema ${input.schemaVersion} is newer than supported schema ${PROJECT_SCHEMA_VERSION}`);
     throw new Error(`Unsupported project schema ${input.schemaVersion}`);
   }
@@ -49,7 +60,9 @@ export function validateProject(input) {
   if (disabledLinks.some((id) => !linkIds.has(id))) throw new Error('disabledLinks contains an unknown link');
   calculateScenario(topology, { scale, disabledDevices, disabledLinks });
   return {
-    schemaVersion: PROJECT_SCHEMA_VERSION, product: 'Rack Mesh', topology,
+    schemaVersion: PROJECT_SCHEMA_VERSION, product: 'Rack Mesh',
+    ...(input.schemaVersion === PROJECT_SCHEMA_VERSION ? {} : { migratedFrom: input.schemaVersion }),
+    topology,
     scenario: { scale, disabledDevices, disabledLinks, selectedId: scenario.selectedId == null ? null : String(scenario.selectedId) },
   };
 }
@@ -59,7 +72,9 @@ export function parseProject(value) {
   if (typeof value === 'string') {
     try { input = JSON.parse(value); } catch { throw new Error('Project file is not valid JSON'); }
   }
-  return validateProject(input);
+  const project = validateProject(input);
+  const notices = migrationNotices(input.schemaVersion);
+  return notices.length ? { ...project, notices } : project;
 }
 
 export function serializeProject(topology, scenario) {

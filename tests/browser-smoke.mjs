@@ -130,7 +130,7 @@ async function verify(viewport, screenshot, interact = false) {
     const download = await downloadPromise;
     const downloadPath = await download.path();
     const project = JSON.parse(await readFile(downloadPath, 'utf8'));
-    assert.equal(project.schemaVersion, 1);
+    assert.equal(project.schemaVersion, 2);
     assert.equal(project.topology.devices.length, 2);
     assert.equal(project.topology.links.length, 1);
     assert.equal(project.topology.demands.length, 1);
@@ -151,7 +151,7 @@ async function verify(viewport, screenshot, interact = false) {
     const brokenTopology = cloneTopology();
     brokenTopology.devices.find((device) => device.id === 'fw-a').limits.new_sessions_per_sec = 0;
     brokenTopology.links.find((link) => link.id === 'edge-a-fw-a').capacity.forwarding_bps = 0;
-    const brokenProject = { schemaVersion: 1, product: 'Rack Mesh', topology: brokenTopology,
+    const brokenProject = { schemaVersion: 2, product: 'Rack Mesh', topology: brokenTopology,
       scenario: { scale: 1, disabledDevices: [], disabledLinks: [], selectedId: 'fw-a' } };
     page.once('dialog', (dialog) => dialog.accept());
     await page.locator('#project-file-input').setInputFiles({ name: 'invalid.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(brokenProject)) });

@@ -1,6 +1,7 @@
 import { axisCatalog, behaviorCatalog, DEFAULT_RESPONSE_SHARE } from './data.js';
 
 export const SESSION_SYNC_DEFAULT = 'stateful';
+export const ENGINE_VERSION = '2.0.0';
 
 const EPSILON = 1e-9;
 
@@ -311,7 +312,8 @@ export function calculateScenario(topology, options = {}) {
   const unreachable = demandResults.filter(({ status }) => status === 'unreachable');
 
   return {
-    schemaVersion: 1, scale, devices, links, demands: demandResults,
+    schemaVersion: 2, engineVersion: ENGINE_VERSION, scale, devices, links, demands: demandResults,
+    faults: { devices: [...disabledDevices].sort(), links: [...disabledLinks].sort() },
     summary: {
       bindingResourceId: binding?.id || null, bindingAxis: binding?.bindingAxis || null,
       minHeadroom: binding?.minHeadroom ?? null, unreachableCount: unreachable.length,
@@ -376,14 +378,34 @@ export function compareScenarios(baseline, current) {
     unreachableDelta: current.summary.unreachableCount - baseline.summary.unreachableCount,
     overloadedDelta: current.summary.overloadedCount - baseline.summary.overloadedCount,
     bindingChanged: baseline.summary.bindingResourceId !== current.summary.bindingResourceId || baseline.summary.bindingAxis !== current.summary.bindingAxis,
+    droppedLoadBpsDelta: (current.summary.droppedLoadBps || 0) - (baseline.summary.droppedLoadBps || 0),
+    refusedSessionsDelta: (current.summary.refusedSessionsPerSec || 0) - (baseline.summary.refusedSessionsPerSec || 0),
+    failoverAssumptionChanged: (baseline.failover?.sessionSync || null) !== (current.failover?.sessionSync || null),
   };
 }
 
 export function createExport(topology, scenario, baseline) {
+  const compact = (resource) => ({
+    id: resource.id, kind: resource.kind ?? 'link', active: resource.active,
+    primaryStatus: resource.primaryStatus, bindingAxis: resource.bindingAxis,
+    ...(resource.bindingDirection ? { bindingDirection: resource.bindingDirection } : {}),
+    ...(resource.behavior ? { behavior: resource.behavior } : {}),
+    axes: resource.axes,
+    ...(resource.directions ? { directions: resource.directions } : {}),
+  });
   return {
-    schemaVersion: 1, product: 'Rack Mesh', exportedAt: new Date().toISOString(), synthetic: Boolean(topology.synthetic),
+    schemaVersion: 2, engineVersion: ENGINE_VERSION, product: 'Rack Mesh',
+    exportedAt: new Date().toISOString(), synthetic: Boolean(topology.synthetic),
     topology: { name: topology.name, deviceCount: topology.devices.length, linkCount: topology.links.length, demandCount: topology.demands.length },
-    scenario: { scale: scenario.scale, summary: scenario.summary, demands: scenario.demands },
+    assumptions: {
+      warningThreshold: topology.warningThreshold ?? 0.8,
+      linkCapacitySemantics: 'per-direction',
+      deliveryModel: 'single-pass-offered-load',
+      responseShareDefault: DEFAULT_RESPONSE_SHARE,
+      haGroups: topology.haGroups ?? [],
+    },
+    scenario: { scale: scenario.scale, faults: scenario.faults, summary: scenario.summary, demands: scenario.demands, failover: scenario.failover },
+    resources: [...scenario.devices, ...scenario.links].map(compact),
     comparison: compareScenarios(baseline, scenario),
   };
 }
