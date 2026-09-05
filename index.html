@@ -116,10 +116,19 @@
               <span class="section-code">LIVE TOPOLOGY</span>
               <h1 id="topology-heading">어느 축이 먼저 한계에 닿는가</h1>
             </div>
-            <div class="topology-live-status"><span><i></i> LIVE · SYNTHETIC TELEMETRY</span><div class="path-readout" id="path-readout">2 DEMANDS · 4 ACTIVE PATHS</div></div>
+            <div class="topology-controls">
+              <div class="zoom-control" role="group" aria-label="캔버스 확대 배율">
+                <button type="button" data-zoom="out" aria-label="축소">−</button>
+                <button type="button" data-zoom="reset" id="zoom-level" aria-label="확대 배율. 누르면 100%로 되돌립니다">100%</button>
+                <button type="button" data-zoom="in" aria-label="확대">+</button>
+                <button type="button" data-zoom="fit">맞춤</button>
+              </div>
+              <div class="topology-live-status"><span><i></i> LIVE · SYNTHETIC TELEMETRY</span><div class="path-readout" id="path-readout">2 DEMANDS · 4 ACTIVE PATHS</div></div>
+            </div>
           </header>
           <div class="topology-scroll">
             <div class="mobile-pan-cue" aria-hidden="true"><span>←</span> 좌우로 탐색 <span>→</span></div>
+            <div class="topology-stage" id="topology-stage">
             <div class="topology-canvas" id="topology-canvas">
               <div class="zone-label zone-edge">EDGE</div>
               <div class="zone-label zone-security">SECURITY</div>
@@ -127,6 +136,7 @@
               <div class="zone-label zone-rack">COMPUTE RACKS</div>
               <svg class="link-layer" id="link-layer" viewBox="0 0 940 580" role="img" aria-label="장비 연결 링크"></svg>
               <div class="node-layer" id="node-layer"></div>
+            </div>
             </div>
           </div>
           <footer class="canvas-footer">

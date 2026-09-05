@@ -279,6 +279,42 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForFunction(() => document.querySelector('#link-layer').getAttribute('viewBox') === '0 0 940 580');
     const restored = await canvasSize();
     assert.deepEqual([restored.width, restored.height], [940, 580], 'a layout that fits returns to the minimum canvas');
+
+    // 확대: 무대가 스크롤 크기를 담고, 좌표는 배율만큼 되돌려 읽어야 한다.
+    const zoomState = () => page.evaluate(() => ({
+      label: document.querySelector('#zoom-level').textContent,
+      zoom: Number(getComputedStyle(document.querySelector('#topology-stage')).getPropertyValue('--zoom')),
+      stageWidth: Math.round(parseFloat(getComputedStyle(document.querySelector('#topology-stage')).width)),
+      nodeWidth: Math.round(document.querySelector('.mesh-node').getBoundingClientRect().width),
+    }));
+    const atRest = await zoomState();
+    assert.deepEqual([atRest.label, atRest.zoom, atRest.nodeWidth], ['100%', 1, 126]);
+
+    await page.locator('[data-zoom="in"]').click();
+    const zoomed = await zoomState();
+    assert.ok(zoomed.zoom > 1 && zoomed.label === `${Math.round(zoomed.zoom * 100)}%`);
+    assert.equal(zoomed.stageWidth, Math.round(atRest.stageWidth * zoomed.zoom), 'the stage must carry the scaled size so the area can scroll');
+    assert.equal(zoomed.nodeWidth, Math.round(126 * zoomed.zoom), 'nodes scale with the canvas');
+
+    // 확대한 상태에서 화면상 이동 거리는 캔버스 좌표에서 배율만큼 작아야 한다.
+    const dragTarget = page.locator('[data-device-id="source-a"]');
+    const startLeft = await dragTarget.evaluate((node) => parseFloat(node.style.left));
+    const dragBox = await dragTarget.boundingBox();
+    await page.mouse.move(dragBox.x + dragBox.width / 2, dragBox.y + 12);
+    await page.mouse.down();
+    await page.mouse.move(dragBox.x + dragBox.width / 2 + 120, dragBox.y + 12, { steps: 10 });
+    await page.mouse.up();
+    await page.waitForTimeout(120);
+    const movedLeft = await dragTarget.evaluate((node) => parseFloat(node.style.left));
+    assert.ok(Math.abs((movedLeft - startLeft) - 120 / zoomed.zoom) < 2,
+      `a drag must move the device by the screen distance divided by the zoom, got ${movedLeft - startLeft}`);
+
+    await page.locator('[data-zoom="out"]').click();
+    assert.equal((await zoomState()).zoom, 1);
+    await page.locator('[data-zoom="fit"]').click();
+    assert.ok((await zoomState()).zoom <= 1, 'fit never magnifies past 100%');
+    await page.locator('[data-zoom="reset"]').click();
+    assert.deepEqual(await zoomState(), atRest, 'reset returns the canvas to 100%');
   }
   await page.screenshot({ path: screenshot, fullPage: true });
   await page.close();

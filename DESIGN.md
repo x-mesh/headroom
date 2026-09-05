@@ -318,6 +318,16 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **State:** Show UP or DOWN text and update `aria-pressed`.
 - **Active:** Use a red inner square, red border, and red DOWN text.
 
+### Canvas Zoom
+
+- **Control:** Put minus, the current percentage, plus, and fit in one bordered group in the topology header.
+- **Steps:** Move through fixed steps from 40% to 200%. Show the percentage as text, never as a slider alone.
+- **Reset:** Make the percentage button return the canvas to 100%.
+- **Fit:** Scale down to show the whole canvas. Never magnify past 100%.
+- **Anchor:** Keep the point under the pointer, or the center of the view, in place while the scale changes.
+- **Pointer Math:** Divide every screen distance by the zoom before it becomes a canvas coordinate. A drag and a drop must land where the pointer is.
+- **Wheel:** Zoom on Ctrl or Command with the wheel, which is also how a trackpad pinch arrives.
+
 ### Canvas
 
 - **Minimum:** Start at 940 by 580. A layout that fits keeps that size.

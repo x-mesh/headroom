@@ -6,7 +6,7 @@ import { parseProject, serializeProject } from './project.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
 
 let topology = cloneTopology();
-const state = { scale: 1, selectedId: 'fw-a', disabledDevices: new Set(), disabledLinks: new Set(), editorMode: 'select', connectSource: null, leftPanel: 'palette' };
+const state = { scale: 1, selectedId: 'fw-a', disabledDevices: new Set(), disabledLinks: new Set(), editorMode: 'select', connectSource: null, leftPanel: 'palette', zoom: 1 };
 let baseline = calculateScenario(topology);
 let current = baseline;
 let toastTimer;
@@ -189,6 +189,8 @@ function setLeftPanel(name) {
 const CANVAS_MIN = { width: 940, height: 580 };
 const CANVAS_PAD = 40;
 const CANVAS_MAX = 12000;
+const ZOOM_STEPS = [0.4, 0.5, 0.65, 0.8, 1, 1.25, 1.5, 1.75, 2];
+const ZOOM_RANGE = { min: ZOOM_STEPS[0], max: ZOOM_STEPS.at(-1) };
 // 노드는 심볼 중심이 기준이고 라벨이 아래로 흐르므로 방향별 여백이 다르다.
 const NODE_REACH = { left: 70, right: 70, top: 30, bottom: 150 };
 let viewport = { minX: 0, minY: 0, width: CANVAS_MIN.width, height: CANVAS_MIN.height };
@@ -207,11 +209,11 @@ function canvasViewport(devices) {
 
 function applyViewport() {
   viewport = canvasViewport(current.devices);
-  const canvas = element('topology-canvas');
-  canvas.style.setProperty('--canvas-width', `${viewport.width}px`);
-  canvas.style.setProperty('--canvas-height', `${viewport.height}px`);
-  canvas.style.setProperty('--viewport-x', `${viewport.minX}px`);
-  canvas.style.setProperty('--viewport-y', `${viewport.minY}px`);
+  const stage = element('topology-stage');
+  stage.style.setProperty('--canvas-width', `${viewport.width}px`);
+  stage.style.setProperty('--canvas-height', `${viewport.height}px`);
+  stage.style.setProperty('--viewport-x', `${viewport.minX}px`);
+  stage.style.setProperty('--viewport-y', `${viewport.minY}px`);
   // viewBox 가 원점을 담당하므로 링크는 좌표를 변환하지 않고 그대로 쓴다.
   element('link-layer').setAttribute('viewBox', `${viewport.minX} ${viewport.minY} ${viewport.width} ${viewport.height}`);
 }
@@ -222,8 +224,8 @@ function canvasPoint(event) {
   const canvas = element('topology-canvas').getBoundingClientRect();
   const drop = document.querySelector('.topology-scroll').getBoundingClientRect();
   return {
-    x: event.clientX - canvas.left + viewport.minX,
-    y: event.clientY - canvas.top + viewport.minY,
+    x: (event.clientX - canvas.left) / state.zoom + viewport.minX,
+    y: (event.clientY - canvas.top) / state.zoom + viewport.minY,
     inside: event.clientX >= drop.left && event.clientX <= drop.right && event.clientY >= drop.top && event.clientY <= drop.bottom,
   };
 }
@@ -248,6 +250,36 @@ function createDeviceFromPalette(kind, position) {
     closeEditorPanel();
     commitTopology(`${device.name} 장비를 추가했습니다. 인스펙터에서 한계값을 입력하세요.`);
   } catch (error) { showToast(error.message); }
+}
+
+function applyZoom(anchor) {
+  const scroll = document.querySelector('.topology-scroll');
+  const previous = Number(element('topology-stage').style.getPropertyValue('--zoom') || 1);
+  element('topology-stage').style.setProperty('--zoom', String(state.zoom));
+  element('zoom-level').textContent = `${Math.round(state.zoom * 100)}%`;
+  // 확대해도 기준점이 제자리에 머물도록 스크롤을 같은 비율로 옮긴다.
+  const point = anchor || { x: scroll.clientWidth / 2, y: scroll.clientHeight / 2 };
+  const ratio = state.zoom / previous;
+  scroll.scrollLeft = (scroll.scrollLeft + point.x) * ratio - point.x;
+  scroll.scrollTop = (scroll.scrollTop + point.y) * ratio - point.y;
+}
+
+function setZoom(value, anchor) {
+  const next = Math.min(ZOOM_RANGE.max, Math.max(ZOOM_RANGE.min, value));
+  if (Math.abs(next - state.zoom) < 1e-6) return;
+  state.zoom = next;
+  applyZoom(anchor);
+}
+
+function stepZoom(direction) {
+  const steps = direction > 0 ? ZOOM_STEPS : [...ZOOM_STEPS].reverse();
+  setZoom(steps.find((step) => (direction > 0 ? step > state.zoom + 1e-6 : step < state.zoom - 1e-6)) ?? state.zoom);
+}
+
+function zoomToFit() {
+  const scroll = document.querySelector('.topology-scroll');
+  const fit = Math.min(scroll.clientWidth / viewport.width, scroll.clientHeight / viewport.height);
+  setZoom(Math.min(1, fit));
 }
 
 function endPaletteDrag() {
@@ -584,7 +616,7 @@ element('node-layer').addEventListener('pointerdown', (event) => {
 });
 element('node-layer').addEventListener('pointermove', (event) => {
   if (!dragState || dragState.pointerId !== event.pointerId) return;
-  const position = { x: dragState.origin.x + event.clientX - dragState.startX, y: dragState.origin.y + event.clientY - dragState.startY };
+  const position = { x: dragState.origin.x + (event.clientX - dragState.startX) / state.zoom, y: dragState.origin.y + (event.clientY - dragState.startY) / state.zoom };
   const moved = moveDevice(topology, dragState.id, position);
   dragState.button.style.left = `${moved.position.x - viewport.minX}px`; dragState.button.style.top = `${moved.position.y - viewport.minY}px`;
   suppressNodeClick = Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY) > 4;
@@ -660,6 +692,20 @@ element('project-file-input').addEventListener('change', async (event) => {
 element('device-file-input').addEventListener('change', async (event) => {
   try { const text = await readFile(event.target); if (!text) return; const template = importDeviceDefinition(text); openDeviceForm(template); const form = element('editor-panel-content').querySelector('form'); form._deviceTemplate = template; showToast(`${template.schema} 장비 정의를 읽었습니다.`); } catch (error) { showToast(`가져오기 실패: ${error.message}`); }
 });
+document.querySelector('.zoom-control').addEventListener('click', (event) => {
+  const action = event.target.closest('[data-zoom]')?.dataset.zoom;
+  if (action === 'in') stepZoom(1);
+  if (action === 'out') stepZoom(-1);
+  if (action === 'reset') setZoom(1);
+  if (action === 'fit') zoomToFit();
+});
+// 트랙패드 핀치와 Ctrl+휠은 같은 이벤트로 온다. 포인터 자리를 기준으로 확대한다.
+document.querySelector('.topology-scroll').addEventListener('wheel', (event) => {
+  if (!event.ctrlKey && !event.metaKey) return;
+  event.preventDefault();
+  const rect = document.querySelector('.topology-scroll').getBoundingClientRect();
+  setZoom(state.zoom * (event.deltaY < 0 ? 1.12 : 1 / 1.12), { x: event.clientX - rect.left, y: event.clientY - rect.top });
+}, { passive: false });
 document.querySelector('a[href="#failure-heading"]').addEventListener('click', () => setLeftPanel('failure'));
 document.querySelector('[role="tablist"]').addEventListener('click', (event) => {
   const tab = event.target.closest('[data-panel-tab]');
@@ -718,6 +764,7 @@ reducedMotion.addEventListener('change', startTelemetry);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) updateTelemetry(); });
 
 element('icon-sprite').innerHTML = ICON_SPRITE;
+element('topology-stage').style.setProperty('--zoom', String(state.zoom));
 renderPalette();
 setLeftPanel(state.leftPanel);
 render();
