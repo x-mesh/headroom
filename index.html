@@ -135,7 +135,7 @@
             </div>
           </div>
           <footer class="canvas-footer">
-            <span>노드를 드래그해 이동하고, 빈 공간을 끌어 화면을 옮기세요. Ctrl과 휠로 확대합니다.</span>
+            <p class="bottleneck-note" id="bottleneck-note" aria-live="polite">계산 중</p>
             <span id="calculation-note">DETERMINISTIC · ECMP EQUAL SPLIT</span>
           </footer>
         </section>
@@ -151,18 +151,17 @@
           <div id="inspector-content" class="inspector-content"></div>
         </aside>
       </section>
-
-      <section class="comparison-panel" aria-labelledby="comparison-heading">
-        <header>
-          <div>
-            <span class="section-code">BASELINE COMPARISON</span>
-            <h2 id="comparison-heading">설계 변화</h2>
-          </div>
-          <p>기준선은 최초 활성 상태에 고정됩니다.</p>
-        </header>
-        <div class="comparison-grid" id="comparison-grid"></div>
-      </section>
     </main>
+    <section class="comparison-panel" aria-labelledby="comparison-heading">
+      <header>
+        <div>
+          <span class="section-code">BASELINE COMPARISON</span>
+          <h2 id="comparison-heading">설계 변화</h2>
+        </div>
+        <p>기준선은 최초 활성 상태에 고정됩니다.</p>
+      </header>
+      <div class="comparison-grid" id="comparison-grid"></div>
+    </section>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <div id="icon-sprite" aria-hidden="true"></div>
     <script type="module" src="./src/app.js"></script>

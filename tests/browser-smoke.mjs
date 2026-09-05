@@ -21,6 +21,10 @@ async function verify(viewport, screenshot, interact = false) {
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   await page.evaluate(() => document.fonts.ready);
   assert.equal(await page.locator('#summary-faults').textContent(), '00');
+  // 캔버스 아래가 지금 무엇이 막고 있는지 문장으로 말해야 한다.
+  const restingNote = await page.locator('#bottleneck-note').textContent();
+  assert.match(restingNote, /가장 빠듯합니다/);
+  assert.match(restingNote, /LEAF B → API 02/, 'a link must read by its endpoints, not its id');
   assert.equal(await page.locator('#run-state').textContent(), 'BASELINE STABLE');
   assert.ok(await page.locator('.packet-dot').count() > 0, 'active links must render packet dots');
   const packet = page.locator('.packet-dot').first();
@@ -85,6 +89,10 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
     assert.equal(await failure.getAttribute('aria-pressed'), 'true');
     assert.equal(await page.locator('#run-state').textContent(), 'CAPACITY EXCEEDED');
+    const faultNote = await page.locator('#bottleneck-note').textContent();
+    assert.match(faultNote, /한계를 넘었습니다/);
+    assert.match(faultNote, /버려집니다/, 'the note must say what the overload costs');
+    assert.match(faultNote, /거절됩니다/, 'refused sessions are separate from dropped bytes');
     await page.waitForTimeout(900);
     assert.match(await page.locator('[data-device-id="fw-a"]').innerText(), /OFFLINE[\s\S]*DOWN/, 'a disabled node must stay DOWN across telemetry ticks');
     assert.match(await page.locator('#comparison-grid').textContent(), /CHANGED/);
@@ -233,6 +241,7 @@ async function verify(viewport, screenshot, interact = false) {
     assert.ok(await page.evaluate(() => [...document.querySelectorAll('.palette-item use')]
       .every((use) => document.querySelector(use.getAttribute('href')) && use.getBBox().width > 0)), 'every palette symbol must resolve');
 
+    await page.locator('[data-palette-kind="firewall"]').scrollIntoViewIfNeeded();
     const paletteItem = await page.locator('[data-palette-kind="firewall"]').boundingBox();
     const canvasBox = await page.locator('#topology-canvas').boundingBox();
     await page.mouse.move(paletteItem.x + paletteItem.width / 2, paletteItem.y + paletteItem.height / 2);
@@ -254,14 +263,21 @@ async function verify(viewport, screenshot, interact = false) {
     assert.ok(dropped.states.every((state) => state === 'unknown'), 'a new device must keep its limits unknown');
     assert.equal(await page.locator('.palette-ghost').count(), 0, 'the ghost must not outlive the drop');
 
+    // 캔버스 아래 여백은 영역보다 아래에 있다. 그 자리를 화면 가운데로 끌어올려야 드롭할 수 있다.
+    await page.locator('.topology-scroll').evaluate((node) => {
+      const canvas = document.querySelector('#topology-canvas');
+      node.scrollTop = canvas.offsetTop + canvas.offsetHeight - node.clientHeight / 2;
+    });
+    const scrolledCanvas = await page.locator('#topology-canvas').boundingBox();
     const scrollBox = await page.locator('.topology-scroll').boundingBox();
-    const beyond = Math.min(canvasBox.y + canvasBox.height + 60, scrollBox.y + scrollBox.height - 20);
-    assert.ok(beyond > canvasBox.y + canvasBox.height, 'the fixture needs slack below the canvas to drop into');
+    const beyond = Math.min(scrolledCanvas.y + scrolledCanvas.height + 60, scrollBox.y + scrollBox.height - 20);
+    assert.ok(beyond > scrolledCanvas.y + scrolledCanvas.height, 'the fixture needs slack below the canvas to drop into');
     const beforeEdgeDrop = await page.evaluate(() => Math.round(parseFloat(getComputedStyle(document.querySelector('#topology-canvas')).height)));
+    await page.locator('[data-palette-kind="storage"]').scrollIntoViewIfNeeded();
     const edgeItem = await page.locator('[data-palette-kind="storage"]').boundingBox();
     await page.mouse.move(edgeItem.x + edgeItem.width / 2, edgeItem.y + edgeItem.height / 2);
     await page.mouse.down();
-    await page.mouse.move(canvasBox.x + 300, beyond, { steps: 10 });
+    await page.mouse.move(scrolledCanvas.x + 300, beyond, { steps: 10 });
     await page.mouse.up();
     await page.waitForFunction((base) => parseFloat(getComputedStyle(document.querySelector('#topology-canvas')).height) > base, beforeEdgeDrop);
     assert.equal(await page.locator('.palette-ghost').count(), 0, 'the ghost must not outlive a drop past the canvas edge');
@@ -341,6 +357,7 @@ async function verify(viewport, screenshot, interact = false) {
 
     // 확대한 상태에서 화면상 이동 거리는 캔버스 좌표에서 배율만큼 작아야 한다.
     const dragTarget = page.locator('[data-device-id="source-a"]');
+    await dragTarget.scrollIntoViewIfNeeded();
     const startLeft = await dragTarget.evaluate((node) => parseFloat(node.style.left));
     const dragBox = await dragTarget.boundingBox();
     await page.mouse.move(dragBox.x + dragBox.width / 2, dragBox.y + 12);

@@ -310,6 +310,15 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Dismiss:** Close on Escape, on the close button, and on a press outside the panel.
 - **Height:** Cap it to the viewport and scroll inside. Never let it push the page taller.
 
+### Bottleneck Note
+
+- **Placement:** Put one sentence under the canvas saying what limits the design right now.
+- **Content:** Name the resource, the axis, the direction when a link has one, and the load against the limit.
+- **Consequence:** Add what the overload costs — bytes dropped, sessions refused — as separate facts. Refused sessions do not throttle bytes.
+- **Unknown:** Say when a delivery ratio is an upper bound because a limit is missing.
+- **Empty:** With no known limit, say so and point at where to enter one. Never leave the line blank.
+- **Naming:** Read a link by its endpoints, never by its id.
+
 ### Design Template Picker
 
 - **Entry:** Make the new-design action open a template list, not a blank canvas.

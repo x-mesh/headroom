@@ -52,12 +52,60 @@ function commitTopology(message, undo = null) {
   showToast(message, undo);
 }
 
+// 받침에 따라 조사를 고른다. 한글이 아니면 받침 없는 쪽으로 읽는다.
+function withParticle(word, withBatchim, without) {
+  const last = String(word).codePointAt(String(word).length - 1);
+  const hangul = last >= 0xac00 && last <= 0xd7a3;
+  return `${word}${hangul && (last - 0xac00) % 28 !== 0 ? withBatchim : without}`;
+}
+
+function resourceName(resource) {
+  if (resource.name) return resource.name;
+  if (resource.source && resource.target) {
+    const endpoint = (id) => current.devices.find((device) => device.id === id)?.name || id.toUpperCase();
+    return `${endpoint(resource.source)} → ${endpoint(resource.target)}`;
+  }
+  return resource.id.toUpperCase();
+}
+
+// bps·pps·cps 는 formatCompact 가 단위를 붙여 준다. 나머지는 뒤에 한 번만 붙인다.
+const AXIS_UNIT_SUFFIX = { sessions: ' 세션', tps: ' tps' };
+
+// 캔버스 아래에 "지금 무엇이 막고 있는가"를 문장으로 적는다. 숫자는 위에 다 있지만
+// 어느 것을 봐야 하는지는 적어 주어야 읽힌다.
+function renderBottleneck() {
+  const parts = [];
+  const binding = current.summary.bindingResourceId
+    ? [...current.devices, ...current.links].find(({ id }) => id === current.summary.bindingResourceId)
+    : null;
+  if (!binding) {
+    parts.push('한계를 아는 축이 없습니다. 장비를 눌러 한계값을 넣으면 어디가 먼저 차는지 계산합니다.');
+  } else {
+    const axisKey = current.summary.bindingAxis;
+    const axis = binding.axes[axisKey];
+    const catalog = axisCatalog[axisKey] || { label: axisKey, unit: '' };
+    const direction = binding.bindingDirection ? `${binding.bindingDirection === 'forward' ? '정방향 ' : '역방향 '}` : '';
+    const suffix = AXIS_UNIT_SUFFIX[catalog.unit] || '';
+    const scale = `${formatCompact(axis.load, catalog.unit)} / ${formatCompact(axis.limit, catalog.unit)}${suffix}`;
+    parts.push(`${resourceName(binding)}의 ${withParticle(`${direction}${catalog.label}`, '이', '가')} ${axis.status === 'overloaded' ? '한계를 넘었습니다' : '가장 빠듯합니다'}.`);
+    parts.push(`${withParticle(scale, '으로', '로')} ${formatPercent(axis.utilization)}입니다.`);
+  }
+  if (current.summary.droppedLoadBps > 0) parts.push(`병목을 지나지 못한 ${formatCompact(current.summary.droppedLoadBps, 'bps')}가 버려집니다.`);
+  if (current.summary.refusedSessionsPerSec > 0) parts.push(`신규 세션 ${formatCompact(current.summary.refusedSessionsPerSec, 'cps')}가 거절됩니다. 이미 맺힌 연결은 계속 흐릅니다.`);
+  if (current.summary.unreachableCount > 0) parts.push(`경로가 끊긴 demand가 ${current.summary.unreachableCount}개 있습니다.`);
+  if (current.demands.some(({ deliveredRatioBound }) => deliveredRatioBound === 'upper')) {
+    parts.push('한계를 모르는 축이 있어 전달률은 상한값입니다.');
+  }
+  element('bottleneck-note').textContent = parts.join(' ');
+}
+
 function render() {
   renderSummary();
   renderFailures();
   renderTopology();
   renderInspector();
   renderComparison();
+  renderBottleneck();
   renderEditorMode();
 }
 
