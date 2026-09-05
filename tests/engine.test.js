@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cloneTopology } from '../src/data.js';
-import { calculateScenario, compareScenarios } from '../src/engine.js';
+import { calculateScenario, compareScenarios, deliveryRoleOf } from '../src/engine.js';
 import { addDevice, createEmptyTopology } from '../src/editor.js';
 
 test('splits demand evenly across active ECMP paths', () => {
@@ -71,7 +71,7 @@ const snapshot = (scenario) => ({
   devices: Object.fromEntries(scenario.devices.map((device) => [device.id, [device.bindingAxis, round4(device.minHeadroom), device.primaryStatus]])),
   binding: [scenario.summary.bindingResourceId, scenario.summary.bindingAxis, round4(scenario.summary.minHeadroom)],
   counts: [scenario.summary.overloadedCount, scenario.summary.warningCount, scenario.summary.unreachableCount],
-  delivery: scenario.demands.map(({ id, status, deliveredRatio, paths }) => [id, status, deliveredRatio, paths.length]),
+  delivery: scenario.demands.map(({ id, status, deliveredRatio, paths }) => [id, status, round4(deliveredRatio), paths.length]),
 });
 
 test('holds the healthy demo calculation', () => {
@@ -111,11 +111,12 @@ test('holds the demo calculation with the primary firewall down', () => {
     },
     binding: ['fw-b', 'new_sessions_per_sec', -0.7143],
     counts: [4, 1, 0],
-    delivery: [['public-api', 'delivered', 1, 1], ['east-west', 'delivered', 1, 2]],
+    delivery: [['public-api', 'delivered', 0.8197, 1], ['east-west', 'delivered', 0.8197, 2]],
   });
-  // 오늘의 거짓말을 명시적으로 고정한다. leaf-b-api-b 가 122% 인데 전부 전달됐다고 보고한다.
+  // 과부하가 결과에 남는다. leaf-b-api-b 가 122% 이므로 그 경로는 1/1.22 만 지나간다.
   assert.equal(scenario.links.find(({ id }) => id === 'leaf-b-api-b').axes.forwarding_bps.status, 'overloaded');
-  assert.equal(scenario.demands.every(({ deliveredRatio }) => deliveredRatio === 1), true);
+  assert.equal(scenario.demands.every(({ deliveredRatio }) => deliveredRatio < 1), true);
+  assert.equal(Math.round(scenario.summary.droppedLoadBps), 2.2e9);
 });
 
 test('splits a link that carries traffic both ways', () => {
@@ -164,4 +165,49 @@ test('produces the same result every time', () => {
   for (let run = 0; run < 20; run += 1) {
     assert.equal(JSON.stringify(calculateScenario(cloneTopology(), { disabledDevices: ['fw-a'] })), first);
   }
+});
+
+test('keeps session axes off links', () => {
+  const link = calculateScenario(cloneTopology()).links.find(({ id }) => id === 'edge-a-fw-a');
+  // demand 는 세션 축을 나르지만 링크는 세션 테이블을 들지 않는다. 판정도 못 하면서
+  // 부하만 쌓아 두면 목록이 더러워진다.
+  assert.deepEqual(Object.keys(link.directions.forward.load).sort(), ['forwarding_bps', 'forwarding_pps', 'nic_bps', 'nic_pps']);
+  assert.equal(deliveryRoleOf('new_sessions_per_sec'), 'admission');
+  assert.equal(deliveryRoleOf('forwarding_bps'), 'throughput');
+});
+
+test('drops traffic at the choke point instead of reporting it delivered', () => {
+  const scenario = calculateScenario(cloneTopology(), { disabledDevices: ['fw-a'] });
+  const demand = scenario.demands.find(({ id }) => id === 'public-api');
+  // leaf-b-api-b 가 forward 방향으로 122%. 1/1.22 = 0.8197.
+  assert.equal(round4(demand.deliveredRatio), 0.8197);
+  assert.deepEqual(demand.paths[0].choke, { resourceId: 'leaf-b-api-b', direction: 'forward' });
+  assert.equal(Math.round(demand.droppedLoad.forwarding_bps), 1298360656);
+});
+
+test('refuses new sessions without throttling the flows already up', () => {
+  const scenario = calculateScenario(cloneTopology(), { disabledDevices: ['fw-a'] });
+  const demand = scenario.demands.find(({ id }) => id === 'public-api');
+  const firewall = scenario.devices.find(({ id }) => id === 'fw-b');
+  assert.equal(round4(firewall.axes.new_sessions_per_sec.utilization), 1.7143);
+  // 세션 테이블이 71% 넘쳐도 전달률은 처리량 병목만 반영한다. 살아 있는 플로우는 계속 흐른다.
+  assert.equal(round4(demand.deliveredRatio), 0.8197);
+  assert.equal(Math.round(demand.sessionAdmission.refusedPerSec), 30000);
+  assert.equal(demand.sessionAdmission.limitedBy.resourceId, 'fw-b');
+  assert.equal(round4(demand.sessionAdmission.ratio), 0.5833);
+});
+
+test('marks a delivery ratio as an upper bound while a limit is unknown', () => {
+  const healthy = calculateScenario(cloneTopology()).demands.find(({ id }) => id === 'public-api');
+  assert.equal(healthy.deliveredRatio, 1);
+  // api-a 와 api-b 의 nic_pps 가 null 이다. 모르는 한계를 통과로 치지 않는다.
+  assert.equal(healthy.deliveredRatioBound, 'upper');
+  assert.deepEqual(healthy.unknownConstraints.map(({ resourceId, axis }) => `${resourceId}/${axis}`).sort(),
+    ['api-a/nic_pps', 'api-b/nic_pps']);
+
+  const filled = cloneTopology();
+  for (const id of ['api-a', 'api-b']) filled.devices.find((device) => device.id === id).limits.nic_pps = 4e6;
+  const exact = calculateScenario(filled).demands.find(({ id }) => id === 'public-api');
+  assert.equal(exact.deliveredRatioBound, 'exact');
+  assert.equal(exact.unknownConstraints, undefined);
 });

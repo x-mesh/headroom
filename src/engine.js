@@ -1,8 +1,17 @@
+import { axisCatalog } from './data.js';
+
 const EPSILON = 1e-9;
 
-function addLoad(target, source, factor) {
+// 초과분이 곧 드롭인 축과, 신규 연결만 거절되는 축을 나눈다. 세션 테이블이 넘쳤다고
+// 살아 있는 플로우의 대역이 줄지는 않는다.
+export const deliveryRoleOf = (axis) => axisCatalog[axis]?.deliveryRole ?? null;
+// 링크는 세션 테이블을 들지 않는다. admission 축을 쌓아 두면 판정도 못 하면서 목록만 더럽힌다.
+const linkCarriesAxis = (axis) => deliveryRoleOf(axis) !== 'admission';
+
+function addLoad(target, source, factor, accept) {
   for (const [axis, value] of Object.entries(source)) {
     if (!Number.isFinite(value) || value < 0) throw new Error(`Invalid load for ${axis}`);
+    if (accept && !accept(axis)) continue;
     target[axis] = (target[axis] || 0) + value * factor;
   }
 }
@@ -156,10 +165,10 @@ export function calculateScenario(topology, options = {}) {
     const share = 1 / activePaths.length;
     for (const path of activePaths) {
       for (const deviceId of new Set(path.devices)) addLoad(deviceLoads[deviceId], demand.load, scale * share);
-      for (const hop of path.hops) addLoad(linkLoads[hop.linkId][hop.direction], demand.load, scale * share);
+      for (const hop of path.hops) addLoad(linkLoads[hop.linkId][hop.direction], demand.load, scale * share, linkCarriesAxis);
     }
     demandResults.push({
-      id: demand.id, name: demand.name, status: 'delivered', validity, invalidPaths, deliveredRatio: 1, load: scaledLoad(demand.load, scale),
+      id: demand.id, name: demand.name, status: 'delivered', validity, invalidPaths, load: scaledLoad(demand.load, scale),
       paths: activePaths.map(({ id }) => ({ id, share })),
     });
   }
@@ -194,6 +203,73 @@ export function calculateScenario(topology, options = {}) {
     const [bindingDirection, bindingAxis] = summary.bindingAxis ? summary.bindingAxis.split(':') : [null, null];
     return { ...link, active: !disabledLinks.has(link.id), load, axes, directions, ...summary, bindingAxis, bindingDirection };
   });
+  const passTable = new Map();
+  const passFor = (axes) => {
+    let throughputPass = 1;
+    let admissionPass = 1;
+    const unknownAxes = [];
+    const invalidAxes = [];
+    for (const [axis, result] of Object.entries(axes)) {
+      const role = deliveryRoleOf(axis);
+      if (result.status === 'unknown') { if (role) unknownAxes.push(axis); continue; }
+      if (result.status === 'invalid') { invalidAxes.push(axis); continue; }
+      if (result.utilization <= 1 + EPSILON) continue;
+      const pass = result.limit / result.load;
+      if (role === 'throughput') throughputPass = Math.min(throughputPass, pass);
+      else if (role === 'admission') admissionPass = Math.min(admissionPass, pass);
+    }
+    return { throughputPass, admissionPass, unknownAxes, invalidAxes };
+  };
+  for (const device of devices) passTable.set(`device:${device.id}`, passFor(device.axes));
+  for (const link of links) {
+    for (const direction of LINK_DIRECTIONS) passTable.set(`link:${link.id}:${direction}`, passFor(link.directions[direction].axes));
+  }
+
+  for (const result of demandResults) {
+    if (result.status === 'unreachable') { result.deliveredRatio = 0; result.deliveredRatioBound = 'exact'; result.droppedLoad = result.load; continue; }
+    const { activePaths } = resolvedPaths.get(result.id);
+    const share = 1 / activePaths.length;
+    const unknownConstraints = [];
+    let delivered = 0;
+    let admitted = 0;
+    let admissionLimit = null;
+    result.paths = activePaths.map((path) => {
+      let pass = 1;
+      let admit = 1;
+      let choke = null;
+      for (let index = 0; index < path.devices.length; index += 1) {
+        const stops = [{ key: `device:${path.devices[index]}`, resourceId: path.devices[index], direction: null }];
+        const hop = path.hops[index];
+        if (hop) stops.push({ key: `link:${hop.linkId}:${hop.direction}`, resourceId: hop.linkId, direction: hop.direction });
+        for (const stop of stops) {
+          const entry = passTable.get(stop.key);
+          for (const axis of entry.unknownAxes) unknownConstraints.push({ resourceId: stop.resourceId, direction: stop.direction, axis });
+          if (entry.invalidAxes.length) result.validity = 'invalid';
+          if (entry.throughputPass < pass) { pass = entry.throughputPass; choke = { ...stop, axis: null }; }
+          if (entry.admissionPass < admit) { admit = entry.admissionPass; admissionLimit = stop; }
+        }
+      }
+      delivered += share * pass;
+      admitted += share * admit;
+      return { id: path.id, share, deliveredRatio: pass, admissionRatio: admit, choke: choke && { resourceId: choke.resourceId, direction: choke.direction } };
+    });
+    result.deliveredRatio = delivered;
+    // 모르는 한계는 스로틀에 관여시키지 않되 결과를 오염시킨다. 82% 가 아니라 82% 이하다.
+    result.deliveredRatioBound = unknownConstraints.length ? 'upper' : 'exact';
+    if (unknownConstraints.length) result.unknownConstraints = unknownConstraints;
+    result.deliveredLoad = scaledLoad(result.load, delivered);
+    result.droppedLoad = scaledLoad(result.load, 1 - delivered);
+    const offeredSessions = result.load.new_sessions_per_sec || 0;
+    if (offeredSessions && admitted < 1 - EPSILON) {
+      // 세션 테이블이 넘쳐도 살아 있는 플로우의 대역은 줄지 않는다. 신규 연결만 거절된다.
+      result.sessionAdmission = {
+        axis: 'new_sessions_per_sec', offered: offeredSessions, ratio: admitted,
+        admitted: offeredSessions * admitted, refusedPerSec: offeredSessions * (1 - admitted),
+        limitedBy: admissionLimit && { resourceId: admissionLimit.resourceId, direction: admissionLimit.direction },
+      };
+    }
+  }
+
   const activeResources = [...devices.filter(({ active }) => active), ...links.filter(({ active }) => active)];
   const binding = activeResources
     .filter(({ minHeadroom }) => minHeadroom != null)
@@ -206,6 +282,9 @@ export function calculateScenario(topology, options = {}) {
       bindingResourceId: binding?.id || null, bindingAxis: binding?.bindingAxis || null,
       minHeadroom: binding?.minHeadroom ?? null, unreachableCount: unreachable.length,
       unreachableLoadBps: unreachable.reduce((sum, item) => sum + (item.load.forwarding_bps || 0), 0),
+      droppedLoadBps: demandResults.filter(({ status }) => status === 'delivered')
+        .reduce((sum, item) => sum + (item.droppedLoad?.forwarding_bps || 0), 0),
+      refusedSessionsPerSec: demandResults.reduce((sum, item) => sum + (item.sessionAdmission?.refusedPerSec || 0), 0),
       overloadedCount: activeResources.filter(({ primaryStatus }) => primaryStatus === 'overloaded').length,
       warningCount: activeResources.filter(({ primaryStatus }) => primaryStatus === 'warning').length,
       activeFaults: disabledDevices.size + disabledLinks.size,

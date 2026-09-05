@@ -1,10 +1,10 @@
 export const axisCatalog = {
-  forwarding_bps: { label: '처리량', shortLabel: 'BPS', unit: 'bps', nodeLabel: 'BPS' },
-  forwarding_pps: { label: '패킷 처리량', shortLabel: 'PPS', unit: 'pps', nodeLabel: 'PPS' },
-  new_sessions_per_sec: { label: '신규 세션', shortLabel: 'CPS', unit: 'cps', nodeLabel: 'CPS' },
-  concurrent_sessions: { label: '동시 세션', shortLabel: 'SESS', unit: 'sessions', nodeLabel: 'SESS' },
-  nic_bps: { label: 'NIC 처리량', shortLabel: 'NIC', unit: 'bps', nodeLabel: 'NIC' },
-  nic_pps: { label: 'NIC 패킷', shortLabel: 'NIC PPS', unit: 'pps', nodeLabel: 'NPPS' },
+  forwarding_bps: { label: '처리량', shortLabel: 'BPS', unit: 'bps', nodeLabel: 'BPS', deliveryRole: 'throughput' },
+  forwarding_pps: { label: '패킷 처리량', shortLabel: 'PPS', unit: 'pps', nodeLabel: 'PPS', deliveryRole: 'throughput' },
+  new_sessions_per_sec: { label: '신규 세션', shortLabel: 'CPS', unit: 'cps', nodeLabel: 'CPS', deliveryRole: 'admission' },
+  concurrent_sessions: { label: '동시 세션', shortLabel: 'SESS', unit: 'sessions', nodeLabel: 'SESS', deliveryRole: 'admission' },
+  nic_bps: { label: 'NIC 처리량', shortLabel: 'NIC', unit: 'bps', nodeLabel: 'NIC', deliveryRole: 'throughput' },
+  nic_pps: { label: 'NIC 패킷', shortLabel: 'NIC PPS', unit: 'pps', nodeLabel: 'NPPS', deliveryRole: 'throughput' },
 };
 
 const source = {
