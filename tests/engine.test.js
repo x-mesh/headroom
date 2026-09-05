@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { cloneTopology } from '../src/data.js';
 import { calculateScenario, compareScenarios, deliveryRoleOf } from '../src/engine.js';
 import { addDemand, addDevice, addLink, createEmptyTopology } from '../src/editor.js';
+import { buildTemplate, templates } from '../src/templates.js';
 
 test('splits demand evenly across active ECMP paths', () => {
   const result = calculateScenario(cloneTopology());
@@ -315,4 +316,31 @@ test('leaves a healthy scenario untouched whatever the sync policy says', () => 
   const cold = calculateScenario(cloneTopology(), { sessionSync: 'none' });
   assert.equal(JSON.stringify(declared.devices), JSON.stringify(cold.devices));
   assert.deepEqual(declared.failover.transfers, []);
+});
+
+test('each template puts a different axis at the limit', () => {
+  const bindings = Object.fromEntries(templates.filter(({ id }) => id !== 'blank').map((template) => {
+    const scenario = calculateScenario(template.build());
+    return [template.id, [scenario.summary.bindingResourceId, scenario.summary.bindingAxis]];
+  }));
+  assert.deepEqual(bindings, {
+    'dual-fabric': ['leaf-b-api-b', 'forwarding_bps'],
+    'dsr-farm': ['lb', 'forwarding_bps'],
+    'security-chain': ['waf', 'tls_full_handshakes_per_sec'],
+  });
+});
+
+test('switching the demo balancer to DSR moves its limit off throughput', () => {
+  const topology = buildTemplate('dsr-farm');
+  const inline = calculateScenario(topology).devices.find(({ id }) => id === 'lb');
+  topology.devices.find(({ id }) => id === 'lb').behavior.mode = 'dsr';
+  const dsr = calculateScenario(topology).devices.find(({ id }) => id === 'lb');
+
+  assert.equal(round4(inline.axes.forwarding_bps.utilization), 0.9412);
+  assert.equal(round4(dsr.axes.forwarding_bps.utilization), 0.0941);
+  assert.equal(inline.bindingAxis, 'forwarding_bps');
+  assert.equal(dsr.bindingAxis, 'tls_resumed_handshakes_per_sec');
+  // 연결 추적 부담은 그대로다.
+  assert.equal(dsr.axes.concurrent_sessions.load, inline.axes.concurrent_sessions.load);
+  assert.equal(dsr.axes.tls_full_handshakes_per_sec.load, inline.axes.tls_full_handshakes_per_sec.load);
 });

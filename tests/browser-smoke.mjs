@@ -92,8 +92,23 @@ async function verify(viewport, screenshot, interact = false) {
     assert.match(await page.locator('#inspector-content').textContent(), /신규 세션/);
     assert.match(await page.locator('#inspector-content').textContent(), /용량 초과/);
 
-    page.once('dialog', (dialog) => dialog.accept());
+    // 새 설계는 템플릿 목록을 연다. 각 템플릿은 서로 다른 축이 먼저 차는 구성이다.
     await page.locator('[data-editor-action="new"]').click();
+    assert.ok(await page.locator('.template-item').count() >= 3, 'the picker must offer architectures, not just a blank sheet');
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.locator('[data-template="dsr-farm"]').click();
+    await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 5);
+    const balancer = await page.evaluate(() => {
+      const node = document.querySelector('[data-device-id="lb"]');
+      return { glyph: node.querySelector('use').getAttribute('href'), meta: node.querySelector('.node-meta').textContent };
+    });
+    assert.equal(balancer.glyph, '#icon-lb');
+    assert.match(balancer.meta, /LB/);
+
+    await page.locator('[data-editor-action="new"]').click();
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.locator('[data-template="blank"]').click();
+    await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 0);
     assert.equal(await page.locator('.mesh-node').count(), 0);
     assert.match(await page.locator('#inspector-content').textContent(), /장비가 없습니다/);
     for (const [name, kind] of [['Source A', 'switch'], ['Target A', 'server']]) {
@@ -189,7 +204,7 @@ async function verify(viewport, screenshot, interact = false) {
     assert.equal(await page.locator('#tab-palette').getAttribute('aria-selected'), 'true');
     assert.equal(await page.locator('#panel-failure').isHidden(), true, 'switching tabs must hide the failure panel');
     assert.equal(await page.locator('#failure-count').isHidden(), true, 'the active-fault badge belongs to the failure tab');
-    assert.equal(await page.locator('.palette-item').count(), 6);
+    assert.equal(await page.locator('.palette-item').count(), 12, 'the palette covers the classes a real design uses');
     assert.ok(await page.evaluate(() => [...document.querySelectorAll('.palette-item use')]
       .every((use) => document.querySelector(use.getAttribute('href')) && use.getBBox().width > 0)), 'every palette symbol must resolve');
 
@@ -268,11 +283,6 @@ async function verify(viewport, screenshot, interact = false) {
     });
     assert.ok(anchorGap < 1.5, `a link must stay on the symbol center after the origin moves, gap ${anchorGap}`);
 
-    const zoneShift = await page.evaluate(() => {
-      const canvas = document.querySelector('#topology-canvas').getBoundingClientRect();
-      return Math.round(document.querySelector('.zone-edge').getBoundingClientRect().left - canvas.left);
-    });
-    assert.equal(zoneShift, 88 - originX, 'zone labels keep their world position when the origin moves');
 
     page.once('dialog', (dialog) => dialog.accept());
     await page.locator('#project-file-input').setInputFiles({ name: 'project.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) });

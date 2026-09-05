@@ -15,7 +15,13 @@ const provenanceFile = resolve(root, 'vendor/drawio-stencils/PROVENANCE.json');
 const outputFile = resolve(root, 'src/icons.js');
 
 // 프로젝트의 kind 문자열 → drawio 도형명. rack/cloud 는 kind 가 아니라 폴백용이다.
-const STENCILS = { switch: 'Switch', router: 'Router', firewall: 'Firewall', lb: 'Load Balancer', server: 'Server', storage: 'Storage', rack: 'Rack', cloud: 'Cloud' };
+const STENCILS = {
+  switch: 'Switch', router: 'Router', hub: 'Hub',
+  firewall: 'Firewall', lb: 'Load Balancer', waf: 'Proxy Server',
+  server: 'Server', web: 'Web Server', vm: 'Virtual Server', mainframe: 'Mainframe',
+  storage: 'Storage', nas: 'NAS Filer',
+  rack: 'Rack', cloud: 'Cloud',
+};
 // 스트로크는 경로 위에 중앙 정렬되므로 선언 박스를 넘는다. 8개 도형의 실측 필요값은 1.0 이다.
 const PAD = 2;
 // 리터럴 색을 화이트리스트로 막는다. 업스트림이 브랜드 색을 넣으면 생성물에 박히지 않고 빌드가 깨진다.
@@ -42,9 +48,12 @@ function fmt(value) {
   return String(Object.is(rounded, -0) ? 0 : rounded);
 }
 
-function num(node, name) {
+function num(node, name, fallback) {
   const raw = node.attrs[name];
-  if (raw === undefined) fail(`<${node.tag}>에 ${name} 속성이 없습니다.`);
+  if (raw === undefined) {
+    if (fallback !== undefined) return fallback;
+    fail(`<${node.tag}>에 ${name} 속성이 없습니다.`);
+  }
   const value = Number(raw);
   if (!Number.isFinite(value)) fail(`<${node.tag}> ${name}="${raw}"는 숫자가 아닙니다.`);
   return value;
@@ -101,12 +110,12 @@ export function buildPathData(children) {
 }
 
 const samePaint = (a, b) => a.kind === b.kind && a.value === b.value;
-const sameState = (a, b) => samePaint(a.fill, b.fill) && samePaint(a.stroke, b.stroke) && a.strokeWidth === b.strokeWidth;
+const sameState = (a, b) => samePaint(a.fill, b.fill) && samePaint(a.stroke, b.stroke) && a.strokeWidth === b.strokeWidth && a.dash === b.dash;
 
 export function interpretShape(shape) {
   const name = shape.attrs.name || fail('이름 없는 <shape>입니다.');
   if (shape.attrs.aspect !== 'variable') fail(`${name}: aspect="${shape.attrs.aspect}"는 지원하지 않습니다.`);
-  if (shape.attrs.strokewidth !== String(BASE_STROKE_WIDTH)) fail(`${name}: strokewidth="${shape.attrs.strokewidth}"는 지원하지 않습니다.`);
+  if (![String(BASE_STROKE_WIDTH), 'inherit'].includes(shape.attrs.strokewidth)) fail(`${name}: strokewidth="${shape.attrs.strokewidth}"는 지원하지 않습니다.`);
   const width = num(shape, 'w');
   const height = num(shape, 'h');
   if (shape.children.some((child) => child.tag === 'background')) fail(`${name}: <background>는 지원하지 않습니다.`);
@@ -115,10 +124,13 @@ export function interpretShape(shape) {
     if (!['connections', 'foreground'].includes(child.tag)) fail(`${name}: <shape> 아래에 알 수 없는 요소 <${child.tag}>`);
   }
 
-  const state = { fill: INHERIT, stroke: INHERIT, strokeWidth: BASE_STROKE_WIDTH };
+  const state = { fill: INHERIT, stroke: INHERIT, strokeWidth: BASE_STROKE_WIDTH, dash: null };
+  // save/restore 는 도색 상태만 쌓았다 되돌린다. 경로는 대기 노드가 따로 들고 있다.
+  const stateStack = [];
   const elements = [];
   let pending = null;
   let paints = 0;
+  let skipped = 0;
 
   const setPending = (tag, attrs) => {
     if (pending) fail(`${name}: 도색되지 않은 도형 위에 <${tag}>가 왔습니다. 앞의 도형이 버려집니다.`);
@@ -126,14 +138,17 @@ export function interpretShape(shape) {
   };
   const emit = (fill, stroke) => {
     if (!pending) fail(`${name}: 그릴 도형 없이 도색 명령이 왔습니다.`);
-    elements.push({ ...pending, fill, stroke, strokeWidth: state.strokeWidth });
+    // 속성 없는 rect 는 크기 0 이다. mxGraph 가 save/restore 뒤 대기 노드를 비울 때 쓰는
+    // 관용구이며 화면에 아무것도 남기지 않으므로 생성물에서 뺀다.
+    if (pending.tag === 'rect' && (!pending.attrs.width || !pending.attrs.height)) skipped += 1;
+    else elements.push({ ...pending, fill, stroke, strokeWidth: state.strokeWidth, dash: state.dash });
     pending = null;
     paints += 1;
   };
 
   for (const node of foreground.children) {
     switch (node.tag) {
-      case 'rect': setPending('rect', { x: num(node, 'x'), y: num(node, 'y'), width: num(node, 'w'), height: num(node, 'h') }); break;
+      case 'rect': setPending('rect', { x: num(node, 'x', 0), y: num(node, 'y', 0), width: num(node, 'w', 0), height: num(node, 'h', 0) }); break;
       case 'roundrect': {
         const w = num(node, 'w');
         const h = num(node, 'h');
@@ -163,6 +178,8 @@ export function interpretShape(shape) {
         state[key] = { kind: 'literal', value: color, token };
         break;
       }
+      case 'dashpattern': state.dash = String(node.attrs.pattern || '').trim() || null; break;
+      case 'dashed': if (node.attrs.dashed !== '1') state.dash = null; break;
       case 'strokewidth': {
         if (node.attrs.fixed === '1') fail(`${name}: strokewidth fixed="1"은 지원하지 않습니다.`);
         const value = num(node, 'width');
@@ -170,13 +187,19 @@ export function interpretShape(shape) {
         state.strokeWidth = value;
         break;
       }
-      case 'save': case 'restore': fail(`${name}: <${node.tag}>는 지원하지 않습니다. 상태 스택을 모델링하지 않습니다.`);
+      case 'save': stateStack.push({ ...state }); break;
+      case 'restore': {
+        const saved = stateStack.pop() || fail(`${name}: restore 에 짝이 되는 save 가 없습니다.`);
+        Object.assign(state, saved);
+        break;
+      }
       default: fail(`${name}: 알 수 없는 명령 <${node.tag}>`);
     }
   }
 
   if (pending) fail(`${name}: 도색되지 않은 도형이 남았습니다.`);
-  if (elements.length !== paints) fail(`${name}: 방출 수(${elements.length})와 도색 명령 수(${paints})가 다릅니다.`);
+  if (stateStack.length) fail(`${name}: 닫히지 않은 save 가 ${stateStack.length}개 남았습니다.`);
+  if (elements.length + skipped !== paints) fail(`${name}: 방출 수(${elements.length}+${skipped})와 도색 명령 수(${paints})가 다릅니다.`);
   assertInsideBox(name, elements, width, height);
   return { name, width, height, elements };
 }
@@ -217,17 +240,18 @@ function stateMarkup(state, base) {
     else fail(`상속 상태를 되돌릴 수 없습니다: ${key}`);
   }
   if (state.strokeWidth !== base.strokeWidth) attrs.push(`stroke-width="${fmt(state.strokeWidth)}"`);
+  if (state.dash !== base.dash) attrs.push(`stroke-dasharray="${state.dash ?? 'none'}"`);
   if (styles.length) attrs.push(`style="${styles.join(';')}"`);
   return attrs;
 }
 
 export function serializeBody(elements) {
-  const base = { fill: INHERIT, stroke: INHERIT, strokeWidth: BASE_STROKE_WIDTH };
+  const base = { fill: INHERIT, stroke: INHERIT, strokeWidth: BASE_STROKE_WIDTH, dash: null };
   const runs = [];
   for (const element of elements) {
     const last = runs[runs.length - 1];
     if (last && sameState(last.state, element)) last.items.push(element);
-    else runs.push({ state: { fill: element.fill, stroke: element.stroke, strokeWidth: element.strokeWidth }, items: [element] });
+    else runs.push({ state: { fill: element.fill, stroke: element.stroke, strokeWidth: element.strokeWidth, dash: element.dash }, items: [element] });
   }
   const body = runs.map((run) => {
     const attrs = stateMarkup(run.state, base);

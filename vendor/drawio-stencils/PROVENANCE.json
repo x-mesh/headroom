@@ -6,7 +6,7 @@
   "fetchedAt": "2026-09-05",
   "upstreamBytes": 191647,
   "upstreamSha256": "2921086e1eec8cddcde937feec78caff85fa6b2b82670f29ded51e69b21e3711",
-  "subsetSha256": "d342826cc9ac239e746fec24b36324b52b9ecc5d3eb3b7426747b350468511f5",
+  "subsetSha256": "fc05225dddb3f3623ee1b2757515299c78140c99c1651a64ab7cc1e4ca9c3f2e",
   "shapes": [
     "Switch",
     "Router",
@@ -15,7 +15,13 @@
     "Server",
     "Storage",
     "Rack",
-    "Cloud"
+    "Cloud",
+    "Proxy Server",
+    "Web Server",
+    "Virtual Server",
+    "NAS Filer",
+    "Hub",
+    "Mainframe"
   ],
   "license": "Apache-2.0 + stencils/LICENSE restriction"
 }

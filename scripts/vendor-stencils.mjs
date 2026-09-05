@@ -11,7 +11,10 @@ const repo = 'jgraph/drawio';
 const stencilPath = 'src/main/webapp/stencils/networks.xml';
 const licensePath = 'src/main/webapp/stencils/LICENSE';
 
-export const SHAPES = ['Switch', 'Router', 'Firewall', 'Load Balancer', 'Server', 'Storage', 'Rack', 'Cloud'];
+export const SHAPES = [
+  'Switch', 'Router', 'Firewall', 'Load Balancer', 'Server', 'Storage', 'Rack', 'Cloud',
+  'Proxy Server', 'Web Server', 'Virtual Server', 'NAS Filer', 'Hub', 'Mainframe',
+];
 
 const sha256 = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
 

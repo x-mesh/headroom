@@ -5,6 +5,8 @@ export const axisCatalog = {
   concurrent_sessions: { label: '동시 세션', shortLabel: 'SESS', unit: 'sessions', nodeLabel: 'SESS', deliveryRole: 'admission' },
   nic_bps: { label: 'NIC 처리량', shortLabel: 'NIC', unit: 'bps', nodeLabel: 'NIC', deliveryRole: 'throughput' },
   nic_pps: { label: 'NIC 패킷', shortLabel: 'NIC PPS', unit: 'pps', nodeLabel: 'NPPS', deliveryRole: 'throughput' },
+  tls_full_handshakes_per_sec: { label: 'TLS 신규 핸드셰이크', shortLabel: 'TLS FULL', unit: 'tps', nodeLabel: 'TLSF', deliveryRole: 'admission' },
+  tls_resumed_handshakes_per_sec: { label: 'TLS 재개 핸드셰이크', shortLabel: 'TLS RSMD', unit: 'tps', nodeLabel: 'TLSR', deliveryRole: 'admission' },
 };
 
 // 응답이 볼류메트릭 부하에서 차지하는 몫. 웹 워크로드는 응답이 대부분이다.

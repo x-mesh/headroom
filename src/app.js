@@ -1,9 +1,10 @@
 import { axisCatalog, cloneTopology } from './data.js';
 import { calculateScenario, compareScenarios, createExport } from './engine.js';
-import { addDemand, addDevice, addLink, createEmptyTopology, moveDevice, normalizeId, removeDemand, removeDevice, removeLink, updateDemand, updateDevice, updateLink } from './editor.js';
+import { addDemand, addDevice, addLink, moveDevice, normalizeId, removeDemand, removeDevice, removeLink, updateDemand, updateDevice, updateLink } from './editor.js';
 import { importDeviceDefinition } from './device-import.js';
 import { parseProject, serializeProject } from './project.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
+import { buildTemplate, templates } from './templates.js';
 
 let topology = cloneTopology();
 const state = { scale: 1, selectedId: 'fw-a', disabledDevices: new Set(), disabledLinks: new Set(), editorMode: 'select', connectSource: null, leftPanel: 'palette', zoom: 1 };
@@ -161,10 +162,16 @@ function nodeAccessibleName(device) {
 const PALETTE = [
   { kind: 'switch', label: '스위치', limits: { forwarding_bps: null, forwarding_pps: null } },
   { kind: 'router', label: '라우터', limits: { forwarding_bps: null, forwarding_pps: null } },
+  { kind: 'hub', label: '허브', limits: { forwarding_bps: null, forwarding_pps: null } },
+  { kind: 'cloud', label: '외부망', limits: { forwarding_bps: null, forwarding_pps: null } },
   { kind: 'firewall', label: '방화벽', limits: { forwarding_bps: null, forwarding_pps: null, new_sessions_per_sec: null, concurrent_sessions: null } },
-  { kind: 'lb', label: '로드밸런서', limits: { forwarding_bps: null, new_sessions_per_sec: null, concurrent_sessions: null } },
+  { kind: 'lb', label: '로드밸런서', limits: { forwarding_bps: null, new_sessions_per_sec: null, concurrent_sessions: null, tls_full_handshakes_per_sec: null, tls_resumed_handshakes_per_sec: null } },
+  { kind: 'waf', label: 'WAF · 프록시', limits: { forwarding_bps: null, new_sessions_per_sec: null, concurrent_sessions: null, tls_full_handshakes_per_sec: null } },
   { kind: 'server', label: '서버', limits: { nic_bps: null, nic_pps: null } },
+  { kind: 'web', label: '웹 서버', limits: { nic_bps: null, nic_pps: null, new_sessions_per_sec: null } },
+  { kind: 'vm', label: '가상 서버', limits: { nic_bps: null, nic_pps: null } },
   { kind: 'storage', label: '스토리지', limits: { nic_bps: null, nic_pps: null } },
+  { kind: 'nas', label: 'NAS', limits: { nic_bps: null, nic_pps: null } },
 ];
 const PALETTE_DRAG_THRESHOLD = 4;
 let paletteDrag = null;
@@ -371,7 +378,7 @@ function renderInspector() {
 }
 
 function renderDeviceEditor(resource) {
-  const fields = ['forwarding_bps', 'forwarding_pps', 'new_sessions_per_sec', 'concurrent_sessions', 'nic_bps', 'nic_pps'];
+  const fields = Object.keys(resource.limits);
   return `<form class="inspector-editor" data-resource-form="device" data-resource-id="${resource.id}">
     <h3>장비 한계 편집</h3>
     <label>이름<input name="name" maxlength="80" required value="${escapeAttribute(resource.name)}"></label>
@@ -507,6 +514,27 @@ function nextDevicePosition() {
   return deviceSlot(topology.devices.length);
 }
 
+function openTemplatePicker() {
+  openEditorPanel('설계 템플릿', `<p class="editor-hint">템플릿마다 먼저 차는 축이 다릅니다. 불러온 뒤 장비를 눌러 어느 축이 병목인지 확인하세요.</p>
+    <div class="template-list">${templates.map((item) => `<button type="button" class="template-item" data-template="${escapeAttribute(item.id)}">
+      <strong>${escapeText(item.name)}</strong><span>${escapeText(item.summary)}</span>${item.teaches ? `<em>${escapeText(item.teaches)}</em>` : ''}
+    </button>`).join('')}</div>`);
+}
+
+function applyTemplate(id) {
+  const chosen = templates.find((item) => item.id === id);
+  if (!chosen) return;
+  const impact = `${topology.devices.length}개 장비, ${topology.links.length}개 링크, ${topology.demands.length}개 demand`;
+  if (!window.confirm(`현재 설계의 ${impact}를 버리고 ${chosen.name}을 불러옵니다. 저장하지 않은 변경은 복구할 수 없습니다. 계속하시겠습니까?`)) return;
+  topology = buildTemplate(id);
+  state.scale = 1; state.selectedId = topology.devices[0]?.id || null;
+  state.disabledDevices.clear(); state.disabledLinks.clear();
+  element('scale-input').value = '100';
+  closeEditorPanel();
+  commitTopology(`${chosen.name}을 불러왔습니다.`);
+  centerCanvas();
+}
+
 function openDeviceForm(template = null) {
   openEditorPanel('장비 추가', `<p class="editor-hint">장비를 만든 뒤 캔버스에서 드래그해 위치를 조정하세요. 비어 있는 한계값은 unknown으로 유지됩니다.</p><form class="editor-form" data-editor-form="device">
     <label>이름<input name="name" maxlength="80" required value="${escapeAttribute(template?.name || '')}"></label>
@@ -573,11 +601,7 @@ function handleEditorAction(action) {
   if (action === 'save') saveProject();
   if (action === 'open') element('project-file-input').click();
   if (action === 'import-device') element('device-file-input').click();
-  if (action === 'new') {
-    const impact = `${topology.devices.length}개 장비, ${topology.links.length}개 링크, ${topology.demands.length}개 demand`;
-    if (!window.confirm(`현재 설계의 ${impact}를 비우고 새 설계를 만듭니다. 저장하지 않은 변경은 복구할 수 없습니다. 계속하시겠습니까?`)) return;
-    topology = createEmptyTopology('Untitled topology'); state.scale = 1; state.selectedId = null; element('scale-input').value = '100'; closeEditorPanel(); commitTopology('빈 설계를 만들었습니다.');
-  }
+  if (action === 'new') openTemplatePicker();
 }
 
 function toggleFailure(type, id) {
@@ -677,6 +701,8 @@ element('editor-panel-content').addEventListener('submit', (event) => {
   } catch (error) { formError(form, error.message); }
 });
 element('editor-panel-content').addEventListener('click', (event) => {
+  const template = event.target.closest('[data-template]');
+  if (template) { applyTemplate(template.dataset.template); return; }
   if (event.target.closest('[data-new-demand]')) { openDemandForm(); return; }
   const button = event.target.closest('[data-delete-demand]'); if (!button) return;
   const demand = topology.demands.find(({ id }) => id === button.dataset.deleteDemand);
