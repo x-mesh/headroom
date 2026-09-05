@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cloneTopology } from '../src/data.js';
-import { calculateScenario, compareScenarios, deliveryRoleOf } from '../src/engine.js';
+import { calculateScenario, compareScenarios, deliveryRoleOf, sweepSingleFaults } from '../src/engine.js';
 import { addDemand, addDevice, addLink, createEmptyTopology } from '../src/editor.js';
 import { buildTemplate, templates } from '../src/templates.js';
 
@@ -350,4 +350,45 @@ test('switching the demo balancer to DSR moves its limit off throughput', () => 
   // 연결 추적 부담은 그대로다.
   assert.equal(dsr.axes.concurrent_sessions.load, inline.axes.concurrent_sessions.load);
   assert.equal(dsr.axes.tls_full_handshakes_per_sec.load, inline.axes.tls_full_handshakes_per_sec.load);
+});
+
+test('the single-fault sweep separates a severed design from an overloaded one', () => {
+  const dual = sweepSingleFaults(cloneTopology());
+  const findOne = (sweep, id) => sweep.resources.find((resource) => resource.id === id);
+  // 방화벽이 두 대라 하나가 죽어도 끊기지 않는다. 남은 쪽이 못 견딜 뿐이다.
+  assert.equal(findOne(dual, 'fw-a').verdict, 'overloads');
+  assert.ok(findOne(dual, 'fw-a').worstUtilization > 1);
+  // 두 demand 가 모두 지나는 리프는 진짜 단일 장애점이다.
+  assert.equal(findOne(dual, 'leaf-a').verdict, 'severs');
+  assert.equal(dual.grade, 'single-point');
+
+  // 로드밸런서가 한 대뿐인 설계는 그 한 대가 끊는다.
+  const single = sweepSingleFaults(buildTemplate('dsr-farm'));
+  assert.equal(findOne(single, 'lb').verdict, 'severs');
+  assert.equal(findOne(single, 'lb').endpoint, false);
+});
+
+test('the sweep ignores injected faults and stays deterministic', () => {
+  const topology = cloneTopology();
+  const clean = sweepSingleFaults(topology);
+  // 이미 주입된 장애 위에 얹으면 이중 장애가 된다. 스윕은 설계의 성질이지 현재 상태가 아니다.
+  const withFault = sweepSingleFaults(topology, { disabledDevices: ['fw-a'], disabledLinks: ['leaf-a-api-a'] });
+  assert.deepEqual(withFault, clean);
+  assert.equal(JSON.stringify(sweepSingleFaults(topology)), JSON.stringify(clean));
+});
+
+test('the sweep counts demand endpoints apart and never calls an unknown design safe', () => {
+  const topology = cloneTopology();
+  const sweep = sweepSingleFaults(topology);
+  // api-a 는 east-west 의 출발지다. 끄면 끊기지만 그건 이중화 문제가 아니다.
+  const endpoint = sweep.resources.find((resource) => resource.id === 'api-a');
+  assert.equal(endpoint.endpoint, true);
+  assert.equal(endpoint.verdict, 'severs');
+  assert.equal(sweep.resources.filter(({ verdict, endpoint: end }) => verdict === 'severs' && !end).length, sweep.severs);
+
+  // 한계를 모르는 축이 남아 있으면 '견딤'은 상한이다.
+  const spine = sweep.resources.find((resource) => resource.id === 'spine-a');
+  assert.equal(spine.verdict, 'overloads');
+  const blank = sweepSingleFaults(buildTemplate('blank'));
+  assert.deepEqual([blank.grade, blank.resources.length], ['unknown', 0]);
 });

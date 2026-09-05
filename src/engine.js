@@ -384,6 +384,54 @@ export function compareScenarios(baseline, current) {
   };
 }
 
+// 자원 하나가 죽으면 이 설계가 어떻게 되는지 미리 계산한다. 항상 무장애에서 시작하므로
+// 지금 주입된 장애에 영향받지 않는다. 현재 상태가 아니라 설계의 성질이다.
+//
+// demand 의 출발지나 목적지인 장비는 끄면 당연히 끊긴다. 그건 이중화 문제가 아니므로
+// endpoint 로 표시하고 단일 장애점 집계에서 뺀다.
+export function sweepSingleFaults(topology, options = {}) {
+  const base = { scale: options.scale ?? 1, ...(options.strictPaths ? { strictPaths: true } : {}) };
+  // demand 는 endpoint 로 적히기도 하고 경로를 직접 나열하기도 한다. 후자는 각 경로의 양 끝이 출발지·목적지다.
+  const endpoints = new Set(topology.demands.flatMap((demand) => [demand.source, demand.target,
+    ...(demand.paths || []).flatMap(({ devices }) => [devices?.[0], devices?.at(-1)])]).filter(Boolean));
+  const resources = [];
+
+  for (const [type, items, key] of [['device', topology.devices, 'disabledDevices'], ['link', topology.links, 'disabledLinks']]) {
+    for (const item of items) {
+      const result = calculateScenario(topology, { ...base, [key]: [item.id] });
+      const partial = result.demands.some(({ deliveredRatio }) => deliveredRatio != null && deliveredRatio < 1);
+      const verdict = result.summary.unreachableCount > 0 ? 'severs'
+        : result.summary.overloadedCount > 0 || partial ? 'overloads'
+        : 'absorbs';
+      const worstId = result.summary.bindingResourceId;
+      const worst = worstId ? [...result.devices, ...result.links].find(({ id }) => id === worstId) : null;
+      resources.push({
+        id: item.id, type, verdict,
+        // 한계를 모르는 축이 있으면 판정은 상한이다. 모름을 안전으로 바꾸지 않는다.
+        bounded: result.demands.some(({ deliveredRatioBound }) => deliveredRatioBound === 'upper'),
+        endpoint: type === 'device' && endpoints.has(item.id),
+        unreachableCount: result.summary.unreachableCount,
+        minDeliveredRatio: result.demands.reduce((min, { deliveredRatio }) => deliveredRatio == null ? min : Math.min(min, deliveredRatio), 1),
+        worstResourceId: worstId,
+        worstAxis: result.summary.bindingAxis,
+        worstUtilization: worst?.axes?.[result.summary.bindingAxis]?.utilization ?? null,
+      });
+    }
+  }
+
+  const counted = resources.filter(({ endpoint }) => !endpoint);
+  const severs = counted.filter(({ verdict }) => verdict === 'severs').length;
+  const overloads = counted.filter(({ verdict }) => verdict === 'overloads').length;
+  const absorbs = counted.filter(({ verdict }) => verdict === 'absorbs').length;
+  const bounded = counted.filter(({ verdict, bounded: b }) => verdict === 'absorbs' && b).length;
+  const grade = !counted.length ? 'unknown'
+    : severs > 0 ? 'single-point'
+    : overloads > 0 ? 'partial'
+    : bounded > 0 ? 'unknown'
+    : 'redundant';
+  return { resources, severs, overloads, absorbs, bounded, endpoints: resources.length - counted.length, grade };
+}
+
 export function createExport(topology, scenario, baseline) {
   const compact = (resource) => ({
     id: resource.id, kind: resource.kind ?? 'link', active: resource.active,
