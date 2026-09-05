@@ -93,8 +93,14 @@ async function verify(viewport, screenshot, interact = false) {
     assert.match(await page.locator('#inspector-content').textContent(), /용량 초과/);
 
     // 새 설계는 템플릿 목록을 연다. 각 템플릿은 서로 다른 축이 먼저 차는 구성이다.
+    const beforePanel = await page.evaluate(() => Math.round(document.querySelector('.main-grid').getBoundingClientRect().top));
     await page.locator('[data-editor-action="new"]').click();
     assert.ok(await page.locator('.template-item').count() >= 6, 'the picker must offer architectures, not just a blank sheet');
+    assert.equal(await page.evaluate(() => Math.round(document.querySelector('.main-grid').getBoundingClientRect().top)), beforePanel,
+      'the editor panel must float over the page, not push it down');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#editor-panel').isHidden(), true, 'escape must close the panel');
+    await page.locator('[data-editor-action="new"]').click();
     page.once('dialog', (dialog) => dialog.accept());
     await page.locator('[data-template="inline-lb"]').click();
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 5);

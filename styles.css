@@ -88,7 +88,7 @@ button { color: inherit; }
 .metric-sparkline circle { fill: var(--surface-raised); stroke: currentColor; stroke-width: 1.5; }
 .mobile-fault-tray { display: none; }
 .visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0 0 0 0) !important; white-space: nowrap !important; border: 0 !important; }
-.editor-deck { min-height: 54px; padding: 7px 22px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--line); background: var(--surface-raised); }
+.editor-deck { position: relative; min-height: 54px; padding: 7px 22px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--line); background: var(--surface-raised); }
 .editor-tools { min-width: 0; max-width: 100%; display: flex; align-items: center; gap: 6px; overflow-x: auto; }
 .editor-tools button, .editor-panel button { min-height: 36px; padding: 0 11px; border: 1px solid var(--line); background: var(--surface); color: var(--text); cursor: pointer; font: 600 9px/1 var(--font-data); white-space: nowrap; }
 .editor-tools button:hover, .editor-panel button:hover { border-color: var(--cyan); color: var(--cyan); }
@@ -96,7 +96,7 @@ button { color: inherit; }
 .tool-separator { width: 1px; height: 24px; background: var(--line); margin: 0 4px; }
 .editor-mode { flex: none; display: flex; align-items: center; gap: 8px; color: var(--muted); font: 600 9px/1 var(--font-data); letter-spacing: .08em; }
 .editor-mode span { width: 7px; height: 7px; background: var(--cyan); }
-.editor-panel { border-bottom: 1px solid var(--line); background: var(--surface-tint); }
+.editor-panel { position: absolute; top: 100%; left: 0; right: 0; z-index: 40; max-height: calc(100vh - 190px); overflow: auto; border-bottom: 1px solid var(--line); background: var(--surface-tint); box-shadow: 0 14px 34px color-mix(in srgb, var(--panel-deep) 22%, transparent); }
 .editor-panel[hidden] { display: none; }
 .editor-panel > header { min-height: 58px; padding: 10px 22px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line-soft); }
 .editor-panel h2 { margin: 5px 0 0; font-size: 17px; }

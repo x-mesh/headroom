@@ -811,6 +811,15 @@ topologyScroll.addEventListener('pointerup', endPan);
 topologyScroll.addEventListener('pointercancel', endPan);
 topologyScroll.addEventListener('lostpointercapture', endPan);
 
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !element('editor-panel').hidden) closeEditorPanel();
+});
+document.addEventListener('pointerdown', (event) => {
+  if (element('editor-panel').hidden) return;
+  if (event.target.closest('#editor-panel') || event.target.closest('[data-editor-action]')) return;
+  closeEditorPanel();
+});
+
 document.querySelector('.zoom-control').addEventListener('click', (event) => {
   const action = event.target.closest('[data-zoom]')?.dataset.zoom;
   if (action === 'in') stepZoom(1);

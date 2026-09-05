@@ -258,7 +258,7 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Text:** Use a transparent surface and a visible border on the deep top bar.
 - **Hover / Focus:** Shift the border or surface. Use a 2px signal focus outline with a 3px offset.
 
-### Editor Toolbar and Inline Panel
+### Editor Toolbar and Overlay Panel
 
 - **Toolbar:** Use a 54px white deck with compact square buttons, six-pixel gaps, and a visible tool separator.
 - **Actions:** Expose new, add device, connect, manage demand, save, open, and import actions.
@@ -302,6 +302,13 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Shape:** Use a two-pixel underline on the open tab. Use no corner radius and no filled tab body.
 - **Badge:** Show the active-fault count only on the failure tab. Hide it on the component tab.
 - **Keyboard:** Move between tabs with the arrow keys, Home, and End. Keep only the open tab in the tab order.
+
+### Editor Panel Placement
+
+- **Overlay:** Float the panel under the toolbar. Opening it must not move the summary strip or the workspace.
+- **Cover:** Let it cover what sits below and cast a shadow, so the panel reads as temporary.
+- **Dismiss:** Close on Escape, on the close button, and on a press outside the panel.
+- **Height:** Cap it to the viewport and scroll inside. Never let it push the page taller.
 
 ### Design Template Picker
 
