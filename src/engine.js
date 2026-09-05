@@ -174,12 +174,19 @@ export function calculateScenario(topology, options = {}) {
   const linkLoads = Object.fromEntries(topology.links.map(({ id }) => [id, { forward: {}, reverse: {} }]));
   const demandResults = [];
   const resolvedPaths = resolveDemandPaths(topology, disabledDevices, disabledLinks, options);
+  // 장애가 있을 때만 푼다. 끊긴 demand 가 무장애였다면 어디를 지났는지는 결과에 남지 않으므로
+  // 캔버스가 무엇이 끊겼는지 그릴 수 없다. 폭증 계산도 같은 경로를 쓴다.
+  const noFaultPaths = disabledDevices.size || disabledLinks.size
+    ? resolveDemandPaths(topology, new Set(), new Set(), options)
+    : null;
 
   for (const demand of topology.demands) {
     const { activePaths, invalidPaths } = resolvedPaths.get(demand.id);
     const validity = invalidPaths.length ? 'invalid' : 'valid';
     if (!activePaths.length) {
-      demandResults.push({ id: demand.id, name: demand.name, status: 'unreachable', validity, invalidPaths, deliveredRatio: 0, paths: [], load: scaledLoad(demand.load, scale) });
+      demandResults.push({ id: demand.id, name: demand.name, status: 'unreachable', validity, invalidPaths, deliveredRatio: 0, paths: [],
+        severedPaths: (noFaultPaths?.get(demand.id)?.activePaths || []).map(({ id, devices, links }) => ({ id, devices, links })),
+        load: scaledLoad(demand.load, scale) });
       continue;
     }
     const share = 1 / activePaths.length;
@@ -195,7 +202,7 @@ export function calculateScenario(topology, options = {}) {
     });
   }
 
-  const failover = failoverSurge(topology, options, disabledDevices, disabledLinks, scale, resolvedPaths);
+  const failover = failoverSurge(topology, options, disabledDevices, disabledLinks, scale, resolvedPaths, noFaultPaths);
   for (const [deviceId, cps] of Object.entries(failover.surge)) {
     deviceLoads[deviceId].new_sessions_per_sec = (deviceLoads[deviceId].new_sessions_per_sec || 0) + cps;
   }
@@ -236,7 +243,11 @@ export function calculateScenario(topology, options = {}) {
     }
     const summary = summarizeAxes(spread);
     const [bindingDirection, bindingAxis] = summary.bindingAxis ? summary.bindingAxis.split(':') : [null, null];
-    return { ...link, active: !disabledLinks.has(link.id), load, axes, directions, ...summary, bindingAxis, bindingDirection };
+    const active = !disabledLinks.has(link.id);
+    // 링크가 켜져 있어도 양 끝 중 하나가 죽으면 트래픽은 흐를 수 없다. 경로 탐색은 이미
+    // 그 조건을 보는데(findShortestPaths) 링크 결과에는 담기지 않아 유휴 링크와 구별되지 않았다.
+    const severed = !active || disabledDevices.has(link.source) || disabledDevices.has(link.target);
+    return { ...link, active, severed, load, axes, directions, ...summary, bindingAxis, bindingDirection };
   });
   const passTable = new Map();
   const passFor = (axes) => {
@@ -329,7 +340,7 @@ export function calculateScenario(topology, options = {}) {
   };
 }
 
-function failoverSurge(topology, options, disabledDevices, disabledLinks, scale, currentPaths) {
+function failoverSurge(topology, options, disabledDevices, disabledLinks, scale, currentPaths, baselinePaths) {
   const groups = topology.haGroups || [];
   const override = options.sessionSync && options.sessionSync !== 'declared' ? options.sessionSync : null;
   const report = {
@@ -341,7 +352,6 @@ function failoverSurge(topology, options, disabledDevices, disabledLinks, scale,
   const unknownSurge = new Set();
   if (!disabledDevices.size) return { surge, unknownSurge, report };
 
-  const baselinePaths = resolveDemandPaths(topology, new Set(), new Set(), options);
   for (const failedId of disabledDevices) {
     const group = groups.find(({ members }) => members.includes(failedId));
     const sessionSync = override || group?.sessionSync || SESSION_SYNC_DEFAULT;

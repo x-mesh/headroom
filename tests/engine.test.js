@@ -413,3 +413,36 @@ test('the paired templates differ only after one device dies', () => {
   assert.ok(survivor.axes.new_sessions_per_sec.utilization > 1.7);
   assert.ok(survivor.axes.new_sessions_per_sec.contributions.failoverSurge > 0);
 });
+
+test('a link whose endpoint died is severed, not idle', () => {
+  const result = calculateScenario(cloneTopology(), { disabledDevices: ['fw-a'] });
+  const severed = (id) => result.links.find((link) => link.id === id).severed;
+  // fw-a 에 붙은 두 링크는 켜져 있지만 트래픽이 흐를 수 없다.
+  assert.deepEqual([severed('edge-a-fw-a'), severed('fw-a-spine-a')], [true, true]);
+  assert.equal(result.links.find(({ id }) => id === 'edge-a-fw-a').active, true, 'the link itself was never turned off');
+  // 같은 팹릭의 다른 링크는 멀쩡하다.
+  assert.equal(severed('spine-a-leaf-a'), false);
+
+  const clean = calculateScenario(cloneTopology());
+  assert.ok(clean.links.every(({ severed: cut }) => cut === false), 'nothing is severed without a fault');
+  const cutLink = calculateScenario(cloneTopology(), { disabledLinks: ['spine-a-leaf-a'] });
+  assert.equal(cutLink.links.find(({ id }) => id === 'spine-a-leaf-a').severed, true);
+});
+
+test('an unreachable demand keeps the path it would have taken', () => {
+  // 단일 경로 설계에서 중간 장비를 끄면 그 demand 는 갈 곳이 없다.
+  const single = buildTemplate('single-stack');
+  const result = calculateScenario(single, { disabledDevices: ['fw'] });
+  const demand = result.demands.find(({ id }) => id === 'web-a-traffic');
+  assert.equal(demand.status, 'unreachable');
+  assert.equal(demand.paths.length, 0, 'nothing carries it now');
+  assert.equal(demand.severedPaths.length, 1, 'but the design has one path it used to take');
+  assert.ok(demand.severedPaths[0].devices.includes('fw'));
+  assert.ok(demand.severedPaths[0].links.length > 0, 'the canvas needs the links to draw the break');
+
+  // 장애가 없으면 무장애 경로를 다시 풀지 않는다.
+  assert.ok(calculateScenario(single).demands.every(({ severedPaths }) => severedPaths === undefined));
+  // 끊기지 않은 demand 에는 붙지 않는다.
+  assert.equal(calculateScenario(cloneTopology(), { disabledDevices: ['fw-a'] })
+    .demands.find(({ id }) => id === 'public-api').severedPaths, undefined);
+});
