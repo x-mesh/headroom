@@ -129,6 +129,12 @@ function symbolId(kind) {
   return ICONS[ICON_KINDS.find((name) => key.includes(name)) || ICON_FALLBACK].id;
 }
 
+function behaviorToken(device) {
+  const catalog = behaviorCatalog[device.kind];
+  if (!catalog) return '';
+  return catalog.options[device.behavior?.mode ?? catalog.default]?.token || '';
+}
+
 const nodeAxisLabel = (key) => axisCatalog[key]?.nodeLabel || key.replace(/[^a-z0-9]/gi, '').slice(0, 4).toUpperCase();
 
 // 선별은 심각도 순으로, 렌더는 limits 삽입 순서로. 문제 축은 반드시 노출하면서 행 순서는 흔들리지 않는다.
@@ -347,7 +353,7 @@ function renderTopology() {
   element('node-layer').innerHTML = current.devices.map((device) => {
     const status = device.active ? device.primaryStatus : 'disabled';
     const { rows, hidden } = nodeAxes(device);
-    const meta = [device.kind.toUpperCase(), device.zone, hidden ? `+${hidden}` : ''].filter(Boolean).join(' \u00b7 ');
+    const meta = [device.kind.toUpperCase(), behaviorToken(device), device.zone, hidden ? `+${hidden}` : ''].filter(Boolean).join(' \u00b7 ');
     const axes = device.active
       ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis)).join('')
       : '<span class="node-axis" data-axis-state="disabled"><i>x</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>';

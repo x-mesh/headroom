@@ -98,6 +98,7 @@ async function verify(viewport, screenshot, interact = false) {
     page.once('dialog', (dialog) => dialog.accept());
     await page.locator('[data-template="inline-lb"]').click();
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 5);
+    assert.match(await page.locator('[data-device-id="lb"] .node-meta').textContent(), /INLINE/);
     await page.locator('[data-device-id="lb"]').click();
     assert.equal(await page.locator('.behavior-choice input:checked').inputValue(), 'inline');
     // 바꾸기 전에 결과가 보여야 한다. 토글하고 기억해서 비교하게 만들지 않는다.
@@ -107,7 +108,8 @@ async function verify(viewport, screenshot, interact = false) {
 
     await page.locator('.behavior-choice input[value="dsr"]').check();
     await page.waitForFunction(() => document.querySelector('#summary-binding').textContent.includes('TLS'));
-    assert.match(await page.locator('[data-device-id="lb"] .node-meta').textContent(), /LB/);
+    assert.match(await page.locator('[data-device-id="lb"] .node-meta').textContent(), /DSR/,
+      'the node must say which mode it runs so the device is findable');
     assert.equal(await page.locator('.behavior-choice input:checked').inputValue(), 'dsr');
 
     await page.locator('[data-editor-action="new"]').click();
