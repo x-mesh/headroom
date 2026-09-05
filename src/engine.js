@@ -66,6 +66,20 @@ export function findShortestPaths(topology, source, target, options = {}) {
   return paths;
 }
 
+export function resolveDemandPaths(topology, disabledDevices = new Set(), disabledLinks = new Set()) {
+  const resolved = new Map();
+  for (const demand of topology.demands) {
+    const candidatePaths = demand.paths?.length
+      ? demand.paths
+      : findShortestPaths(topology, demand.source, demand.target, { disabledDevices, disabledLinks });
+    const activePaths = candidatePaths.filter((path) =>
+      path.devices.every((id) => !disabledDevices.has(id)) && path.links.every((id) => !disabledLinks.has(id)),
+    );
+    resolved.set(demand.id, { candidatePaths, activePaths });
+  }
+  return resolved;
+}
+
 function axisResult(load, limit, warningThreshold) {
   if (limit == null) return { load, limit: null, utilization: null, headroom: null, status: 'unknown' };
   if (!Number.isFinite(limit) || limit <= 0) return { load, limit, utilization: null, headroom: null, status: 'invalid' };
@@ -97,12 +111,10 @@ export function calculateScenario(topology, options = {}) {
   const deviceLoads = Object.fromEntries(topology.devices.map(({ id }) => [id, {}]));
   const linkLoads = Object.fromEntries(topology.links.map(({ id }) => [id, {}]));
   const demandResults = [];
+  const resolvedPaths = resolveDemandPaths(topology, disabledDevices, disabledLinks);
 
   for (const demand of topology.demands) {
-    const candidatePaths = demand.paths?.length ? demand.paths : findShortestPaths(topology, demand.source, demand.target, { disabledDevices, disabledLinks });
-    const activePaths = candidatePaths.filter((path) =>
-      path.devices.every((id) => !disabledDevices.has(id)) && path.links.every((id) => !disabledLinks.has(id)),
-    );
+    const { activePaths } = resolvedPaths.get(demand.id);
     if (!activePaths.length) {
       demandResults.push({ id: demand.id, name: demand.name, status: 'unreachable', deliveredRatio: 0, paths: [], load: scaledLoad(demand.load, scale) });
       continue;
