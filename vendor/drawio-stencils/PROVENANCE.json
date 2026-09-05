@@ -6,7 +6,7 @@
   "fetchedAt": "2026-09-05",
   "upstreamBytes": 191647,
   "upstreamSha256": "2921086e1eec8cddcde937feec78caff85fa6b2b82670f29ded51e69b21e3711",
-  "subsetSha256": "fc05225dddb3f3623ee1b2757515299c78140c99c1651a64ab7cc1e4ca9c3f2e",
+  "subsetSha256": "ea6a0818fda77cb2e25548571dd88ef75a005cddd430f70d0cca44b7db69bae9",
   "shapes": [
     "Switch",
     "Router",
@@ -21,7 +21,16 @@
     "Virtual Server",
     "NAS Filer",
     "Hub",
-    "Mainframe"
+    "Mainframe",
+    "Secured",
+    "Comm Link",
+    "Security Camera",
+    "Wireless Hub",
+    "Modem",
+    "Mail Server",
+    "Server Storage",
+    "Tape Storage",
+    "Users"
   ],
   "license": "Apache-2.0 + stencils/LICENSE restriction"
 }

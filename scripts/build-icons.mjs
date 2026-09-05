@@ -16,10 +16,13 @@ const outputFile = resolve(root, 'src/icons.js');
 
 // 프로젝트의 kind 문자열 → drawio 도형명. rack/cloud 는 kind 가 아니라 폴백용이다.
 const STENCILS = {
-  switch: 'Switch', router: 'Router', hub: 'Hub',
+  switch: 'Switch', router: 'Router', hub: 'Hub', wireless: 'Wireless Hub', modem: 'Modem',
   firewall: 'Firewall', lb: 'Load Balancer', waf: 'Proxy Server',
+  vpn: 'Comm Link', sslvpn: 'Secured', ips: 'Security Camera',
   server: 'Server', web: 'Web Server', vm: 'Virtual Server', mainframe: 'Mainframe',
-  storage: 'Storage', nas: 'NAS Filer',
+  mail: 'Mail Server', db: 'Server Storage',
+  storage: 'Storage', nas: 'NAS Filer', backup: 'Tape Storage',
+  client: 'Users',
   rack: 'Rack', cloud: 'Cloud',
 };
 // 스트로크는 경로 위에 중앙 정렬되므로 선언 박스를 넘는다. 8개 도형의 실측 필요값은 1.0 이다.

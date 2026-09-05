@@ -14,6 +14,8 @@ const licensePath = 'src/main/webapp/stencils/LICENSE';
 export const SHAPES = [
   'Switch', 'Router', 'Firewall', 'Load Balancer', 'Server', 'Storage', 'Rack', 'Cloud',
   'Proxy Server', 'Web Server', 'Virtual Server', 'NAS Filer', 'Hub', 'Mainframe',
+  'Secured', 'Comm Link', 'Security Camera', 'Wireless Hub', 'Modem',
+  'Mail Server', 'Server Storage', 'Tape Storage', 'Users',
 ];
 
 const sha256 = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
