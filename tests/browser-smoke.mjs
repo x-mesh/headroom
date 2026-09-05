@@ -315,6 +315,57 @@ async function verify(viewport, screenshot, interact = false) {
     assert.ok((await zoomState()).zoom <= 1, 'fit never magnifies past 100%');
     await page.locator('[data-zoom="reset"]').click();
     assert.deepEqual(await zoomState(), atRest, 'reset returns the canvas to 100%');
+
+    // 휠 확대는 한 눈금이 배율을 조금만 움직여야 한다. 트랙패드는 이벤트가 촘촘하게 온다.
+    const scrollArea = await page.locator('.topology-scroll').boundingBox();
+    const spot = { x: Math.min(scrollArea.x + scrollArea.width - 80, viewport.width - 40),
+      y: Math.min(scrollArea.y + 140, viewport.height - 40) };
+    await page.mouse.move(spot.x, spot.y);
+    await page.keyboard.down('Control');
+    await page.mouse.wheel(0, -100);
+    await page.waitForTimeout(60);
+    const afterNotch = (await zoomState()).zoom;
+    await page.keyboard.up('Control');
+    assert.ok(afterNotch > 1, 'ctrl with the wheel must zoom in');
+    assert.ok(afterNotch < 1.1, `one wheel notch must stay gentle, got ${afterNotch}`);
+    await page.locator('[data-zoom="reset"]').click();
+
+    const beforeWheel = await page.evaluate(() => Math.round(document.querySelector('.topology-scroll').scrollLeft));
+    await page.mouse.wheel(0, 120);
+    await page.waitForTimeout(60);
+    assert.equal((await zoomState()).zoom, 1, 'a wheel without ctrl must not zoom');
+
+    // 빈 공간을 끌면 화면이 그만큼 움직인다.
+    await page.evaluate(() => { document.querySelector('.topology-scroll').scrollLeft = 0; });
+    await page.mouse.move(spot.x, spot.y);
+    await page.mouse.down();
+    await page.mouse.move(spot.x - 160, spot.y, { steps: 8 });
+    assert.equal(await page.locator('.topology-scroll.panning').count(), 1, 'panning must mark the area');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.topology-scroll')).cursor), 'grabbing');
+    await page.mouse.up();
+    await page.waitForTimeout(60);
+    const panned = await page.evaluate(() => {
+      const area = document.querySelector('.topology-scroll');
+      return { left: Math.round(area.scrollLeft), max: Math.round(area.scrollWidth - area.clientWidth) };
+    });
+    assert.ok(panned.max > 0, 'the fixture needs a scrollable canvas to pan');
+    assert.ok(Math.abs(panned.left - Math.min(160, panned.max)) < 3,
+      `dragging empty space must scroll by the drag distance, got ${panned.left} of ${panned.max}`);
+    assert.equal(await page.locator('.topology-scroll.panning').count(), 0, 'panning must end with the pointer');
+
+    // 노드 위에서 시작한 드래그는 이동이지 팬이 아니다.
+    const panGuard = page.locator('[data-device-id="source-a"]');
+    await panGuard.scrollIntoViewIfNeeded();
+    const guardScroll = await page.evaluate(() => Math.round(document.querySelector('.topology-scroll').scrollLeft));
+    const guardBox = await panGuard.boundingBox();
+    await page.mouse.move(guardBox.x + guardBox.width / 2, guardBox.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(guardBox.x + guardBox.width / 2 + 70, guardBox.y + 10, { steps: 8 });
+    assert.equal(await page.locator('.topology-scroll.panning').count(), 0, 'a drag that starts on a node must not pan the area');
+    await page.mouse.up();
+    await page.waitForTimeout(120);
+    assert.equal(await page.evaluate(() => Math.round(document.querySelector('.topology-scroll').scrollLeft)), guardScroll,
+      'a drag on a node must leave the scroll position alone');
   }
   await page.screenshot({ path: screenshot, fullPage: true });
   await page.close();

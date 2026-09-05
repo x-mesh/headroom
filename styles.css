@@ -164,7 +164,9 @@ button { color: inherit; }
 .zoom-control #zoom-level { min-width: 46px; color: var(--muted); }
 .topology-live-status > span { color: var(--cyan); font: 600 9px/1 var(--font-data); letter-spacing: .08em; }
 .topology-live-status i { display: inline-block; width: 7px; height: 7px; margin-right: 6px; background: var(--cyan); box-shadow: 0 2px 9px color-mix(in srgb, var(--cyan) 65%, transparent); animation: telemetry-breathe 1.8s cubic-bezier(.16,1,.3,1) infinite alternate; }
-.topology-scroll { overflow: auto; overscroll-behavior: contain; }
+.topology-scroll { overflow: auto; overscroll-behavior: contain; cursor: grab; }
+.topology-scroll.panning { cursor: grabbing; }
+.topology-scroll.panning .mesh-node { cursor: grabbing; }
 .mobile-pan-cue { display: none; }
 .topology-stage { width: calc(var(--canvas-width, 940px) * var(--zoom, 1)); height: calc(var(--canvas-height, 580px) * var(--zoom, 1)); margin: 0 auto; }
 .topology-canvas { width: var(--canvas-width, 940px); height: var(--canvas-height, 580px); position: relative; background: var(--canvas); transform: scale(var(--zoom, 1)); transform-origin: 0 0; }

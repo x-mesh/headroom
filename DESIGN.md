@@ -321,12 +321,13 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 ### Canvas Zoom
 
 - **Control:** Put minus, the current percentage, plus, and fit in one bordered group in the topology header.
-- **Steps:** Move through fixed steps from 40% to 200%. Show the percentage as text, never as a slider alone.
+- **Steps:** Move through close fixed steps from 40% to 200%. Keep each button press a small change.
 - **Reset:** Make the percentage button return the canvas to 100%.
 - **Fit:** Scale down to show the whole canvas. Never magnify past 100%.
 - **Anchor:** Keep the point under the pointer, or the center of the view, in place while the scale changes.
 - **Pointer Math:** Divide every screen distance by the zoom before it becomes a canvas coordinate. A drag and a drop must land where the pointer is.
-- **Wheel:** Zoom on Ctrl or Command with the wheel, which is also how a trackpad pinch arrives.
+- **Wheel:** Zoom on Ctrl or Command with the wheel, which is also how a trackpad pinch arrives. Keep one wheel notch under a ten percent change, because a trackpad sends many events per gesture.
+- **Wheel Units:** Normalize a line-mode wheel to pixels before it reaches the scale. Devices report different units for the same gesture.
 
 ### Canvas
 
@@ -334,6 +335,8 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Growth:** Grow the canvas toward any device placed outside it. Add 40px of slack in the direction that grows.
 - **Origin:** Let device coordinates go negative. Move the canvas origin instead of clamping the device.
 - **World Position:** Keep the grid and the zone labels fixed to world coordinates, not to the canvas edge.
+- **Pan:** Drag empty space, or use the middle button, to move the view. Show the grab cursor at rest and the grabbing cursor while the view moves.
+- **Pan Exceptions:** Start no pan on a node, on a link, in connect mode, or from touch. Touch keeps the native scroll.
 - **Cap:** Stop growing at 12000px so an imported file cannot ask for a canvas the browser cannot paint.
 
 ### Topology Node and Link

@@ -189,8 +189,12 @@ function setLeftPanel(name) {
 const CANVAS_MIN = { width: 940, height: 580 };
 const CANVAS_PAD = 40;
 const CANVAS_MAX = 12000;
-const ZOOM_STEPS = [0.4, 0.5, 0.65, 0.8, 1, 1.25, 1.5, 1.75, 2];
+const ZOOM_STEPS = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.6, 1.8, 2];
 const ZOOM_RANGE = { min: ZOOM_STEPS[0], max: ZOOM_STEPS.at(-1) };
+// 휠 한 눈금(픽셀 기준 약 100)이 배율을 5%쯤 움직이게 한다. 트랙패드는 이벤트가 훨씬
+// 촘촘하게 오므로 이 값이 크면 순식간에 한계까지 튄다.
+const ZOOM_WHEEL_SENSITIVITY = 0.0005;
+const WHEEL_LINE_HEIGHT = 16;
 // 노드는 심볼 중심이 기준이고 라벨이 아래로 흐르므로 방향별 여백이 다르다.
 const NODE_REACH = { left: 70, right: 70, top: 30, bottom: 150 };
 let viewport = { minX: 0, minY: 0, width: CANVAS_MIN.width, height: CANVAS_MIN.height };
@@ -280,6 +284,15 @@ function zoomToFit() {
   const scroll = document.querySelector('.topology-scroll');
   const fit = Math.min(scroll.clientWidth / viewport.width, scroll.clientHeight / viewport.height);
   setZoom(Math.min(1, fit));
+}
+
+let panState = null;
+
+function endPan() {
+  if (!panState) return;
+  const scroll = document.querySelector('.topology-scroll');
+  scroll.classList.remove('panning');
+  panState = null;
 }
 
 function endPaletteDrag() {
@@ -692,6 +705,26 @@ element('project-file-input').addEventListener('change', async (event) => {
 element('device-file-input').addEventListener('change', async (event) => {
   try { const text = await readFile(event.target); if (!text) return; const template = importDeviceDefinition(text); openDeviceForm(template); const form = element('editor-panel-content').querySelector('form'); form._deviceTemplate = template; showToast(`${template.schema} 장비 정의를 읽었습니다.`); } catch (error) { showToast(`가져오기 실패: ${error.message}`); }
 });
+const topologyScroll = document.querySelector('.topology-scroll');
+topologyScroll.addEventListener('pointerdown', (event) => {
+  if (event.pointerType === 'touch') return;
+  const onResource = event.target.closest('.mesh-node, .link-hit');
+  const middleButton = event.button === 1;
+  if (!middleButton && (event.button !== 0 || onResource || state.editorMode === 'connect')) return;
+  panState = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, left: topologyScroll.scrollLeft, top: topologyScroll.scrollTop };
+  topologyScroll.setPointerCapture(event.pointerId);
+  topologyScroll.classList.add('panning');
+  event.preventDefault();
+});
+topologyScroll.addEventListener('pointermove', (event) => {
+  if (!panState || event.pointerId !== panState.pointerId) return;
+  topologyScroll.scrollLeft = panState.left - (event.clientX - panState.startX);
+  topologyScroll.scrollTop = panState.top - (event.clientY - panState.startY);
+});
+topologyScroll.addEventListener('pointerup', endPan);
+topologyScroll.addEventListener('pointercancel', endPan);
+topologyScroll.addEventListener('lostpointercapture', endPan);
+
 document.querySelector('.zoom-control').addEventListener('click', (event) => {
   const action = event.target.closest('[data-zoom]')?.dataset.zoom;
   if (action === 'in') stepZoom(1);
@@ -704,7 +737,9 @@ document.querySelector('.topology-scroll').addEventListener('wheel', (event) => 
   if (!event.ctrlKey && !event.metaKey) return;
   event.preventDefault();
   const rect = document.querySelector('.topology-scroll').getBoundingClientRect();
-  setZoom(state.zoom * (event.deltaY < 0 ? 1.12 : 1 / 1.12), { x: event.clientX - rect.left, y: event.clientY - rect.top });
+  // deltaMode 는 장치마다 다르다. 줄 단위로 오는 휠을 픽셀로 맞춘 뒤 배율에 반영한다.
+  const delta = event.deltaMode === 1 ? event.deltaY * WHEEL_LINE_HEIGHT : event.deltaY;
+  setZoom(state.zoom * Math.exp(-delta * ZOOM_WHEEL_SENSITIVITY), { x: event.clientX - rect.left, y: event.clientY - rect.top });
 }, { passive: false });
 document.querySelector('a[href="#failure-heading"]').addEventListener('click', () => setLeftPanel('failure'));
 document.querySelector('[role="tablist"]').addEventListener('click', (event) => {
