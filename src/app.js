@@ -466,7 +466,7 @@ function renderTopology() {
       <line class="link ${status}" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}"></line>
       <line class="link-hit" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}" tabindex="0" role="button" aria-label="${escapeAttribute(link.id)} 링크 검사"></line>
       ${packetDots}
-      <text class="link-label" data-live-util="${utilization ?? ''}" data-live-seed="${link.id}" x="${middleX}" y="${middleY}" text-anchor="middle">${link.active ? formatPercent(utilization) : 'DOWN'}</text>
+      <text class="link-label"${link.active ? ` data-live-util="${utilization ?? ''}" data-live-seed="${link.id}"` : ''} x="${middleX}" y="${middleY}" text-anchor="middle">${link.active ? formatPercent(utilization) : 'DOWN'}</text>
     </g>`;
   }).join('');
 

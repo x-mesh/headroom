@@ -102,6 +102,13 @@ async function verify(viewport, screenshot, interact = false) {
     assert.match(faultNote, /거절됩니다/, 'refused sessions are separate from dropped bytes');
     await page.waitForTimeout(900);
     assert.match(await page.locator('[data-device-id="fw-a"]').innerText(), /OFFLINE[\s\S]*DOWN/, 'a disabled node must stay DOWN across telemetry ticks');
+    await page.locator('[data-failure-type="link"][data-failure-id="spine-a-leaf-a"]').click();
+    await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '02');
+    await page.waitForTimeout(1800);
+    assert.equal(await page.locator('[data-link-id="spine-a-leaf-a"] .link-label').textContent(), 'DOWN',
+      'a disabled link must stay DOWN across telemetry ticks, not drift to 0%');
+    await page.locator('[data-failure-type="link"][data-failure-id="spine-a-leaf-a"]').click();
+    await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
     assert.match(await page.locator('#comparison-grid').textContent(), /CHANGED/);
     await failure.click();
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '00');
