@@ -1,4 +1,25 @@
+import { behaviorCatalog } from './data.js';
+
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const SESSION_SYNC = new Set(['synced', 'none', 'unknown']);
+
+// 카탈로그를 통과한 조합만 남긴다. 모드를 갖지 않는 클래스에는 behavior 를 붙이지 않는다.
+function normalizeBehavior(kind, behavior) {
+  const catalog = behaviorCatalog[kind];
+  if (!catalog) return null;
+  const mode = behavior?.mode ?? catalog.default;
+  if (!catalog.options[mode]) throw new Error(`${kind} does not support mode ${mode}`);
+  const sessionSync = behavior?.sessionSync ?? 'unknown';
+  if (!SESSION_SYNC.has(sessionSync)) throw new Error(`Unknown session sync ${sessionSync}`);
+  return { mode, sessionSync };
+}
+
+function normalizeDirectionality(directionality) {
+  if (!directionality) return null;
+  const responseShare = finite(directionality.responseShare, 'Response share', { min: 0 });
+  if (responseShare > 1) throw new Error('Response share must be between 0 and 1');
+  return { responseShare, origin: directionality.origin === 'explicit' ? 'explicit' : 'estimate' };
+}
 
 export function normalizeId(value) {
   return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
@@ -33,6 +54,7 @@ export function addDevice(topology, input) {
     position: { x: finite(input.position?.x ?? 470, 'Device x', ANY_COORDINATE), y: finite(input.position?.y ?? 290, 'Device y', ANY_COORDINATE) },
     limits: normalizeLimits(input.limits || { forwarding_bps: null, forwarding_pps: null }),
     source: input.source || { type: 'estimate', label: '사용자 정의', condition: '조건 미지정' }, enabled: true,
+    ...(normalizeBehavior(String(input.kind || 'switch'), input.behavior) ? { behavior: normalizeBehavior(String(input.kind || 'switch'), input.behavior) } : {}),
     ...(input.metadata ? { metadata: structuredClone(input.metadata) } : {}),
   };
   topology.devices.push(device);
@@ -50,6 +72,11 @@ export function updateDevice(topology, id, patch) {
     for (const [axis, value] of Object.entries(patch.limits)) {
       device.limits[axis] = value === null || value === '' ? null : finite(value, axis, { min: Number.EPSILON });
     }
+  }
+  if (patch.behavior || patch.kind != null) {
+    const behavior = normalizeBehavior(device.kind, patch.behavior ?? device.behavior);
+    if (behavior) device.behavior = behavior;
+    else delete device.behavior;
   }
   return device;
 }
@@ -132,6 +159,7 @@ export function updateDemand(topology, id, patch) {
   if (patch.source != null || patch.target != null) { delete demand.paths; demand.pathMode = 'shortest'; }
   if (patch.name != null) demand.name = String(patch.name).trim().slice(0, 80) || demand.name;
   if (patch.load) for (const [axis, value] of Object.entries(patch.load)) demand.load[axis] = finite(value, axis);
+  if (patch.directionality) demand.directionality = normalizeDirectionality(patch.directionality);
   return demand;
 }
 

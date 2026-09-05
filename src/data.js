@@ -7,6 +7,44 @@ export const axisCatalog = {
   nic_pps: { label: 'NIC 패킷', shortLabel: 'NIC PPS', unit: 'pps', nodeLabel: 'NPPS', deliveryRole: 'throughput' },
 };
 
+// 응답이 볼류메트릭 부하에서 차지하는 몫. 웹 워크로드는 응답이 대부분이다.
+export const DEFAULT_RESPONSE_SHARE = 0.9;
+
+// kind 는 검증 없는 자유 문자열이므로 화이트리스트가 필요하다. 이 표를 통과한 조합만
+// 엔진과 DOM 에 들어간다. affectsLoad 가 false 인 모드는 바이트를 바꾸지 않는다고 스스로
+// 선언한다. 없는 숫자 차이를 지어내지 않기 위한 것이다.
+export const behaviorCatalog = {
+  lb: {
+    label: '동작 모드', affectsLoad: true, default: 'inline',
+    options: {
+      inline: {
+        label: 'inline (풀 프록시)', token: 'INLINE', carries: { request: true, response: true },
+        note: '요청과 응답이 모두 로드밸런서를 지납니다. 양방향 바이트를 전부 부담합니다.',
+      },
+      dsr: {
+        label: 'DSR (직접 반환)', token: 'DSR', carries: { request: true, response: false },
+        note: '응답은 서버에서 클라이언트로 직행합니다. 처리량 부담은 사라지고 연결 추적 부담은 그대로 남습니다.',
+      },
+    },
+  },
+  firewall: {
+    label: '배치 모드', affectsLoad: false, default: 'routed',
+    options: {
+      routed: {
+        label: 'routed (L3)', token: 'L3', carries: { request: true, response: true },
+        note: 'L3 홉으로 동작합니다. 지나는 바이트는 transparent 와 같습니다.',
+      },
+      transparent: {
+        label: 'transparent (L2)', token: 'L2', carries: { request: true, response: true },
+        note: 'bump-in-the-wire 로 동작합니다. 세션 소유와 장애 도메인만 달라집니다.',
+      },
+    },
+  },
+};
+
+// 세션 축을 갖는 클래스. 페일오버 두 갈래 계산의 대상이다.
+export const STATEFUL_KINDS = new Set(['firewall', 'lb']);
+
 const source = {
   type: 'estimate',
   label: '합성 데모 값',

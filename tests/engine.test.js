@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cloneTopology } from '../src/data.js';
 import { calculateScenario, compareScenarios, deliveryRoleOf } from '../src/engine.js';
-import { addDevice, createEmptyTopology } from '../src/editor.js';
+import { addDemand, addDevice, addLink, createEmptyTopology } from '../src/editor.js';
 
 test('splits demand evenly across active ECMP paths', () => {
   const result = calculateScenario(cloneTopology());
@@ -210,4 +210,69 @@ test('marks a delivery ratio as an upper bound while a limit is unknown', () => 
   const exact = calculateScenario(filled).demands.find(({ id }) => id === 'public-api');
   assert.equal(exact.deliveredRatioBound, 'exact');
   assert.equal(exact.unknownConstraints, undefined);
+});
+
+test('sheds response bytes at a DSR balancer but keeps its session load', () => {
+  const build = (mode) => {
+    const topology = createEmptyTopology();
+    addDevice(topology, { id: 'client', kind: 'router', limits: { forwarding_bps: 100e9 } });
+    addDevice(topology, { id: 'lb', kind: 'lb', behavior: { mode },
+      limits: { forwarding_bps: 10e9, new_sessions_per_sec: 100e3, concurrent_sessions: 4e6 } });
+    addDevice(topology, { id: 'app', kind: 'server', limits: { nic_bps: 100e9 } });
+    addLink(topology, { source: 'client', target: 'lb', capacityBps: 100e9 });
+    addLink(topology, { source: 'lb', target: 'app', capacityBps: 100e9 });
+    addDemand(topology, { id: 'web', source: 'client', target: 'app',
+      load: { forwarding_bps: 9.2e9, new_sessions_per_sec: 41e3, concurrent_sessions: 900e3 } });
+    return calculateScenario(topology).devices.find(({ id }) => id === 'lb');
+  };
+  const inline = build('inline');
+  const dsr = build('dsr');
+
+  // 응답이 바이트의 90% 다. inline 은 전부 지나고 DSR 은 요청분만 지난다.
+  assert.equal(round4(inline.axes.forwarding_bps.utilization), 0.92);
+  assert.equal(round4(dsr.axes.forwarding_bps.utilization), 0.092);
+  // 세션은 방향이 없다. 연결 추적 부담은 그대로 남는다.
+  assert.equal(dsr.axes.new_sessions_per_sec.load, inline.axes.new_sessions_per_sec.load);
+  assert.equal(dsr.axes.concurrent_sessions.load, inline.axes.concurrent_sessions.load);
+  // 그래서 제한 축이 처리량에서 신규 세션으로 넘어간다.
+  assert.equal(inline.bindingAxis, 'forwarding_bps');
+  assert.equal(dsr.bindingAxis, 'new_sessions_per_sec');
+});
+
+test('leaves link load alone when a balancer runs DSR', () => {
+  const build = (mode) => {
+    const topology = createEmptyTopology();
+    addDevice(topology, { id: 'client', kind: 'router', limits: { forwarding_bps: 100e9 } });
+    addDevice(topology, { id: 'lb', kind: 'lb', behavior: { mode }, limits: { forwarding_bps: 10e9 } });
+    addDevice(topology, { id: 'app', kind: 'server', limits: { nic_bps: 100e9 } });
+    addLink(topology, { source: 'client', target: 'lb', capacityBps: 100e9 });
+    addLink(topology, { source: 'lb', target: 'app', capacityBps: 100e9 });
+    addDemand(topology, { id: 'web', source: 'client', target: 'app', load: { forwarding_bps: 9.2e9 } });
+    return calculateScenario(topology).links.find(({ id }) => id === 'client-lb').axes.forwarding_bps.load;
+  };
+  // v1 은 장비에서만 응답분을 뺀다. 인접 링크 보정은 arm 모델과 함께 다룬다.
+  assert.equal(build('dsr'), build('inline'));
+});
+
+test('refuses a mode the class does not have', () => {
+  const topology = createEmptyTopology();
+  addDevice(topology, { id: 'sw', kind: 'switch', limits: { forwarding_bps: 1e9 } });
+  assert.equal(topology.devices[0].behavior, undefined, 'a switch has no placement mode');
+  assert.throws(() => addDevice(topology, { id: 'lb', kind: 'lb', behavior: { mode: 'transparent' } }), /does not support mode/);
+  addDevice(topology, { id: 'fw', kind: 'firewall', limits: { forwarding_bps: 1e9 } });
+  assert.deepEqual(topology.devices[1].behavior, { mode: 'routed', sessionSync: 'unknown' });
+});
+
+test('states that a firewall placement mode does not change byte load', () => {
+  const build = (mode) => {
+    const topology = createEmptyTopology();
+    addDevice(topology, { id: 'a', kind: 'router', limits: { forwarding_bps: 100e9 } });
+    addDevice(topology, { id: 'fw', kind: 'firewall', behavior: { mode }, limits: { forwarding_bps: 10e9 } });
+    addDevice(topology, { id: 'b', kind: 'server', limits: { nic_bps: 100e9 } });
+    addLink(topology, { source: 'a', target: 'fw', capacityBps: 100e9 });
+    addLink(topology, { source: 'fw', target: 'b', capacityBps: 100e9 });
+    addDemand(topology, { id: 'd', source: 'a', target: 'b', load: { forwarding_bps: 5e9 } });
+    return calculateScenario(topology).devices.find(({ id }) => id === 'fw').axes.forwarding_bps.load;
+  };
+  assert.equal(build('routed'), build('transparent'));
 });

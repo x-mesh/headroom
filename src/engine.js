@@ -1,4 +1,4 @@
-import { axisCatalog } from './data.js';
+import { axisCatalog, behaviorCatalog, DEFAULT_RESPONSE_SHARE } from './data.js';
 
 const EPSILON = 1e-9;
 
@@ -8,12 +8,24 @@ export const deliveryRoleOf = (axis) => axisCatalog[axis]?.deliveryRole ?? null;
 // 링크는 세션 테이블을 들지 않는다. admission 축을 쌓아 두면 판정도 못 하면서 목록만 더럽힌다.
 const linkCarriesAxis = (axis) => deliveryRoleOf(axis) !== 'admission';
 
-function addLoad(target, source, factor, accept) {
+function addLoad(target, source, factor, accept, carried = 1) {
   for (const [axis, value] of Object.entries(source)) {
     if (!Number.isFinite(value) || value < 0) throw new Error(`Invalid load for ${axis}`);
     if (accept && !accept(axis)) continue;
-    target[axis] = (target[axis] || 0) + value * factor;
+    const share = deliveryRoleOf(axis) === 'throughput' ? carried : 1;
+    target[axis] = (target[axis] || 0) + value * factor * share;
   }
+}
+
+// 장비가 실제로 지나보내는 몫. DSR 로드밸런서는 응답 바이트를 지나보내지 않지만
+// 연결은 그대로 추적하므로 세션 축은 줄지 않는다.
+export function carriedFraction(device, demand) {
+  const catalog = behaviorCatalog[device.kind];
+  if (!catalog || !catalog.affectsLoad) return 1;
+  const mode = catalog.options[device.behavior?.mode ?? catalog.default];
+  if (!mode) return 1;
+  const responseShare = demand.directionality?.responseShare ?? DEFAULT_RESPONSE_SHARE;
+  return (mode.carries.request ? 1 - responseShare : 0) + (mode.carries.response ? responseShare : 0);
 }
 
 function validateTopology(topology) {
@@ -150,6 +162,7 @@ export function calculateScenario(topology, options = {}) {
   const disabledDevices = new Set(options.disabledDevices || []);
   const disabledLinks = new Set(options.disabledLinks || []);
   const warningThreshold = topology.warningThreshold ?? 0.8;
+  const deviceIndex = new Map(topology.devices.map((device) => [device.id, device]));
   const deviceLoads = Object.fromEntries(topology.devices.map(({ id }) => [id, {}]));
   const linkLoads = Object.fromEntries(topology.links.map(({ id }) => [id, { forward: {}, reverse: {} }]));
   const demandResults = [];
@@ -164,7 +177,9 @@ export function calculateScenario(topology, options = {}) {
     }
     const share = 1 / activePaths.length;
     for (const path of activePaths) {
-      for (const deviceId of new Set(path.devices)) addLoad(deviceLoads[deviceId], demand.load, scale * share);
+      for (const deviceId of new Set(path.devices)) {
+        addLoad(deviceLoads[deviceId], demand.load, scale * share, null, carriedFraction(deviceIndex.get(deviceId), demand));
+      }
       for (const hop of path.hops) addLoad(linkLoads[hop.linkId][hop.direction], demand.load, scale * share, linkCarriesAxis);
     }
     demandResults.push({
