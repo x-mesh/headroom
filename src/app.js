@@ -1,5 +1,5 @@
 import { axisCatalog, behaviorCatalog, cloneTopology } from './data.js';
-import { calculateScenario, compareScenarios, createExport } from './engine.js';
+import { calculateScenario, compareScenarios, createExport, sweepSingleFaults } from './engine.js';
 import { addDemand, addDevice, addLink, moveDevice, normalizeId, removeDemand, removeDevice, removeLink, updateDemand, updateDevice, updateLink } from './editor.js';
 import { importDeviceDefinition } from './device-import.js';
 import { parseProject, serializeProject } from './project.js';
@@ -10,6 +10,7 @@ let topology = cloneTopology();
 const state = { scale: 1, selectedId: 'fw-a', disabledDevices: new Set(), disabledLinks: new Set(), editorMode: 'select', connectSource: null, leftPanel: 'palette', zoom: 1 };
 let baseline = calculateScenario(topology);
 let current = baseline;
+let sweep = sweepSingleFaults(topology);
 let toastTimer;
 let dragState = null;
 let suppressNodeClick = false;
@@ -36,6 +37,7 @@ function stateLabel(status) { return ({ healthy: '정상', warning: '주의', ov
 
 function recalculate() {
   current = calculateScenario(topology, { scale: state.scale, disabledDevices: state.disabledDevices, disabledLinks: state.disabledLinks });
+  sweep = sweepSingleFaults(topology, { scale: state.scale });
   render();
   updateTelemetry();
 }
@@ -133,21 +135,45 @@ function renderSummary() {
   element('path-readout').textContent = `${current.demands.length} DEMANDS · ${activePathCount} ACTIVE PATHS`;
 }
 
+// 끄기 전에 결과를 말한다. 하나씩 눌러 보고 되돌리는 수고가 이 도구의 요점이 아니다.
+function faultForecast(verdict) {
+  if (!verdict) return '판정 없음';
+  if (verdict.verdict === 'severs') return verdict.endpoint ? '출발지·목적지 · 끄면 끊김' : '끄면 서비스 단절';
+  if (verdict.verdict === 'overloads') {
+    return verdict.minDeliveredRatio < 1
+      ? `끄면 ${Math.round(verdict.minDeliveredRatio * 100)}%만 전달`
+      : `끄면 ${formatPercent(verdict.worstUtilization)} 과부하`;
+  }
+  return verdict.bounded ? '끄면 견딤 · 한계 미확인' : '끄면 남은 쪽이 견딤';
+}
+
+const FORECAST_RANK = { severs: 0, overloads: 1, absorbs: 2 };
+// 출발지·목적지가 끊는 것은 이중화 문제가 아니므로 뒤로 보낸다. 끊지 않는다면 평범한 항목이다.
+const forecastRank = (verdict) => (verdict?.verdict === 'severs' && verdict.endpoint ? 3 : FORECAST_RANK[verdict?.verdict] ?? 4);
+
 function renderFailures() {
+  const verdicts = new Map(sweep.resources.map((resource) => [resource.id, resource]));
   // 예전에는 kind 와 링크 id 패턴으로 걸러 데모 이외의 설계에서는 끌 대상이 거의 없었다.
+  const order = (items) => [...items].sort((a, b) =>
+    forecastRank(verdicts.get(a.id)) - forecastRank(verdicts.get(b.id)) || resourceName(a).localeCompare(resourceName(b)));
   const groups = [
-    { title: '장비', items: topology.devices, set: state.disabledDevices, type: 'device' },
-    { title: '링크', items: topology.links, set: state.disabledLinks, type: 'link' },
+    { title: '장비', items: order(topology.devices), set: state.disabledDevices, type: 'device' },
+    { title: '링크', items: order(topology.links), set: state.disabledLinks, type: 'link' },
   ];
   element('failure-count').textContent = `${state.disabledDevices.size + state.disabledLinks.size} ACTIVE`;
+  element('failure-grade').textContent = sweep.resources.length
+    ? `단일 장애점 ${sweep.severs}개 · 용량 부족 ${sweep.overloads}개 · 여유 ${sweep.absorbs}개`
+    : '끌 자원이 아직 없습니다.';
+  element('failure-grade').dataset.grade = sweep.grade;
   element('failure-list').innerHTML = groups.map((group) => `
     <section class="failure-group">
       <h3>${group.title}</h3>
       ${group.items.length ? group.items.map((item) => {
         const active = group.set.has(item.id);
+        const verdict = verdicts.get(item.id);
         const detail = group.type === 'device' ? item.zone : formatCompact(item.capacity?.forwarding_bps, 'bps');
         return `<button class="failure-switch ${active ? 'active' : ''}" type="button" data-failure-type="${group.type}" data-failure-id="${escapeAttribute(item.id)}" aria-pressed="${active}">
-          <span class="switch-glyph" aria-hidden="true"></span><span><strong>${escapeText(resourceName(item))}</strong><small>${escapeText(detail)}</small></span><span class="switch-state">${active ? 'DOWN' : 'UP'}</span>
+          <span class="switch-glyph" aria-hidden="true"></span><span><strong>${escapeText(resourceName(item))}</strong><small>${escapeText(detail)}</small><small class="failure-forecast" data-verdict="${escapeAttribute(verdict?.verdict === 'severs' && verdict.endpoint ? 'endpoint' : verdict?.verdict || 'none')}">${escapeText(faultForecast(verdict))}</small></span><span class="switch-state">${active ? 'DOWN' : 'UP'}</span>
         </button>`;
       }).join('') : '<p class="failure-empty">아직 없습니다.</p>'}
     </section>`).join('');

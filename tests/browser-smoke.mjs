@@ -76,6 +76,11 @@ async function verify(viewport, screenshot, interact = false) {
   assert.doesNotMatch(unknownAxis, /\d%/, 'an unknown limit must never read as a percentage');
   assert.equal(await page.locator('#tab-palette').getAttribute('aria-selected'), 'true', 'the component tab opens first');
   await page.locator('#tab-failure').click();
+  assert.equal(await page.locator('.failure-switch').count(), 20, 'every device and link must be failable, not two classes');
+  assert.match(await page.locator('#failure-grade').textContent(), /단일 장애점 \d+개/, 'the panel must grade the design before anything is turned off');
+  const forecasts = await page.locator('.failure-forecast').evaluateAll((nodes) => nodes.map((node) => node.dataset.verdict));
+  assert.ok(forecasts.every((verdict) => ['severs', 'overloads', 'absorbs', 'endpoint'].includes(verdict)), 'every row must carry a forecast');
+  assert.equal(forecasts[0], 'severs', 'the rows that sever the service sort first');
   if (viewport.width <= 760) {
     assert.equal(await page.locator('.mobile-fault-tray').isVisible(), true);
     assert.match(await page.locator('.mobile-pan-cue').textContent(), /좌우로 탐색/);
@@ -96,6 +101,18 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForTimeout(900);
     assert.match(await page.locator('[data-device-id="fw-a"]').innerText(), /OFFLINE[\s\S]*DOWN/, 'a disabled node must stay DOWN across telemetry ticks');
     assert.match(await page.locator('#comparison-grid').textContent(), /CHANGED/);
+    await failure.click();
+    await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '00');
+    const severs = page.locator('.failure-switch').filter({ has: page.locator('.failure-forecast[data-verdict="severs"]') }).first();
+    const severId = await severs.getAttribute('data-failure-id');
+    await severs.click();
+    await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
+    assert.equal(await page.locator('#run-state').textContent(), 'TRAFFIC UNREACHABLE',
+      `the forecast promised ${severId} would sever the service, so turning it off must do that`);
+    await page.locator(`[data-failure-id="${severId}"]`).click();
+    await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '00');
+    await failure.click();
+    await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
     await page.locator('[data-device-id="fw-b"]').click();
     assert.match(await page.locator('#inspector-content').textContent(), /신규 세션/);
     assert.match(await page.locator('#inspector-content').textContent(), /용량 초과/);

@@ -169,7 +169,15 @@ button { color: inherit; }
 .failure-switch.active .switch-glyph { border-color: var(--danger); }
 .failure-switch.active .switch-glyph::after { content: ''; position: absolute; inset: 2px; background: var(--danger); }
 .failure-switch strong { display: block; font: 600 11px/1.2 var(--font-data); }
-.failure-switch small { color: var(--muted); font-size: 9px; }
+.failure-switch small { display: block; color: var(--muted); font-size: 9px; }
+/* 판정은 문구로 읽힌다. 색은 보조일 뿐이라 색만으로 구분하지 않는다. */
+.failure-forecast { margin-top: 3px; font: 600 9px/1.2 var(--font-data); }
+.failure-forecast[data-verdict="severs"] { color: var(--danger); }
+.failure-forecast[data-verdict="overloads"] { color: var(--amber); }
+.failure-forecast[data-verdict="absorbs"] { color: var(--signal-deep); }
+.failure-grade { margin: 0; padding: 2px 18px 12px; color: var(--muted); font: 600 9px/1.4 var(--font-data); letter-spacing: .04em; }
+.failure-grade[data-grade="single-point"] { color: var(--danger); }
+.failure-grade[data-grade="partial"] { color: var(--amber); }
 .failure-switch .switch-state { color: var(--muted); font: 500 9px/1 var(--font-data); }
 .failure-switch.active .switch-state { color: var(--danger); }
 
