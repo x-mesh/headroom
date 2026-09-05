@@ -292,7 +292,7 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 
 - **Structure:** Present four equal summary cells. Keep 28 recent samples in each SVG sparkline.
 - **Series:** Show headroom, maximum utilization, delivery, and total traffic.
-- **Legend:** Name every state the canvas can paint, disabled included. A state the canvas draws but the legend omits is unreadable.
+- **Legend:** Name every capacity state the canvas can paint, disabled included. A state the canvas draws but the legend omits is unreadable.
 - **Color:** Use cyan, amber, red, and deep signal green in that order.
 - **Telemetry:** Add about ±1–2% synthetic variation to the presentation layer. Keep scenario values unchanged.
 - **Cadence:** Refresh visible motion every 820ms. Pause refresh work while the document is hidden.
@@ -414,7 +414,7 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Unknown Link:** Use a slate stroke with a 5 4 dash pattern. A link with no known capacity must never read as healthy.
 - **Invalid Link:** Use a red stroke with a tight 2 3 dash pattern. Keep it distinct from the 7 7 pattern that marks a disabled link.
 - **Disabled Link:** Use a red dashed stroke, hide packet dots, and show DOWN. Treat a link whose endpoint device is off the same way — traffic cannot cross it either.
-- **Severed Path:** When a demand has no route left, draw the links it used to take with a fine red dotted stroke at low opacity. The break must read from end to end, not stop at the dead device.
+- **Severed Path:** When a demand has no route left, draw the links it used to take with a fine red dotted stroke at low opacity. The break must read from end to end, not stop at the dead device. Keep it out of the capacity legend — it reports a lost route, not a capacity state, and the bottleneck note already counts the cut demands.
 - **Dead Label:** Give a severed link no live telemetry hook. Its utilization is a true zero, and a live hook turns DOWN into 0% one tick later.
 
 ### Axis Meter
