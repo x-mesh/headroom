@@ -81,6 +81,8 @@ async function verify(viewport, screenshot, interact = false) {
   const forecasts = await page.locator('.failure-forecast').evaluateAll((nodes) => nodes.map((node) => node.dataset.verdict));
   assert.ok(forecasts.every((verdict) => ['severs', 'overloads', 'absorbs', 'endpoint'].includes(verdict)), 'every row must carry a forecast');
   assert.equal(forecasts[0], 'severs', 'the rows that sever the service sort first');
+  assert.match(await page.locator('#bottleneck-note').textContent(), /단일 장애점이 \d+개/, 'the note must name the design as single-point');
+  assert.ok(await page.locator('.mesh-node', { hasText: 'SPOF' }).count() > 0, 'a single point of failure must be marked on the canvas too');
   if (viewport.width <= 760) {
     assert.equal(await page.locator('.mobile-fault-tray').isVisible(), true);
     assert.match(await page.locator('.mobile-pan-cue').textContent(), /좌우로 탐색/);

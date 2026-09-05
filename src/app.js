@@ -78,6 +78,27 @@ const AXIS_UNIT_SUFFIX = { sessions: ' 세션', tps: ' tps', tunnels: ' 터널' 
 
 // 캔버스 아래에 "지금 무엇이 막고 있는가"를 문장으로 적는다. 숫자는 위에 다 있지만
 // 어느 것을 봐야 하는지는 적어 주어야 읽힌다.
+// 설계 자체의 성질을 한 문장으로 말한다. 지금 주입한 장애와는 별개다.
+function redundancySentence() {
+  if (!sweep.resources.length) return '';
+  if (sweep.severs > 0) {
+    const first = sweep.resources.find(({ verdict, endpoint }) => verdict === 'severs' && !endpoint);
+    const name = resourceName(resourceById(first.id) || first);
+    return `단일 장애점이 ${sweep.severs}개 있습니다. ${name} 하나만 죽어도 트래픽이 끊깁니다.`;
+  }
+  if (sweep.overloads > 0) {
+    const worst = sweep.resources
+      .filter(({ verdict }) => verdict === 'overloads')
+      .sort((a, b) => a.minDeliveredRatio - b.minDeliveredRatio)[0];
+    const name = resourceName(resourceById(worst.id) || worst);
+    return worst.minDeliveredRatio < 1
+      ? `끊기는 자원은 없습니다. 다만 ${name}를 끄면 ${Math.round(worst.minDeliveredRatio * 100)}%만 전달됩니다.`
+      : `끊기는 자원은 없습니다. 다만 ${name}를 끄면 남은 쪽이 한계를 넘습니다.`;
+  }
+  if (sweep.bounded > 0) return '어느 하나가 죽어도 견디는 것으로 보이나, 한계를 모르는 축이 남아 있습니다.';
+  return '어느 자원 하나가 죽어도 남은 쪽이 견딥니다.';
+}
+
 function renderBottleneck() {
   const parts = [];
   const binding = current.summary.bindingResourceId
@@ -101,7 +122,8 @@ function renderBottleneck() {
   if (current.demands.some(({ deliveredRatioBound }) => deliveredRatioBound === 'upper')) {
     parts.push('한계를 모르는 축이 있어 전달률은 상한값입니다.');
   }
-  element('bottleneck-note').textContent = parts.join(' ');
+  parts.push(redundancySentence());
+  element('bottleneck-note').textContent = parts.filter(Boolean).join(' ');
 }
 
 function render() {
@@ -451,7 +473,9 @@ function renderTopology() {
   element('node-layer').innerHTML = current.devices.map((device) => {
     const status = device.active ? device.primaryStatus : 'disabled';
     const { rows, hidden } = nodeAxes(device);
-    const meta = [device.kind.toUpperCase(), behaviorToken(device), device.zone, hidden ? `+${hidden}` : ''].filter(Boolean).join(' \u00b7 ');
+    const verdict = sweep.resources.find(({ id }) => id === device.id);
+    const spof = verdict?.verdict === 'severs' && !verdict.endpoint;
+    const meta = [device.kind.toUpperCase(), behaviorToken(device), device.zone, spof ? 'SPOF' : '', hidden ? `+${hidden}` : ''].filter(Boolean).join(' \u00b7 ');
     const axes = device.active
       ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis)).join('')
       : '<span class="node-axis" data-axis-state="disabled"><i>x</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>';
