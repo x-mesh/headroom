@@ -159,13 +159,13 @@ button { color: inherit; }
 .topology-live-status i { display: inline-block; width: 7px; height: 7px; margin-right: 6px; background: var(--cyan); box-shadow: 0 2px 9px color-mix(in srgb, var(--cyan) 65%, transparent); animation: telemetry-breathe 1.8s cubic-bezier(.16,1,.3,1) infinite alternate; }
 .topology-scroll { overflow: auto; overscroll-behavior: contain; }
 .mobile-pan-cue { display: none; }
-.topology-canvas { width: 940px; height: 580px; margin: 0 auto; position: relative; background: var(--canvas); }
-.topology-canvas::before { content: ''; position: absolute; inset: 0; opacity: .32; background-image: linear-gradient(var(--line-soft) 1px, transparent 1px), linear-gradient(90deg, var(--line-soft) 1px, transparent 1px); background-size: 30px 30px; pointer-events: none; }
-.zone-label { position: absolute; top: 18px; color: var(--muted); font: 600 9px/1 var(--font-data); letter-spacing: .14em; }
-.zone-edge { left: 88px; }.zone-security { left: 270px; }.zone-fabric { left: 465px; }.zone-rack { left: 742px; }
+.topology-canvas { width: var(--canvas-width, 940px); height: var(--canvas-height, 580px); margin: 0 auto; position: relative; background: var(--canvas); }
+.topology-canvas::before { content: ''; position: absolute; inset: 0; opacity: .32; background-image: linear-gradient(var(--line-soft) 1px, transparent 1px), linear-gradient(90deg, var(--line-soft) 1px, transparent 1px); background-size: 30px 30px; background-position: calc(-1 * var(--viewport-x, 0px)) calc(-1 * var(--viewport-y, 0px)); pointer-events: none; }
+.zone-label { position: absolute; top: calc(18px - var(--viewport-y, 0px)); color: var(--muted); font: 600 9px/1 var(--font-data); letter-spacing: .14em; }
+.zone-edge { left: calc(88px - var(--viewport-x, 0px)); }.zone-security { left: calc(270px - var(--viewport-x, 0px)); }.zone-fabric { left: calc(465px - var(--viewport-x, 0px)); }.zone-rack { left: calc(742px - var(--viewport-x, 0px)); }
 .link-layer, .node-layer { position: absolute; inset: 0; }
 .link { stroke: var(--cyan); stroke-width: 2; fill: none; vector-effect: non-scaling-stroke; opacity: .68; }
-.link.warning { stroke: var(--amber); }.link.overloaded { stroke: var(--danger); stroke-width: 3; }.link.invalid { stroke: var(--danger); stroke-dasharray: 2 3; }.link.disabled { stroke: var(--danger); stroke-dasharray: 7 7; opacity: .55; }
+.link.unknown { stroke: var(--unknown); stroke-dasharray: 5 4; }.link.warning { stroke: var(--amber); }.link.overloaded { stroke: var(--danger); stroke-width: 3; }.link.invalid { stroke: var(--danger); stroke-dasharray: 2 3; }.link.disabled { stroke: var(--danger); stroke-dasharray: 7 7; opacity: .55; }
 .link-hit { stroke: transparent; stroke-width: 18; cursor: pointer; pointer-events: stroke; }
 .link-label { fill: var(--muted); font: 500 9px var(--font-data); paint-order: stroke; stroke: var(--canvas); stroke-width: 4px; }
 .packet-dot { fill: var(--signal-deep); stroke: var(--surface-raised); stroke-width: 1.5; filter: drop-shadow(0 1px 3px color-mix(in srgb, var(--signal-deep) 65%, transparent)); pointer-events: none; }

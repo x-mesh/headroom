@@ -59,7 +59,8 @@ async function verify(viewport, screenshot, interact = false) {
   }
   const anchored = await page.evaluate(() => {
     const line = document.querySelector('[data-link-id="edge-a-fw-a"] .link');
-    return [Number(line.getAttribute('x2')), Number(line.getAttribute('y2'))];
+    const [originX, originY] = document.querySelector('#link-layer').getAttribute('viewBox').split(' ').map(Number);
+    return [Number(line.getAttribute('x2')) - originX, Number(line.getAttribute('y2')) - originY];
   });
   const target = symbols.find((symbol) => symbol.id === 'fw-a').center;
   assert.ok(Math.abs(target[0] - anchored[0]) < 1.5 && Math.abs(target[1] - anchored[1]) < 1.5,
@@ -69,6 +70,8 @@ async function verify(viewport, screenshot, interact = false) {
   const unknownAxis = await page.locator('[data-device-id="api-a"] .node-axis').last().innerText();
   assert.match(unknownAxis, /—/, 'an unknown limit must read as an em dash');
   assert.doesNotMatch(unknownAxis, /\d%/, 'an unknown limit must never read as a percentage');
+  assert.equal(await page.locator('#tab-palette').getAttribute('aria-selected'), 'true', 'the component tab opens first');
+  await page.locator('#tab-failure').click();
   if (viewport.width <= 760) {
     assert.equal(await page.locator('.mobile-fault-tray').isVisible(), true);
     assert.match(await page.locator('.mobile-pan-cue').textContent(), /좌우로 탐색/);
@@ -221,6 +224,49 @@ async function verify(viewport, screenshot, interact = false) {
     assert.ok(placed, 'click placement must find a free slot instead of stacking on an existing node');
     await page.locator('#tab-failure').click();
     assert.equal(await page.locator('#panel-palette').isHidden(), true);
+
+    // 캔버스는 배치를 따라 커진다. 기본 배치는 최소 크기를 그대로 쓴다.
+    const canvasSize = () => page.evaluate(() => {
+      const style = getComputedStyle(document.querySelector('#topology-canvas'));
+      return { width: Math.round(parseFloat(style.width)), height: Math.round(parseFloat(style.height)),
+        viewBox: document.querySelector('#link-layer').getAttribute('viewBox') };
+    });
+
+    const spreadProject = structuredClone(project);
+    spreadProject.topology.devices[0].position = { x: -400, y: -220 };
+    spreadProject.topology.devices[1].position = { x: 1600, y: 900 };
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.locator('#project-file-input').setInputFiles({ name: 'spread.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(spreadProject)) });
+    await page.waitForFunction(() => document.querySelector('#link-layer').getAttribute('viewBox') !== '0 0 940 580');
+    const spread = await canvasSize();
+    const [originX, originY, spreadWidth, spreadHeight] = spread.viewBox.split(' ').map(Number);
+    assert.ok(originX < 0 && originY < 0, `the origin must follow a device placed above and left, got ${spread.viewBox}`);
+    assert.ok(spreadWidth > 940 && spreadHeight > 580, 'the canvas must grow past its minimum for a device placed outside');
+    assert.deepEqual([spread.width, spread.height], [spreadWidth, spreadHeight], 'the canvas box must match its viewBox');
+
+    // 원점이 음수로 밀려도 링크는 심볼 중심에 붙어 있어야 한다.
+    const anchorGap = await page.evaluate(() => {
+      const layer = document.querySelector('#link-layer');
+      const svg = layer.getBoundingClientRect();
+      const [x, y] = layer.getAttribute('viewBox').split(' ').map(Number);
+      const line = document.querySelector('[data-link-id="source-a-target-a"] .link');
+      const symbol = document.querySelector('[data-device-id="source-a"] .node-symbol').getBoundingClientRect();
+      return Math.hypot((symbol.left + symbol.width / 2) - (svg.left + Number(line.getAttribute('x1')) - x),
+        (symbol.top + symbol.height / 2) - (svg.top + Number(line.getAttribute('y1')) - y));
+    });
+    assert.ok(anchorGap < 1.5, `a link must stay on the symbol center after the origin moves, gap ${anchorGap}`);
+
+    const zoneShift = await page.evaluate(() => {
+      const canvas = document.querySelector('#topology-canvas').getBoundingClientRect();
+      return Math.round(document.querySelector('.zone-edge').getBoundingClientRect().left - canvas.left);
+    });
+    assert.equal(zoneShift, 88 - originX, 'zone labels keep their world position when the origin moves');
+
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.locator('#project-file-input').setInputFiles({ name: 'project.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) });
+    await page.waitForFunction(() => document.querySelector('#link-layer').getAttribute('viewBox') === '0 0 940 580');
+    const restored = await canvasSize();
+    assert.deepEqual([restored.width, restored.height], [940, 580], 'a layout that fits returns to the minimum canvas');
   }
   await page.screenshot({ path: screenshot, fullPage: true });
   await page.close();

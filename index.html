@@ -97,16 +97,16 @@
             <span class="count-badge" id="failure-count">0 ACTIVE</span>
           </header>
           <div class="panel-tabs" role="tablist" aria-label="설계 도구">
-            <button type="button" role="tab" id="tab-failure" data-panel-tab="failure" aria-controls="panel-failure" aria-selected="true">장애 주입</button>
-            <button type="button" role="tab" id="tab-palette" data-panel-tab="palette" aria-controls="panel-palette" aria-selected="false" tabindex="-1">컴포넌트</button>
+            <button type="button" role="tab" id="tab-palette" data-panel-tab="palette" aria-controls="panel-palette" aria-selected="true">컴포넌트</button>
+            <button type="button" role="tab" id="tab-failure" data-panel-tab="failure" aria-controls="panel-failure" aria-selected="false" tabindex="-1">장애 주입</button>
           </div>
-          <div id="panel-failure" role="tabpanel" aria-labelledby="tab-failure">
-            <p class="panel-note">장비나 링크를 끄면 활성 경로로 부하를 다시 분배합니다.</p>
-            <div class="failure-list" id="failure-list"></div>
-          </div>
-          <div id="panel-palette" role="tabpanel" aria-labelledby="tab-palette" hidden>
+          <div id="panel-palette" role="tabpanel" aria-labelledby="tab-palette">
             <p class="panel-note">아이콘을 캔버스로 끌어다 놓으세요. 클릭하면 빈 자리에 놓입니다. 한계값은 인스펙터에서 채웁니다.</p>
             <div class="component-palette" id="component-palette"></div>
+          </div>
+          <div id="panel-failure" role="tabpanel" aria-labelledby="tab-failure" hidden>
+            <p class="panel-note">장비나 링크를 끄면 활성 경로로 부하를 다시 분배합니다.</p>
+            <div class="failure-list" id="failure-list"></div>
           </div>
         </aside>
 

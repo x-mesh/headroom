@@ -79,10 +79,11 @@ function summarizeAxes(axes) {
   const known = Object.entries(axes).filter(([, axis]) => axis.utilization != null);
   const binding = known.sort((a, b) => b[1].utilization - a[1].utilization)[0] || null;
   const statuses = [...new Set(Object.values(axes).map(({ status }) => status))];
-  const primaryStatus = statuses.includes('overloaded') ? 'overloaded'
-    : statuses.includes('warning') ? 'warning'
-      : statuses.includes('invalid') ? 'invalid'
-        : statuses.includes('unknown') ? 'unknown' : 'healthy';
+  const primaryStatus = !statuses.length ? 'unknown'
+    : statuses.includes('overloaded') ? 'overloaded'
+      : statuses.includes('warning') ? 'warning'
+        : statuses.includes('invalid') ? 'invalid'
+          : statuses.includes('unknown') ? 'unknown' : 'healthy';
   return { bindingAxis: binding?.[0] || null, minHeadroom: binding ? binding[1].headroom : null, statuses, primaryStatus };
 }
 

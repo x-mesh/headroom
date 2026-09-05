@@ -298,7 +298,7 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 
 ### Design Board Tabs
 
-- **Tabs:** Split the left board into a failure tab and a component tab. Keep the failure tab first and open by default.
+- **Tabs:** Split the left board into a component tab and a failure tab. Keep the component tab first and open by default, because building comes before breaking.
 - **Shape:** Use a two-pixel underline on the open tab. Use no corner radius and no filled tab body.
 - **Badge:** Show the active-fault count only on the failure tab. Hide it on the component tab.
 - **Keyboard:** Move between tabs with the arrow keys, Home, and End. Keep only the open tab in the tab order.
@@ -316,6 +316,14 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Shape:** Use a 52px minimum height and 9px by 18px padding.
 - **State:** Show UP or DOWN text and update `aria-pressed`.
 - **Active:** Use a red inner square, red border, and red DOWN text.
+
+### Canvas
+
+- **Minimum:** Start at 940 by 580. A layout that fits keeps that size.
+- **Growth:** Grow the canvas toward any device placed outside it. Add 40px of slack in the direction that grows.
+- **Origin:** Let device coordinates go negative. Move the canvas origin instead of clamping the device.
+- **World Position:** Keep the grid and the zone labels fixed to world coordinates, not to the canvas edge.
+- **Cap:** Stop growing at 12000px so an imported file cannot ask for a canvas the browser cannot paint.
 
 ### Topology Node and Link
 
@@ -337,6 +345,7 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Accessible Name:** Give the node one label that starts with the device name and states class, zone, state, and binding axis. Keep synthetic telemetry out of that label.
 - **Active Link:** Use a solid semantic stroke and one to three SVG packet dots.
 - **Packet Speed:** Reduce duration as utilization rises. Use 3.4s as the base and 1.25s as the minimum.
+- **Unknown Link:** Use a slate stroke with a 5 4 dash pattern. A link with no known capacity must never read as healthy.
 - **Invalid Link:** Use a red stroke with a tight 2 3 dash pattern. Keep it distinct from the 7 7 pattern that marks a disabled link.
 - **Disabled Link:** Use a red dashed stroke, hide packet dots, and show DOWN.
 

@@ -6,7 +6,7 @@ import { parseProject, serializeProject } from './project.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
 
 let topology = cloneTopology();
-const state = { scale: 1, selectedId: 'fw-a', disabledDevices: new Set(), disabledLinks: new Set(), editorMode: 'select', connectSource: null, leftPanel: 'failure' };
+const state = { scale: 1, selectedId: 'fw-a', disabledDevices: new Set(), disabledLinks: new Set(), editorMode: 'select', connectSource: null, leftPanel: 'palette' };
 let baseline = calculateScenario(topology);
 let current = baseline;
 let toastTimer;
@@ -186,12 +186,43 @@ function setLeftPanel(name) {
   element('failure-count').hidden = name !== 'failure';
 }
 
-// 캔버스는 940x580 고정이고 확대가 없으므로 CSS 픽셀과 캔버스 좌표가 1:1 이다.
+const CANVAS_MIN = { width: 940, height: 580 };
+const CANVAS_PAD = 40;
+const CANVAS_MAX = 12000;
+// 노드는 심볼 중심이 기준이고 라벨이 아래로 흐르므로 방향별 여백이 다르다.
+const NODE_REACH = { left: 70, right: 70, top: 30, bottom: 150 };
+let viewport = { minX: 0, minY: 0, width: CANVAS_MIN.width, height: CANVAS_MIN.height };
+
+function canvasViewport(devices) {
+  const bounds = devices.reduce((box, { position }) => ({
+    minX: Math.min(box.minX, position.x - NODE_REACH.left), minY: Math.min(box.minY, position.y - NODE_REACH.top),
+    maxX: Math.max(box.maxX, position.x + NODE_REACH.right), maxY: Math.max(box.maxY, position.y + NODE_REACH.bottom),
+  }), { minX: 0, minY: 0, maxX: CANVAS_MIN.width, maxY: CANVAS_MIN.height });
+  const minX = bounds.minX < 0 ? bounds.minX - CANVAS_PAD : 0;
+  const minY = bounds.minY < 0 ? bounds.minY - CANVAS_PAD : 0;
+  const maxX = bounds.maxX > CANVAS_MIN.width ? bounds.maxX + CANVAS_PAD : CANVAS_MIN.width;
+  const maxY = bounds.maxY > CANVAS_MIN.height ? bounds.maxY + CANVAS_PAD : CANVAS_MIN.height;
+  return { minX, minY, width: Math.min(maxX - minX, CANVAS_MAX), height: Math.min(maxY - minY, CANVAS_MAX) };
+}
+
+function applyViewport() {
+  viewport = canvasViewport(current.devices);
+  const canvas = element('topology-canvas');
+  canvas.style.setProperty('--canvas-width', `${viewport.width}px`);
+  canvas.style.setProperty('--canvas-height', `${viewport.height}px`);
+  canvas.style.setProperty('--viewport-x', `${viewport.minX}px`);
+  canvas.style.setProperty('--viewport-y', `${viewport.minY}px`);
+  // viewBox 가 원점을 담당하므로 링크는 좌표를 변환하지 않고 그대로 쓴다.
+  element('link-layer').setAttribute('viewBox', `${viewport.minX} ${viewport.minY} ${viewport.width} ${viewport.height}`);
+}
+
+// 확대가 없으므로 CSS 픽셀과 캔버스 좌표는 1:1 이고, 원점만 viewport 만큼 밀려 있다.
 function canvasPoint(event) {
   const rect = element('topology-canvas').getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
-  return { x, y, inside: x >= 0 && y >= 0 && x <= rect.width && y <= rect.height };
+  const offsetX = event.clientX - rect.left;
+  const offsetY = event.clientY - rect.top;
+  return { x: offsetX + viewport.minX, y: offsetY + viewport.minY,
+    inside: offsetX >= 0 && offsetY >= 0 && offsetX <= rect.width && offsetY <= rect.height };
 }
 
 function nextDeviceName(kind) {
@@ -208,8 +239,7 @@ function createDeviceFromPalette(kind, position) {
   if (!preset) return;
   try {
     const device = addDevice(topology, {
-      name: nextDeviceName(kind), kind, limits: preset.limits,
-      position: { x: Math.min(Math.max(position.x, 0), 940), y: Math.min(Math.max(position.y, 0), 580) },
+      name: nextDeviceName(kind), kind, limits: preset.limits, position,
     });
     state.selectedId = device.id;
     closeEditorPanel();
@@ -228,6 +258,7 @@ function endPaletteDrag() {
 }
 
 function renderTopology() {
+  applyViewport();
   const devices = new Map(current.devices.map((item) => [item.id, item]));
   element('link-layer').innerHTML = current.links.map((link) => {
     const source = devices.get(link.source).position;
@@ -257,7 +288,7 @@ function renderTopology() {
     const axes = device.active
       ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis)).join('')
       : '<span class="node-axis" data-axis-state="disabled"><i>x</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>';
-    return `<button type="button" class="mesh-node ${status} ${state.selectedId === device.id ? 'selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x}px;top:${device.position.y}px" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
+    return `<button type="button" class="mesh-node ${status} ${state.selectedId === device.id ? 'selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x - viewport.minX}px;top:${device.position.y - viewport.minY}px" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
       <span class="node-symbol"><svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolId(device.kind)}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span><span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
     </button>`;
   }).join('');
@@ -551,8 +582,8 @@ element('node-layer').addEventListener('pointerdown', (event) => {
 element('node-layer').addEventListener('pointermove', (event) => {
   if (!dragState || dragState.pointerId !== event.pointerId) return;
   const position = { x: dragState.origin.x + event.clientX - dragState.startX, y: dragState.origin.y + event.clientY - dragState.startY };
-  moveDevice(topology, dragState.id, position);
-  dragState.button.style.left = `${topology.devices.find(({ id }) => id === dragState.id).position.x}px`; dragState.button.style.top = `${topology.devices.find(({ id }) => id === dragState.id).position.y}px`;
+  const moved = moveDevice(topology, dragState.id, position);
+  dragState.button.style.left = `${moved.position.x - viewport.minX}px`; dragState.button.style.top = `${moved.position.y - viewport.minY}px`;
   suppressNodeClick = Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY) > 4;
 });
 element('node-layer').addEventListener('pointerup', (event) => {
@@ -626,6 +657,7 @@ element('project-file-input').addEventListener('change', async (event) => {
 element('device-file-input').addEventListener('change', async (event) => {
   try { const text = await readFile(event.target); if (!text) return; const template = importDeviceDefinition(text); openDeviceForm(template); const form = element('editor-panel-content').querySelector('form'); form._deviceTemplate = template; showToast(`${template.schema} 장비 정의를 읽었습니다.`); } catch (error) { showToast(`가져오기 실패: ${error.message}`); }
 });
+document.querySelector('a[href="#failure-heading"]').addEventListener('click', () => setLeftPanel('failure'));
 document.querySelector('[role="tablist"]').addEventListener('click', (event) => {
   const tab = event.target.closest('[data-panel-tab]');
   if (tab) setLeftPanel(tab.dataset.panelTab);

@@ -9,7 +9,8 @@ test('creates, moves, and links devices with validated IDs', () => {
   addDevice(topology, { name: 'API A', kind: 'server', position: { x: 300, y: 100 }, limits: { nic_bps: 10e9 } });
   addLink(topology, { source: 'leaf-a', target: 'api-a', capacityBps: 10e9 });
   moveDevice(topology, 'leaf-a', { x: -4, y: 900 });
-  assert.deepEqual(topology.devices[0].position, { x: 0, y: 580 });
+  assert.deepEqual(topology.devices[0].position, { x: -4, y: 900 }, 'the canvas grows to the device, so a move is not clamped');
+  assert.throws(() => moveDevice(topology, 'leaf-a', { x: Number.NaN, y: 0 }), /Device x/);
   assert.throws(() => addLink(topology, { source: 'api-a', target: 'leaf-a' }), /already exists/);
 });
 

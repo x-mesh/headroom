@@ -16,6 +16,8 @@ function finite(value, label, { min = 0 } = {}) {
   return number;
 }
 
+const ANY_COORDINATE = { min: -Number.MAX_VALUE };
+
 function deviceIds(topology) { return new Set(topology.devices.map(({ id }) => id)); }
 function linkIds(topology) { return new Set(topology.links.map(({ id }) => id)); }
 function normalizeLimits(limits) {
@@ -28,7 +30,7 @@ export function addDevice(topology, input) {
   const device = {
     id, name: String(input.name || id).trim().slice(0, 80) || id,
     kind: String(input.kind || 'switch'), zone: String(input.zone || 'UNASSIGNED').trim().slice(0, 80) || 'UNASSIGNED',
-    position: { x: finite(input.position?.x ?? 470, 'Device x'), y: finite(input.position?.y ?? 290, 'Device y') },
+    position: { x: finite(input.position?.x ?? 470, 'Device x', ANY_COORDINATE), y: finite(input.position?.y ?? 290, 'Device y', ANY_COORDINATE) },
     limits: normalizeLimits(input.limits || { forwarding_bps: null, forwarding_pps: null }),
     source: input.source || { type: 'estimate', label: '사용자 정의', condition: '조건 미지정' }, enabled: true,
     ...(input.metadata ? { metadata: structuredClone(input.metadata) } : {}),
@@ -43,7 +45,7 @@ export function updateDevice(topology, id, patch) {
   if (patch.name != null) device.name = String(patch.name).trim().slice(0, 80) || device.name;
   if (patch.kind != null) device.kind = String(patch.kind);
   if (patch.zone != null) device.zone = String(patch.zone).trim().slice(0, 80) || 'UNASSIGNED';
-  if (patch.position) device.position = { x: finite(patch.position.x, 'Device x'), y: finite(patch.position.y, 'Device y') };
+  if (patch.position) device.position = { x: finite(patch.position.x, 'Device x', ANY_COORDINATE), y: finite(patch.position.y, 'Device y', ANY_COORDINATE) };
   if (patch.limits) {
     for (const [axis, value] of Object.entries(patch.limits)) {
       device.limits[axis] = value === null || value === '' ? null : finite(value, axis, { min: Number.EPSILON });
@@ -52,11 +54,8 @@ export function updateDevice(topology, id, patch) {
   return device;
 }
 
-export function moveDevice(topology, id, position, bounds = { width: 940, height: 580 }) {
-  return updateDevice(topology, id, { position: {
-    x: Math.min(bounds.width, Math.max(0, finite(position.x, 'Device x', { min: -Number.MAX_VALUE }))),
-    y: Math.min(bounds.height, Math.max(0, finite(position.y, 'Device y', { min: -Number.MAX_VALUE }))),
-  } });
+export function moveDevice(topology, id, position) {
+  return updateDevice(topology, id, { position });
 }
 
 export function removeDevice(topology, id) {

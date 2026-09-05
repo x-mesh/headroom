@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cloneTopology } from '../src/data.js';
 import { calculateScenario, compareScenarios } from '../src/engine.js';
+import { addDevice, createEmptyTopology } from '../src/editor.js';
 
 test('splits demand evenly across active ECMP paths', () => {
   const result = calculateScenario(cloneTopology());
@@ -35,6 +36,15 @@ test('keeps missing capacity unknown instead of healthy', () => {
   assert.equal(api.axes.nic_pps.status, 'unknown');
   assert.equal(api.axes.nic_pps.utilization, null);
   assert.ok(api.statuses.includes('unknown'));
+});
+
+test('reports a resource with no limits as unknown, never healthy', () => {
+  const topology = createEmptyTopology();
+  addDevice(topology, { id: 'bare', limits: {} });
+  const [device] = calculateScenario(topology).devices;
+  assert.deepEqual(device.axes, {});
+  assert.equal(device.bindingAxis, null);
+  assert.equal(device.primaryStatus, 'unknown', 'knowing no limit is not the same as passing every limit');
 });
 
 test('rejects a dangling path reference', () => {
