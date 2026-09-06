@@ -446,3 +446,36 @@ test('an unreachable demand keeps the path it would have taken', () => {
   assert.equal(calculateScenario(cloneTopology(), { disabledDevices: ['fw-a'] })
     .demands.find(({ id }) => id === 'public-api').severedPaths, undefined);
 });
+
+test('every catalog profile states axes the engine knows and numbers a datasheet could print', async () => {
+  const { deviceCatalog } = await import('../src/devices/firewalls.js');
+  const { axisCatalog } = await import('../src/data.js');
+  assert.ok(deviceCatalog.length >= 7, 'the catalog covers more than one manufacturer');
+  const ids = new Set();
+  for (const entry of deviceCatalog) {
+    assert.equal(ids.has(entry.id), false, `${entry.id} is listed twice`);
+    ids.add(entry.id);
+    assert.ok(entry.vendor && entry.model && entry.kind, `${entry.id} needs a vendor, model and class`);
+    // 출처 없는 값은 등록하지 않는다(PRD 8절). 어느 문서의 어느 표인지까지 남긴다.
+    for (const field of ['type', 'label', 'url', 'locator', 'retrievedAt', 'note']) {
+      assert.ok(entry.source[field], `${entry.id} source is missing ${field}`);
+    }
+    assert.equal(entry.source.type, 'datasheet');
+    assert.ok(entry.profiles.length >= 2, `${entry.id} must offer more than one measurement condition`);
+    for (const profile of entry.profiles) {
+      assert.ok(profile.label && profile.note, `${entry.id}/${profile.id} needs a label and a condition note`);
+      const axes = Object.keys(profile.limits);
+      assert.ok(axes.length > 0);
+      for (const [axis, value] of Object.entries(profile.limits)) {
+        assert.ok(axisCatalog[axis], `${entry.id}/${profile.id} states an axis the engine does not know: ${axis}`);
+        assert.ok(value === null || (Number.isFinite(value) && value > 0), `${entry.id}/${profile.id}/${axis} must be a positive number or null`);
+      }
+    }
+  }
+
+  // 같은 하드웨어라도 무엇을 검사하느냐가 한계를 정한다. 이 대비가 카탈로그의 요점이다.
+  const cisco = deviceCatalog.find(({ id }) => id === 'cisco-secure-firewall-3140');
+  const inspecting = cisco.profiles.find(({ id }) => id === 'ftd-avc').limits.new_sessions_per_sec;
+  const stateful = cisco.profiles.find(({ id }) => id === 'asa-stateful').limits.new_sessions_per_sec;
+  assert.ok(stateful > inspecting * 3, 'stateful inspection admits far more new connections than full application visibility');
+});
