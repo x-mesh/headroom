@@ -1,6 +1,6 @@
 import { axisCatalog, behaviorCatalog, cloneTopology } from './data.js';
 import { calculateScenario, compareScenarios, createExport, ENGINE_VERSION, sweepSingleFaults } from './engine.js';
-import { addDemand, addDevice, addLink, applySpec, moveDevice, normalizeId, removeDemand, removeDevice, removeLink, setLimitOverride, updateDemand, updateDevice, updateLink } from './editor.js';
+import { acceptEvidence, addDemand, addDevice, addLink, applySpec, clearEvidenceAcceptance, moveDevice, normalizeId, removeDemand, removeDevice, removeLink, setLimitOverride, setWorkloadConditions, updateDemand, updateDevice, updateLink } from './editor.js';
 import { importDeviceDefinition } from './device-import.js';
 import { parseProject, serializeProject } from './project.js';
 import { GLYPHS, GLYPH_SPRITE } from './glyphs.js';
@@ -10,7 +10,7 @@ import { buildTemplate, templates } from './templates.js';
 import { buildSpec, catalogEntry, catalogFor, catalogProfile } from './devices/catalog.js';
 import { addConnector, addShape, alignSelection, copySelection, distributeSelection, exportDiagramSvg, groupSelection, importDrawio, moveSelection, pasteSelection, removeDiagramElements, ungroupSelection, updateShape } from './diagram.js';
 import { createHistory } from './history.js';
-import { evidenceApplicability } from './evidence.js';
+import { acceptanceDigest, evidenceApplicability } from './evidence.js';
 
 let topology = cloneTopology();
 const state = { scale: 1, selectedId: 'fw-a', selection: [{ type: 'device', id: 'fw-a' }], disabledDevices: new Set(), disabledLinks: new Set(), disabledDomains: new Set(), namedScenarios: [], editorMode: 'select', connectSource: null, leftPanel: 'palette', zoom: 1, viewMode: 'edit' };
@@ -818,10 +818,20 @@ function renderSourceNote(source, device) {
     const link = source.url ? `<a href="${escapeAttribute(source.url)}" target="_blank" rel="noreferrer noopener">원문</a>` : '';
     const records = device.spec?.records || device.metadata?.records || [];
     const evidence = records.map((record) => {
-      const applicability = (device.spec?.conditionSelection || device.metadata?.conditionSelection) === 'explicit-profile'
-        ? 'applicable' : evidenceApplicability(record, topology.workloadConditions || {}, topology.workloadScope || null);
-      const label = applicability === 'applicable' ? '조건 일치' : applicability === 'incompatible' ? '조건 불일치' : '적용 조건 미확인';
-      return `<span class="evidence-state">${escapeText(axisCatalog[record.axis]?.label || record.axis)} · ${escapeText(record.evidenceKind)} · ${label}</span>`;
+      const asserted = (device.spec?.conditionSelection || device.metadata?.conditionSelection) === 'explicit-profile';
+      const judged = evidenceApplicability(record, topology.workloadConditions || {}, topology.workloadScope || null);
+      const accepted = asserted || (judged !== 'applicable' && device.accepted?.[record.axis] === acceptanceDigest(record, topology.workloadConditions || {}, topology.workloadScope || null));
+      const applicability = judged === 'applicable' ? 'applicable' : accepted ? 'user-asserted' : judged;
+      const label = { applicable: '조건 일치', incompatible: '조건 불일치', unknown: '적용 조건 미확인', 'user-asserted': '사용자 수락' }[applicability];
+      const conditions = record.conditions
+        ? Object.entries(record.conditions).map(([key, value]) => `${key}=${Array.isArray(value) ? (value.join('+') || '없음') : value}`).join(' · ')
+        : '측정 조건 없음';
+      // 프로필을 통째로 수락하는 길은 두지 않는다(PRD v0.6 P1-39). 축 하나씩만 받는다.
+      const action = record.value === null || applicability === 'applicable' ? ''
+        : accepted
+          ? `<button type="button" data-evidence-release="${escapeAttribute(record.axis)}">수락 취소</button>`
+          : `<button type="button" data-evidence-accept="${escapeAttribute(record.axis)}">이 축만 수락</button>`;
+      return `<span class="evidence-state" data-applicability="${escapeAttribute(applicability)}"><span class="evidence-head"><b>${escapeText(axisCatalog[record.axis]?.label || record.axis)}</b> · ${escapeText(record.evidenceKind)} · ${escapeText(label)}</span><small>${escapeText(conditions)}</small>${action}</span>`;
     }).join('');
     return `<div class="source-note">
       <strong>${escapeText(SOURCE_TYPE_LABEL[source.type] || source.type || '출처 미상')} · ${escapeText(source.label || '')}</strong> ${link}
@@ -830,7 +840,7 @@ function renderSourceNote(source, device) {
       ${source.note ? `<br>${escapeText(source.note)}` : ''}
       ${evidence}
       ${(device.spec?.digest || device.metadata?.digest) ? `<br>근거 snapshot ${escapeText(device.spec?.digest || device.metadata?.digest)}` : ''}
-      ${device.overrides ? `<br><b>보정한 축이 ${Object.keys(device.overrides).length}개 있습니다. 데이터시트 값은 그대로 보존됩니다.</b>` : ''}
+      ${device.overrides ? `<p class="source-correction">보정한 축이 ${Object.keys(device.overrides).length}개 있습니다. 데이터시트 값은 그대로 보존됩니다.</p>` : ''}
       <br>실제 설계에는 이 환경에서 잰 값으로 다시 확인하세요.</div>`;
   }
   return `<div class="source-note"><strong>${escapeText(source.label)}</strong><br>${escapeText(source.condition || '조건 미지정')}<br>실제 설계에는 동일 조건의 측정값을 사용하세요.</div>`;
@@ -1019,6 +1029,38 @@ function renderEditorMode() {
   const labels = { select: 'SELECT · DRAG TO MOVE', connect: state.connectSource ? `CONNECT · ${state.connectSource.toUpperCase()} → SELECT TARGET` : 'CONNECT · SELECT SOURCE' };
   element('editor-mode').lastChild.textContent = labels[state.editorMode] || state.editorMode.toUpperCase();
   document.querySelector('[data-editor-action="connect"]').setAttribute('aria-pressed', String(state.editorMode === 'connect'));
+}
+
+// 데이터시트 값은 특정 조건에서 잰 숫자다. 그 조건과 대조할 우리 워크로드를 적지 않으면
+// 어떤 한계값도 적용 가능한지 판정할 수 없고, 카탈로그 장비 전체가 계산에서 빠진다.
+const WORKLOAD_FIELDS = [
+  { key: 'packet_size_bytes', label: '프레임 크기', hint: '바이트. 데이터시트가 20 Gbps @ 1518B 로 적었다면 1518', type: 'number' },
+  { key: 'transport', label: '전송 계층', hint: 'tcp · udp · mixed', type: 'text' },
+  { key: 'cipher', label: '암호 스위트', hint: 'rsa2048 · ecdsa_p256 · none', type: 'text' },
+  { key: 'test_method', label: '시험 방법', hint: 'enterprise-traffic-mix · appmix 처럼 데이터시트가 이름 붙인 것', type: 'text' },
+];
+
+function openWorkloadForm() {
+  const conditions = topology.workloadConditions || {};
+  const features = conditions.features_enabled;
+  const judgement = current.summary.evidenceJudgement;
+  const ratio = judgement.ratio == null ? '카탈로그 근거가 붙은 축이 없습니다.'
+    : `근거가 붙은 축 ${judgement.withRecords}개 중 ${judgement.judged}개를 판정했습니다 · ${formatPercent(judgement.ratio)}`;
+  openEditorPanel('워크로드 조건', `<form data-editor-form="workload" class="editor-form">
+    <p class="form-hint">이 설계에 실제로 흐르는 트래픽의 조건입니다. 데이터시트가 어떤 조건에서 잰 숫자인지와 대조해, 그 한계값을 이 설계에 쓸 수 있는지 판정합니다. 비워 두면 판정할 수 없어 미확인으로 남습니다.</p>
+    ${WORKLOAD_FIELDS.map(({ key, label, hint, type }) => `<label>${escapeText(label)}
+      <input name="${key}" type="${type}" value="${escapeAttribute(conditions[key] ?? '')}" placeholder="${escapeAttribute(hint)}">
+    </label>`).join('')}
+    <fieldset class="workload-features">
+      <legend>켜 둔 기능</legend>
+      <label class="inline"><input type="radio" name="features_mode" value="unset"${features == null ? ' checked' : ''}> 적지 않음</label>
+      <label class="inline"><input type="radio" name="features_mode" value="none"${Array.isArray(features) && !features.length ? ' checked' : ''}> 없음 (방화벽만)</label>
+      <label class="inline"><input type="radio" name="features_mode" value="list"${Array.isArray(features) && features.length ? ' checked' : ''}> 목록</label>
+      <input name="features_enabled" type="text" value="${escapeAttribute(Array.isArray(features) ? features.join(', ') : '')}" placeholder="ips, application-control, logging">
+    </fieldset>
+    <p class="form-hint"><b>${escapeText(ratio)}</b> 이 도구가 못 하면 안 되는 일은 맞다고 말하는 것이 아니라 맞는지 아닌지 말하는 것입니다.</p>
+    <div class="form-actions"><button type="submit">적용</button><button type="button" data-workload-action="clear">모두 지우기</button></div>
+  </form>`);
 }
 
 function openEditorPanel(title, html) {
@@ -1249,6 +1291,7 @@ function handleEditorAction(action) {
   if (action === 'device') openDeviceForm();
   if (action === 'demand') openDemandManager();
   if (action === 'verification') openVerificationPanel();
+  if (action === 'workload') openWorkloadForm();
   if (action === 'connect') { state.editorMode = state.editorMode === 'connect' ? 'select' : 'connect'; state.connectSource = null; closeEditorPanel(); renderTopology(); renderEditorMode(); }
   if (action === 'save') saveProject();
   if (action === 'open') element('project-file-input').click();
@@ -1571,6 +1614,21 @@ element('editor-close').addEventListener('click', closeEditorPanel);
 element('editor-panel-content').addEventListener('submit', (event) => {
   event.preventDefault(); const form = event.target; const data = new FormData(form);
   try {
+    if (form.dataset.editorForm === 'workload') {
+      const mode = data.get('features_mode');
+      const listed = String(data.get('features_enabled') || '').split(',').map((item) => item.trim()).filter(Boolean);
+      const patch = Object.fromEntries(WORKLOAD_FIELDS.map(({ key, type }) => {
+        const raw = String(data.get(key) || '').trim();
+        return [key, raw === '' ? null : type === 'number' ? Number(raw) : raw];
+      }));
+      // '없음'과 '적지 않음'은 다른 뜻이다. 빈 목록은 방화벽만 켠 프로필과 맞출 수 있는 값이고,
+      // 적지 않음은 대조할 수 없다는 뜻이다.
+      patch.features_enabled = mode === 'none' ? [] : mode === 'list' ? listed : null;
+      setWorkloadConditions(topology, patch);
+      closeEditorPanel();
+      commitTopology('워크로드 조건을 적용했습니다. 한계값의 적용 가능성을 다시 판정합니다.');
+      return;
+    }
     if (form.dataset.editorForm === 'device') {
       const template = form._deviceTemplate || {};
       const kind = data.get('kind');
@@ -1626,7 +1684,25 @@ element('editor-panel-content').addEventListener('change', (event) => {
   const form = event.target.closest('form[data-editor-form="device"]');
   if (form && event.target.name === 'kind') renderDeviceLimitFields(form);
 });
+element('inspector-content').addEventListener('click', (event) => {
+  const accept = event.target.closest('[data-evidence-accept]');
+  const release = event.target.closest('[data-evidence-release]');
+  if (!accept && !release) return;
+  const axis = (accept || release).dataset.evidenceAccept || (accept || release).dataset.evidenceRelease;
+  const name = resourceName(resourceById(state.selectedId)) || state.selectedId;
+  try {
+    if (accept) { acceptEvidence(topology, state.selectedId, axis); commitTopology(`${name}의 ${axisCatalog[axis]?.label || axis} 한계값을 이 조건에서 쓰기로 했습니다.`); }
+    else { clearEvidenceAcceptance(topology, state.selectedId, axis); commitTopology(`${name}의 ${axisCatalog[axis]?.label || axis} 수락을 취소했습니다.`); }
+  } catch (error) { showToast(error.message); }
+});
+
 element('editor-panel-content').addEventListener('click', (event) => {
+  if (event.target.closest('[data-workload-action="clear"]')) {
+    setWorkloadConditions(topology, Object.fromEntries([...WORKLOAD_FIELDS.map(({ key }) => [key, null]), ['features_enabled', null]]));
+    closeEditorPanel();
+    commitTopology('워크로드 조건을 지웠습니다. 조건을 가진 한계값은 다시 미확인이 됩니다.');
+    return;
+  }
   const template = event.target.closest('[data-template]');
   if (template) { applyTemplate(template.dataset.template); return; }
   if (event.target.closest('[data-new-demand]')) { openDemandForm(); return; }
@@ -1670,7 +1746,10 @@ element('inspector-content').addEventListener('change', (event) => {
       const entryId = spec === 'catalog' ? event.target.value : device.spec.catalogId;
       const entry = catalogEntry(entryId);
       const profile = catalogProfile(entryId, spec === 'profile' ? event.target.value : device.spec?.profileId);
-      applySpec(topology, id, { ...buildSpec(entry, profile), conditionSelection: 'explicit-profile', vendor: entry.vendor, model: entry.model });
+      // 예전에는 여기서 conditionSelection: 'explicit-profile' 을 걸어 적용 판정을 통째로 건너뛰었다.
+      // 프로필을 고른 것이 조건을 확인한 것과 같다고 친 셈이다. 이제 조건이 축마다 붙고 축 단위
+      // 수락이 있으므로(P1-26·P1-27·P1-39) 그 대역은 필요 없다. 판정을 실제로 돌린다.
+      applySpec(topology, id, { ...buildSpec(entry, profile), vendor: entry.vendor, model: entry.model });
       commitTopology(`${entry.vendor} ${entry.model} · ${profile.label} 값을 적용했습니다.`);
     } catch (error) { showToast(error.message); }
     return;

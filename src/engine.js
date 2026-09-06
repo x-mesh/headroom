@@ -1,5 +1,5 @@
 import { axisCatalog, behaviorCatalog, DEFAULT_RESPONSE_SHARE, STATEFUL_KINDS } from './data.js';
-import { evidenceApplicability } from './evidence.js';
+import { acceptanceDigest, evidenceApplicability } from './evidence.js';
 
 export const SESSION_SYNC_DEFAULT = 'stateful';
 export const ENGINE_VERSION = '3.0.0';
@@ -357,6 +357,12 @@ export function calculateScenario(topology, options = {}) {
     for (const linkId of domain.linkIds || []) disabledLinks.add(linkId);
   }
   const warningThreshold = topology.warningThreshold ?? 0.8;
+  // 워크로드 조건은 한계값의 적용 가능성을 판정하는 기준이다. 없으면 조건을 가진 근거가
+  // 전부 미확인으로 남는다 — 그것이 지금 카탈로그 장비가 계산에서 빠지는 이유다.
+  const workloadConditions = topology.workloadConditions ?? {};
+  const workloadScope = topology.workloadScope ?? null;
+  // 게이트 G2 가 재는 값. 맞았는지가 아니라 맞는지 아닌지 말할 수 있었는지를 센다.
+  const evidenceJudgement = { withRecords: 0, judged: 0 };
   const deviceIndex = new Map(topology.devices.map((device) => [device.id, device]));
   const deviceAxes = new Map(topology.devices.map((device) => [device.id, requiredAxes(device)]));
   const linkAxes = new Map(topology.links.map((link) => [link.id, Object.keys({ forwarding_bps: null, ...link.capacity, ...link.capacityByDirection?.forward, ...link.capacityByDirection?.reverse })]));
@@ -440,17 +446,25 @@ export function calculateScenario(topology, options = {}) {
         continue;
       }
       if (!record) continue;
-      const applicability = (device.spec?.conditionSelection || device.metadata?.conditionSelection) === 'explicit-profile'
-        ? 'applicable'
-        : evidenceApplicability(record, topology.workloadConditions ?? {}, topology.workloadScope ?? null);
+      const judged = evidenceApplicability(record, workloadConditions, workloadScope);
+      // 조건이 맞지 않는 축을 사용자가 하나씩 수락할 수 있다(PRD v0.6 P1-39). 수락은 근거와
+      // 그때의 워크로드 조건에 묶여 있으므로, 여기서 다시 계산해 맞을 때만 인정한다.
+      // 명시적 조건으로 임포트한 외부 정의도 사용자가 조건을 단언한 것이라 같은 자리에 든다.
+      const asserted = (device.spec?.conditionSelection || device.metadata?.conditionSelection) === 'explicit-profile'
+        || device.accepted?.[axis] === acceptanceDigest(record, workloadConditions, workloadScope);
+      const applicability = judged === 'applicable' ? 'applicable' : asserted ? 'user-asserted' : judged;
       result.evidenceApplicability = applicability;
       result.source = structuredClone(record.source ?? null);
-      if (applicability === 'applicable') continue;
+      evidenceJudgement.withRecords += 1;
+      if (applicability !== 'unknown') evidenceJudgement.judged += 1;
+      if (applicability === 'applicable' || applicability === 'user-asserted') continue;
       if (applicability === 'incompatible') validationIssues.push({ resourceId: device.id, axis, category: 'applicability', reason: 'evidence-incompatible' });
       // 잘못된 숫자 자체는 조건 미확인으로 가리지 않는다.
       if (result.status === 'invalid') continue;
       axes[axis] = { ...result, utilization: null, headroom: null, status: 'unknown',
         unknownReason: applicability === 'incompatible' ? 'evidence-incompatible' : 'evidence-applicability-unknown' };
+      // 조건이 맞지 않는 축은 사용자가 수락하면 계산에 쓸 수 있다. 화면이 그 길을 안내한다.
+      axes[axis].acceptable = true;
     }
     const surge = failover.surge[device.id];
     if (surge && axes.new_sessions_per_sec) {
@@ -610,6 +624,7 @@ export function calculateScenario(topology, options = {}) {
       warningCount: activeResources.filter(({ primaryStatus }) => primaryStatus === 'warning').length,
       activeFaults: disabledDevices.size + disabledLinks.size,
       growthLadder: growthLadder(activeResources, scale, warningThreshold),
+      evidenceJudgement: { ...evidenceJudgement, ratio: evidenceJudgement.withRecords ? evidenceJudgement.judged / evidenceJudgement.withRecords : null },
     },
     failover: failover.report,
   };
@@ -796,6 +811,8 @@ export function createExport(topology, scenario, baseline) {
       deliveryModel: 'single-pass-offered-load',
       responseShareDefault: DEFAULT_RESPONSE_SHARE,
       growthModel: 'linear-offered-load',
+      workloadConditions: structuredClone(topology.workloadConditions ?? null),
+      workloadScope: structuredClone(topology.workloadScope ?? null),
       haGroups: topology.haGroups ?? [],
     },
     scenario: { scale: scenario.scale, faults: scenario.faults, summary: scenario.summary, demands: scenario.demands, services: scenario.services, racks: scenario.racks, validationIssues: scenario.validationIssues, failover: scenario.failover },

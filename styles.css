@@ -95,6 +95,21 @@ button { color: inherit; }
 .metric-sparkline[data-unknown] path, .metric-sparkline[data-unknown] circle { display: none; }
 .metric-sparkline[data-unknown] { background: repeating-linear-gradient(90deg, var(--line-soft) 0 5px, transparent 5px 10px) center / 100% 2px no-repeat; }
 /* 뒤처진 판정은 색으로 말하지 않는다. 등급 색(단일 장애점 빨강)을 덮으면 위험이 가려진다. */
+/* 근거 상태. 색만으로 구분하지 않는다 — 라벨이 상태를 말하고 색은 거든다. */
+.evidence-state { display: grid; gap: 2px; margin-top: 7px; padding: 7px 9px; border-left: 2px solid var(--line); background: var(--surface); font: 500 10px/1.45 var(--font-data); }
+.evidence-head { display: block; }
+.evidence-state b { font-weight: 700; }
+.evidence-state small { color: var(--muted); font-size: 9px; overflow-wrap: anywhere; }
+.evidence-state button { justify-self: start; margin-top: 4px; min-height: 22px; padding: 0 8px; border: 1px solid var(--line); background: var(--surface-raised); color: var(--text); font: 600 9px/1 var(--font-data); cursor: pointer; }
+.evidence-state button:hover { border-color: var(--signal-deep); color: var(--signal-deep); }
+.evidence-state[data-applicability="applicable"] { border-left-color: var(--signal-deep); }
+.evidence-state[data-applicability="incompatible"] { border-left-color: var(--danger); }
+.evidence-state[data-applicability="unknown"] { border-left-color: var(--unknown); border-left-style: dashed; }
+.evidence-state[data-applicability="user-asserted"] { border-left-color: var(--amber); }
+.source-correction { margin: 7px 0 0; font-weight: 700; }
+.workload-features { margin: 0; padding: 9px 11px; border: 1px solid var(--line-soft); }
+.workload-features legend { padding: 0 5px; color: var(--muted); font: 700 9px/1 var(--font-data); letter-spacing: .1em; text-transform: uppercase; }
+.workload-features label.inline { display: inline-flex; align-items: center; gap: 5px; margin-right: 12px; font: 500 11px/1.6 var(--font-ui); }
 .failure-grade[data-stale] { text-decoration: underline dotted var(--unknown); text-underline-offset: 3px; }
 #failure-list[data-stale] .failure-forecast { opacity: .45; text-decoration: line-through; }
 .mobile-fault-tray { display: none; }

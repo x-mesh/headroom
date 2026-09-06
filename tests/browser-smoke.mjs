@@ -279,24 +279,55 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
     assert.match(await page.locator('#comparison-grid').textContent(), /CHANGED/);
 
-    // 데이터시트 프로필과 사용자 보정
+    // 데이터시트 프로필 · 워크로드 조건 · 축 단위 수락 · 사용자 보정
     await page.locator('[data-device-id="fw-b"]').click();
     await page.selectOption('[data-spec-field="catalog"]', 'fortinet-fortigate-100f');
     await page.waitForFunction(() => document.querySelector('.source-note')?.textContent.includes('데이터시트'));
     assert.match(await page.locator('.limit-field small').first().textContent(), /데이터시트 20 Gbps/);
+    // 대조할 워크로드 조건이 없으면 20 Gbps 를 알면서도 판정할 수 없다.
+    assert.match(await page.locator('.evidence-state[data-applicability="unknown"]').first().textContent(), /적용 조건 미확인/,
+      'a datasheet limit with no workload to compare against must read as unjudged');
+    assert.equal(await page.locator('[data-device-id="fw-b"] .node-axis').evaluateAll((rows) =>
+      rows.every((row) => row.dataset.axisState === 'unknown')), true, 'nothing is calculated until the conditions can be compared');
+
+    // 워크로드 조건을 적으면 같은 조건에서 잰 축이 판정을 통과하고 계산에 들어간다.
+    await page.locator('[data-editor-action="workload"]').click();
+    await page.locator('input[name="packet_size_bytes"]').fill('1518');
+    await page.locator('input[name="transport"]').fill('udp');
+    await page.locator('input[name="features_mode"][value="none"]').check();
+    await page.locator('[data-editor-form="workload"] button[type="submit"]').click();
+    await page.waitForFunction(() => document.querySelector('.evidence-state[data-applicability="applicable"]'));
+    assert.match(await page.locator('.evidence-state[data-applicability="applicable"]').first().textContent(), /조건 일치/,
+      'the 1518-byte datasheet row must match a 1518-byte workload');
+    assert.ok((await page.locator('[data-device-id="fw-b"] .node-axis').evaluateAll((rows) =>
+      rows.map((row) => `${row.querySelector('b').textContent}:${row.dataset.axisState}`))).includes('BPS:healthy'));
+
+    // 위협 방어 값은 데이터시트가 프레임 크기를 밝히지 않는다. 워크로드를 적어도 판정할 수 없다.
     await page.selectOption('[data-spec-field="profile"]', 'threat');
     await page.waitForFunction(() => document.querySelector('#inspector-content')?.textContent.includes('위협 방어'));
+    assert.equal(await page.locator('[data-device-id="fw-b"] .node-axis').evaluateAll((rows) =>
+      rows.every((row) => row.dataset.axisState === 'unknown')), true,
+      'a datasheet number measured on an unstated packet mix cannot be judged by comparison');
+
+    // 그래서 축 하나씩 수락한다. 프로필을 통째로 통과시키는 길은 두지 않는다.
+    await page.locator('[data-evidence-accept="forwarding_bps"]').click();
+    await page.waitForFunction(() => document.querySelector('.evidence-state[data-applicability="user-asserted"]'));
     const threatAxes = await page.locator('[data-device-id="fw-b"] .node-axis').evaluateAll((rows) =>
       rows.map((row) => `${row.querySelector('b').textContent}:${row.dataset.axisState}`));
-    assert.ok(threatAxes.includes('BPS:overloaded'), 'threat protection drops 20 Gbps to 1 Gbps');
+    assert.ok(threatAxes.includes('BPS:overloaded'), 'threat protection drops 20 Gbps to 1 Gbps once the user accepts that number');
     assert.ok(threatAxes.includes('CPS:unknown'), 'the datasheet says nothing about sessions under inspection, so it stays unknown');
+    // 데이터시트가 값을 적지 않은 축에는 수락할 대상이 없다. 수락 버튼도 두지 않는다.
+    assert.equal(await page.locator('[data-evidence-accept]').count(), 0,
+      'an axis with no datasheet number has nothing to accept');
+    await page.locator('[data-evidence-release="forwarding_bps"]').click();
+    await page.waitForFunction(() => !document.querySelector('.evidence-state[data-applicability="user-asserted"]'));
 
     await page.selectOption('[data-spec-field="profile"]', 'fw-1518');
     await page.waitForFunction(() => document.querySelector('input[name="new_sessions_per_sec"]')?.value === '56000');
     await page.locator('input[name="new_sessions_per_sec"]').fill('40000');
     await page.locator('[data-resource-form="device"] button[type="submit"]').click();
     await page.waitForFunction(() => document.querySelector('.limit-field.corrected'));
-    assert.match(await page.locator('.source-note b').textContent(), /보정한 축이 1개/);
+    assert.match(await page.locator('.source-correction').textContent(), /보정한 축이 1개/);
     assert.match(await page.locator('.limit-field.corrected small').textContent(), /데이터시트 56 Kcps/,
       'the datasheet value stays visible next to the correction');
     await page.locator('[data-reset-axis="new_sessions_per_sec"]').click();

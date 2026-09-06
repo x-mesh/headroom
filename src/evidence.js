@@ -40,10 +40,18 @@ export function normalizeEvidence(record, defaults = {}) {
   return { ...result, digest: evidenceDigest(result) };
 }
 
+// 조건 값은 구체값, 'unknown', 'not_applicable' 중 하나다(v0.5 7.2).
+// 'unknown' 은 데이터시트가 그 조건을 밝히지 않았다는 뜻이라 대조할 수 없다. 미확인으로 남긴다.
+// 'not_applicable' 은 이 축에 그 조건이 성립하지 않는다는 뜻이라 대조하지 않는다.
+export const CONDITION_UNKNOWN = 'unknown';
+export const CONDITION_NOT_APPLICABLE = 'not_applicable';
+
 export function evidenceApplicability(record, workloadConditions = {}, workloadScope = null) {
   if (record.value === null || record.evidenceKind === 'unverified' || record.conditions == null) return 'unknown';
   let unknown = false;
   for (const [key, expected] of Object.entries(record.conditions)) {
+    if (expected === CONDITION_NOT_APPLICABLE) continue;
+    if (expected === CONDITION_UNKNOWN) { unknown = true; continue; }
     if (!(key in workloadConditions)) unknown = true;
     else if (canonical(workloadConditions[key]) !== canonical(expected)) return 'incompatible';
   }
@@ -66,10 +74,18 @@ export function validateEvidenceRecords(records) {
   }
 }
 
+// 명시 수락은 근거 레코드와 그때의 워크로드 조건 둘 다에 묶인다. 어느 한쪽이 바뀌면
+// 수락한 대상이 달라지므로 자동으로 풀려야 한다.
+export function acceptanceDigest(record, workloadConditions = {}, workloadScope = null) {
+  return evidenceDigest({ record: record.digest, workloadConditions, workloadScope });
+}
+
 export function buildSpec(entry, profile) {
   const revision = entry.revision ?? entry.source?.retrievedAt ?? null;
+  // 축마다 측정 조건이 다르다. 데이터시트가 처리량은 1518바이트로, 신규 세션은 TCP 로 잰다.
+  const conditionsFor = (axis) => profile.axisConditions?.[axis] ?? profile.conditions ?? null;
   const records = profile.records ?? Object.entries(profile.limits).map(([axis, value]) => normalizeEvidence({ axis, value }, {
-    revision, source: entry.source, conditions: profile.conditions ?? null, scope: profile.scope ?? null,
+    revision, source: entry.source, conditions: conditionsFor(axis), scope: profile.scope ?? null,
     evidenceKind: entry.kinds && axis.endsWith('_pps') ? 'theoretical' : entry.source?.type ?? 'unverified',
   }));
   const spec = { catalogId: entry.id, profileId: profile.id, profileLabel: profile.label ?? profile.id, note: profile.note ?? '', limits: structuredClone(profile.limits), source: structuredClone(entry.source), records: structuredClone(records), revision };

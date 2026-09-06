@@ -1,4 +1,5 @@
 import { behaviorCatalog } from './data.js';
+import { acceptanceDigest, evidenceApplicability } from './evidence.js';
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 // 장비가 스스로 선언하는 세션 동기화. topology.haGroups 의 sessionSync('stateful' | 'none')는
@@ -135,7 +136,7 @@ function applyEffectiveLimits(device) {
 export function applySpec(topology, id, spec) {
   const device = topology.devices.find((item) => item.id === id);
   if (!device) throw new Error(`Device ${id} does not exist`);
-  if (!spec) { delete device.spec; delete device.overrides; return device; }
+  if (!spec) { delete device.spec; delete device.overrides; delete device.accepted; return device; }
   const limits = normalizeLimits(spec.limits || {});
   device.spec = {
     ...structuredClone(spec),
@@ -152,6 +153,7 @@ export function applySpec(topology, id, spec) {
     }
     if (!Object.keys(device.overrides).length) delete device.overrides;
   }
+  releaseStaleAcceptances(topology, device);
   return applyEffectiveLimits(device);
 }
 
@@ -167,6 +169,81 @@ export function setLimitOverride(topology, id, axis, value) {
     device.overrides = { ...device.overrides, [axis]: finite(value, axis, { min: Number.EPSILON }) };
   }
   return applyEffectiveLimits(device);
+}
+
+// 워크로드 조건. v0.5 7.2 어휘를 쓴다(PRD v0.6 결정). 값을 비우면 그 키를 지운다 —
+// 빈 문자열을 남기면 데이터시트의 어떤 조건과도 일치하지 않아 전부 불일치로 떨어진다.
+const WORKLOAD_CONDITION_KEYS = new Set(['packet_size_bytes', 'packet_size_scope', 'traffic_rate_scope',
+  'transport', 'cipher', 'features_enabled', 'queue_depth', 'firmware_version', 'test_method']);
+const CONDITION_TEXT_LIMIT = 120;
+
+function conditionValue(key, value) {
+  if (Array.isArray(value)) {
+    if (value.length > 16) throw new Error(`${key} takes at most 16 entries`);
+    return value.map((item) => conditionValue(key, item)).sort();
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error(`${key} must be a finite number`);
+    return value;
+  }
+  const text = String(value).trim();
+  if (!text) throw new Error(`${key} cannot be blank`);
+  if (text.length > CONDITION_TEXT_LIMIT) throw new Error(`${key} is too long`);
+  if (/[<>]/.test(text)) throw new Error(`${key} cannot contain markup`);
+  return text;
+}
+
+/** 워크로드 조건을 통째로 세운다. 빈 값은 키를 지우고, 남은 키가 없으면 필드를 없앤다. */
+export function setWorkloadConditions(topology, patch) {
+  const next = { ...(topology.workloadConditions || {}) };
+  for (const [key, value] of Object.entries(patch || {})) {
+    if (!WORKLOAD_CONDITION_KEYS.has(key)) throw new Error(`Unknown workload condition ${key}`);
+    // 빈 배열은 없앨 값이 아니라 "아무것도 켜지 않았다"는 값이다. 방화벽만 켠 프로필의 조건이
+    // 정확히 그것이므로, 지워 버리면 맞출 수 있는 근거를 영영 못 맞춘다. null 만 키를 지운다.
+    if (value == null || value === '') delete next[key];
+    else next[key] = conditionValue(key, value);
+  }
+  if (Object.keys(next).length) topology.workloadConditions = next;
+  else delete topology.workloadConditions;
+  // 조건이 바뀌면 그 조건 아래에서 한 수락은 대상이 달라진다. 다시 묻는다.
+  for (const device of topology.devices) releaseStaleAcceptances(topology, device);
+  return topology.workloadConditions ?? null;
+}
+
+function recordFor(device, axis) {
+  return (device.spec?.records || device.metadata?.records || []).find((item) => item.axis === axis) || null;
+}
+
+// 수락은 근거 레코드와 그때의 워크로드 조건에 함께 묶인다. 어느 쪽이 바뀌든 풀린다.
+function releaseStaleAcceptances(topology, device) {
+  if (!device.accepted) return;
+  for (const axis of Object.keys(device.accepted)) {
+    const record = recordFor(device, axis);
+    if (!record || device.accepted[axis] !== acceptanceDigest(record, topology.workloadConditions ?? {}, topology.workloadScope ?? null)) {
+      delete device.accepted[axis];
+    }
+  }
+  if (!Object.keys(device.accepted).length) delete device.accepted;
+}
+
+/** 조건이 맞지 않는 축 하나를 사용자가 수락한다. 프로필을 통째로 수락하는 길은 두지 않는다. */
+export function acceptEvidence(topology, id, axis) {
+  const device = topology.devices.find((item) => item.id === id);
+  if (!device) throw new Error(`Device ${id} does not exist`);
+  const record = recordFor(device, axis);
+  if (!record) throw new Error(`${axis} has no evidence record to accept`);
+  if (record.value === null) throw new Error(`${axis} has no value to accept`);
+  const applicability = evidenceApplicability(record, topology.workloadConditions ?? {}, topology.workloadScope ?? null);
+  if (applicability === 'applicable') throw new Error(`${axis} already matches the workload conditions`);
+  device.accepted = { ...device.accepted, [axis]: acceptanceDigest(record, topology.workloadConditions ?? {}, topology.workloadScope ?? null) };
+  return device;
+}
+
+export function clearEvidenceAcceptance(topology, id, axis) {
+  const device = topology.devices.find((item) => item.id === id);
+  if (!device) throw new Error(`Device ${id} does not exist`);
+  if (device.accepted) { delete device.accepted[axis]; if (!Object.keys(device.accepted).length) delete device.accepted; }
+  return device;
 }
 
 export function removeDevice(topology, id) {

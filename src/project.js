@@ -105,6 +105,11 @@ export function validateProject(input) {
     uniqueIds(topology[key], key); safeContent(topology[key], key);
   }
   for (const key of ['template', 'evidence']) if (topology[key] != null) safeContent(topology[key], key);
+  // 워크로드 조건은 한계값의 적용 가능성을 정하므로 계산 입력이다. 파일에서 그대로 들어온다.
+  for (const key of ['workloadConditions', 'workloadScope']) if (topology[key] != null) {
+    if (key === 'workloadConditions' && !plainObject(topology[key])) throw new Error('workloadConditions must be an object');
+    safeContent(topology[key], key);
+  }
   for (const device of topology.devices) {
     validId(device.id, 'Device'); boundedText(device.name, 'Device name'); boundedText(device.kind, 'Device kind'); boundedText(device.zone, 'Device zone');
     if (device.vendor != null) boundedText(device.vendor, 'Device vendor');
@@ -119,6 +124,15 @@ export function validateProject(input) {
       if (device.spec.records != null) {
         validateEvidenceRecords(device.spec.records); safeContent(device.spec.records, 'Evidence');
         for (const record of device.spec.records) if (record.value !== device.spec.limits[record.axis]) throw new Error('Evidence does not match the original spec limits');
+      }
+    }
+    // 수락은 근거 digest 문자열이다. 근거가 없으면 무엇을 수락한 것인지 말할 수 없다.
+    if (device.accepted != null) {
+      if (!plainObject(device.accepted)) throw new Error('Device evidence acceptances must be an object');
+      if (!device.spec?.records && !device.metadata?.records) throw new Error('Evidence acceptances need the records they accept');
+      for (const [axis, digest] of Object.entries(device.accepted)) {
+        boundedText(axis, 'Accepted axis');
+        if (typeof digest !== 'string' || !/^fnv1a32:[0-9a-f]{8}$/.test(digest)) throw new Error(`Acceptance for ${axis} must carry an evidence digest`);
       }
     }
     // 보정은 원본과 나란히 실려 온다. 원본이 없으면 무엇을 보정한 것인지 말할 수 없다.
