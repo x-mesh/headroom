@@ -205,6 +205,8 @@ button { color: inherit; }
 .topology-canvas { position: absolute; left: var(--stage-pad); top: var(--stage-pad); width: var(--canvas-width, 940px); height: var(--canvas-height, 580px); background: var(--canvas); transform: scale(var(--zoom, 1)); transform-origin: 0 0; }
 .topology-canvas::before { content: ''; position: absolute; inset: 0; opacity: .32; background-image: linear-gradient(var(--line-soft) 1px, transparent 1px), linear-gradient(90deg, var(--line-soft) 1px, transparent 1px); background-size: 30px 30px; background-position: calc(-1 * var(--viewport-x, 0px)) calc(-1 * var(--viewport-y, 0px)); pointer-events: none; }
 .link-layer, .node-layer { position: absolute; inset: 0; }
+.node-layer { pointer-events: none; }
+.node-layer .mesh-node { pointer-events: auto; }
 /* 그룹 상자는 zone 계층을 그린다. 톤이 영역을, 점선이 경계를 맡는다. */
 .topology-group .group-frame { fill: color-mix(in srgb, var(--surface-tint) 55%, transparent); stroke: var(--line-soft); stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
 .topology-group[data-depth="2"] .group-frame { fill: color-mix(in srgb, var(--surface-raised) 60%, transparent); }
@@ -235,6 +237,18 @@ button { color: inherit; }
 .mesh-node.overloaded .node-rail { background-image: repeating-linear-gradient(135deg, transparent 0 3px, color-mix(in srgb, var(--surface-raised) 55%, transparent) 3px 6px); }
 .mesh-node.unknown .node-rail, .mesh-node.disabled .node-rail { background: repeating-linear-gradient(90deg, var(--node-color) 0 4px, transparent 4px 8px); }
 .node-labels { display: block; width: max-content; max-width: 104px; margin: 0 auto; padding: 2px 4px 3px; overflow: hidden; background: var(--canvas); }
+/* 연결 핸들. 노드에 마우스를 올리거나 노드를 고르면 나타나고, 끌면 링크가 된다. */
+.node-ports { position: absolute; inset: 0; pointer-events: none; }
+.node-ports i { position: absolute; width: 9px; height: 9px; margin: -5px 0 0 -5px; border: 1px solid var(--surface-raised); background: var(--signal-deep); opacity: 0; transition: opacity 120ms ease-out; pointer-events: auto; cursor: crosshair; }
+.node-ports i[data-port="top"] { left: 50%; top: 0; }
+.node-ports i[data-port="right"] { left: 100%; top: 50%; }
+.node-ports i[data-port="bottom"] { left: 50%; top: 100%; }
+.node-ports i[data-port="left"] { left: 0; top: 50%; }
+.mesh-node:hover .node-ports i, .mesh-node.selected .node-ports i, .mesh-node:focus-visible .node-ports i, .mesh-node.linking .node-ports i { opacity: 1; }
+.node-ports i:hover { background: var(--signal); }
+.mesh-node.link-target { outline: 2px solid var(--signal-deep); outline-offset: 2px; }
+.link-draft { stroke: var(--signal-deep); stroke-width: 2; stroke-dasharray: 5 4; fill: none; vector-effect: non-scaling-stroke; pointer-events: none; }
+
 /* 제조사 배지는 심볼 좌상단에 얹는다. 로고가 있으면 로고를, 없으면 약칭 텍스트를 쓴다. */
 .node-symbol { position: relative; }
 .node-vendor, .node-vendor-logo, .node-vendor-mark { position: absolute; top: 0; left: 0; z-index: 1; }
@@ -324,6 +338,13 @@ button { color: inherit; }
 .comparison-item span, .comparison-item small { display: block; color: var(--muted); }
 .comparison-item span { font-size: 10px; }.comparison-item strong { display: block; margin: 10px 0 7px; font: 600 18px/1 var(--font-data); }.comparison-item small { font: 500 9px/1.3 var(--font-data); }
 .comparison-item.negative strong { color: var(--danger); }.comparison-item.positive strong { color: var(--signal-deep); }
+/* 오른쪽 버튼 메뉴. 캔버스 위 어디서든 뜨므로 화면 경계에서 접힌다. */
+.context-menu { position: fixed; z-index: 40; min-width: 168px; padding: 4px 0; border: 1px solid var(--line); background: var(--surface-raised); box-shadow: 0 10px 30px color-mix(in srgb, var(--panel-deep) 24%, transparent); }
+.context-title { margin: 0; padding: 8px 14px 6px; border-bottom: 1px solid var(--line-soft); color: var(--muted); font: 600 9px/1.2 var(--font-data); letter-spacing: .08em; }
+.context-menu button { display: block; width: 100%; padding: 9px 14px; border: 0; background: none; color: var(--text); font: 500 12px/1 var(--font-ui); text-align: left; cursor: pointer; }
+.context-menu button:hover, .context-menu button:focus-visible { background: var(--surface-tint); outline: none; }
+.context-menu button[data-danger] { color: var(--danger); font-weight: 600; }
+
 .toast { position: fixed; right: 18px; bottom: 18px; z-index: 50; min-width: 240px; padding: 13px 15px; background: var(--panel-deep); color: var(--on-deep); font: 600 11px/1.3 var(--font-data); transform: translateY(120px); transition: transform 260ms cubic-bezier(.16,1,.3,1); box-shadow: 0 10px 30px color-mix(in srgb, var(--panel-deep) 24%, transparent); }
 .toast { display: flex; align-items: center; gap: 14px; justify-content: space-between; }
 .toast button { padding: 6px 10px; border: 1px solid var(--on-deep-line); background: none; color: var(--signal); cursor: pointer; font: 600 9px/1 var(--font-data); letter-spacing: .06em; }

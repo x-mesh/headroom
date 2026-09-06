@@ -307,6 +307,8 @@ const PALETTE = [
 ];
 const PALETTE_DRAG_THRESHOLD = 4;
 let paletteDrag = null;
+let linkDraft = null;
+let contextTarget = null;
 
 function renderPalette() {
   const counts = PALETTE.reduce((map, item) => map.set(item.group, (map.get(item.group) || 0) + 1), new Map());
@@ -542,7 +544,7 @@ function renderTopology() {
       ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis)).join('')
       : '<span class="node-axis" data-axis-state="disabled"><i>x</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>';
     return `<button type="button" class="mesh-node ${status} ${state.selectedId === device.id ? 'selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x - viewport.minX}px;top:${device.position.y - viewport.minY}px" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
-      <span class="node-symbol">${vendorBadge(device)}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolId(device.kind)}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
+      <span class="node-symbol">${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolId(device.kind)}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
     </button>`;
   }).join('');
 }
@@ -560,7 +562,7 @@ function renderInspector() {
   element('resource-state').style.color = `var(--${resource.active ? ({ overloaded: 'danger', warning: 'amber', invalid: 'danger', unknown: 'unknown', healthy: 'cyan' })[resource.primaryStatus] || 'unknown' : 'danger'})`;
   const binding = resource.axes[resource.bindingAxis];
   element('inspector-content').innerHTML = `
-    <div class="resource-identity"><strong>${escapeText(resource.name || resource.id.toUpperCase())}</strong><span>${escapeText(isDevice ? [[resource.vendor, resource.model].filter(Boolean).join(' '), resource.kind.toUpperCase(), resource.zone].filter(Boolean).join(' · ') : `${resource.source} → ${resource.target}`)}</span></div>
+    <div class="resource-identity"><strong>${escapeText(resourceName(resource))}</strong><span>${escapeText(isDevice ? [[resource.vendor, resource.model].filter(Boolean).join(' '), resource.kind.toUpperCase(), resource.zone].filter(Boolean).join(' · ') : `링크 · ${formatCompact(resource.capacity?.forwarding_bps, 'bps')} 방향별`)}</span></div>
     <div class="binding-callout"><span>BINDING AXIS</span><strong><span>${axisCatalog[resource.bindingAxis]?.label || resource.bindingAxis || '알려진 축 없음'}</span><span data-live-util="${binding?.utilization ?? ''}" data-live-seed="${resource.id}-binding">${binding ? formatPercent(binding.utilization) : '—'}</span></strong></div>
     <div class="axis-list">${Object.entries(resource.axes).map(([axis, result]) => renderAxis(axis, result, resource.id)).join('')}</div>
     ${isDevice ? renderBehavior(resource) : ''}
@@ -954,6 +956,91 @@ function exportResult() {
   showToast('결과 JSON을 내보냈습니다.');
 }
 
+// 연결 드래그 중의 고무줄. 링크 레이어에 임시 선 하나를 둔다.
+function drawLinkDraft(from, to) {
+  let line = document.querySelector('.link-draft');
+  if (!line) {
+    line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('class', 'link-draft');
+    element('link-layer').append(line);
+  }
+  line.setAttribute('x1', from.x); line.setAttribute('y1', from.y);
+  line.setAttribute('x2', to.x); line.setAttribute('y2', to.y);
+}
+
+function endLinkDraft() {
+  document.querySelector('.link-draft')?.remove();
+  document.querySelectorAll('.mesh-node.linking, .mesh-node.link-target').forEach((node) => node.classList.remove('linking', 'link-target'));
+  linkDraft = null;
+}
+
+// 오른쪽 버튼 메뉴. 항목은 이 도구가 실제로 하는 일만 담는다.
+function contextItemsFor(resource, type) {
+  const failed = type === 'device' ? state.disabledDevices.has(resource.id) : state.disabledLinks.has(resource.id);
+  const items = [{ id: 'delete', label: '삭제', danger: true }];
+  if (type === 'device') items.push({ id: 'duplicate', label: '복제' }, { id: 'connect', label: '여기서 링크 시작' });
+  items.push({ id: 'fault', label: failed ? '장애 복구' : '장애 주입' });
+  return items;
+}
+
+function openContextMenu(event, id, type) {
+  const resource = type === 'device' ? deviceById(id) : linkById(id);
+  if (!resource) return;
+  event.preventDefault();
+  state.selectedId = id;
+  contextTarget = { id, type };
+  const menu = element('context-menu');
+  menu.innerHTML = `<p class="context-title">${escapeText(resourceName(resource))}</p>${contextItemsFor(resource, type).map((item) =>
+    `<button type="button" role="menuitem" data-context-action="${item.id}"${item.danger ? ' data-danger=""' : ''}>${escapeText(item.label)}</button>`).join('')}`;
+  menu.hidden = false;
+  // 메뉴가 화면 밖으로 나가지 않게 오른쪽·아래 경계에서 접는다.
+  const box = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(event.clientX, window.innerWidth - box.width - 8)}px`;
+  menu.style.top = `${Math.min(event.clientY, window.innerHeight - box.height - 8)}px`;
+  menu.querySelector('[role="menuitem"]')?.focus();
+  renderTopology(); renderInspector();
+}
+
+function closeContextMenu() {
+  const menu = element('context-menu');
+  if (menu.hidden) return;
+  menu.hidden = true; menu.innerHTML = ''; contextTarget = null;
+}
+
+function runContextAction(action) {
+  const target = contextTarget;
+  closeContextMenu();
+  if (!target) return;
+  const { id, type } = target;
+  const resource = type === 'device' ? deviceById(id) : linkById(id);
+  if (!resource) return;
+  const previous = structuredClone(topology);
+  const undo = (message) => () => { topology = previous; state.selectedId = id; commitTopology(message); };
+  try {
+    if (action === 'fault') { toggleFailure(type, id); return; }
+    if (action === 'connect') { state.editorMode = 'connect'; state.connectSource = id; renderTopology(); renderEditorMode(); showToast('연결할 두 번째 장비를 선택하세요.'); return; }
+    if (action === 'delete') {
+      const name = resourceName(resource);
+      if (type === 'device') removeDevice(topology, id); else removeLink(topology, id);
+      state.disabledDevices.delete(id); state.disabledLinks.delete(id);
+      state.selectedId = topology.devices[0]?.id || null;
+      commitTopology(`${name}을 지웠습니다.`, undo('삭제를 되돌렸습니다.'));
+      return;
+    }
+    if (action === 'duplicate') {
+      const copy = addDevice(topology, {
+        id: normalizeId(`${resource.name || resource.id} copy`), name: `${resource.name} 복제`, kind: resource.kind, zone: resource.zone,
+        position: { x: resource.position.x + 150, y: resource.position.y + 60 },
+        limits: { ...resource.limits }, vendor: resource.vendor, model: resource.model,
+        ...(resource.behavior ? { behavior: resource.behavior } : {}),
+      });
+      if (resource.spec) applySpec(topology, copy.id, { ...resource.spec, source: resource.source, vendor: resource.vendor, model: resource.model });
+      state.selectedId = copy.id;
+      commitTopology(`${copy.name}을 만들었습니다.`, undo('복제를 되돌렸습니다.'));
+    }
+  } catch (error) { showToast(error.message); }
+}
+
 function handleNodeSelection(id) {
   if (state.editorMode === 'connect') {
     if (!state.connectSource) { state.connectSource = id; renderTopology(); renderEditorMode(); showToast('연결할 두 번째 장비를 선택하세요.'); return; }
@@ -982,11 +1069,33 @@ element('node-layer').addEventListener('click', (event) => {
 element('node-layer').addEventListener('pointerdown', (event) => {
   if (state.editorMode !== 'select') return;
   const button = event.target.closest('[data-device-id]'); if (!button) return;
+  // 핸들에서 시작한 드래그는 이동이 아니라 연결이다. drawio 와 같은 손놀림이다.
+  if (event.target.closest('[data-port]')) {
+    event.preventDefault();
+    const device = topology.devices.find(({ id }) => id === button.dataset.deviceId);
+    linkDraft = { sourceId: device.id, pointerId: event.pointerId, origin: { ...device.position }, target: null };
+    button.classList.add('linking');
+    button.setPointerCapture(event.pointerId);
+    return;
+  }
   const device = topology.devices.find(({ id }) => id === button.dataset.deviceId);
   dragState = { id: device.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, origin: { ...device.position }, button };
   button.setPointerCapture(event.pointerId); button.classList.add('dragging');
 });
 element('node-layer').addEventListener('pointermove', (event) => {
+  if (linkDraft && linkDraft.pointerId === event.pointerId) {
+    const point = canvasPoint(event);
+    const over = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-device-id]');
+    const targetId = over && over.dataset.deviceId !== linkDraft.sourceId ? over.dataset.deviceId : null;
+    if (targetId !== linkDraft.target) {
+      document.querySelectorAll('.mesh-node.link-target').forEach((node) => node.classList.remove('link-target'));
+      if (targetId) document.querySelector(`[data-device-id="${CSS.escape(targetId)}"]`)?.classList.add('link-target');
+      linkDraft.target = targetId;
+    }
+    const end = targetId ? topology.devices.find(({ id }) => id === targetId).position : point;
+    drawLinkDraft(linkDraft.origin, end);
+    return;
+  }
   if (!dragState || dragState.pointerId !== event.pointerId) return;
   const position = { x: dragState.origin.x + (event.clientX - dragState.startX) / state.zoom, y: dragState.origin.y + (event.clientY - dragState.startY) / state.zoom };
   const moved = moveDevice(topology, dragState.id, position);
@@ -994,6 +1103,21 @@ element('node-layer').addEventListener('pointermove', (event) => {
   suppressNodeClick = Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY) > 4;
 });
 element('node-layer').addEventListener('pointerup', (event) => {
+  if (linkDraft && linkDraft.pointerId === event.pointerId) {
+    const { sourceId, target } = linkDraft;
+    endLinkDraft();
+    if (target) {
+      const previous = structuredClone(topology);
+      try {
+        const link = addLink(topology, { source: sourceId, target });
+        state.selectedId = link.id;
+        commitTopology(`${resourceName(link)} 링크를 연결했습니다.`, () => {
+          topology = previous; state.selectedId = sourceId; commitTopology('링크 연결을 되돌렸습니다.');
+        });
+      } catch (error) { showToast(error.message); }
+    }
+    return;
+  }
   if (!dragState || dragState.pointerId !== event.pointerId) return;
   dragState.button.classList.remove('dragging'); const moved = suppressNodeClick; dragState = null;
   if (moved) { commitTopology('장비 위치를 저장했습니다.'); setTimeout(() => { suppressNodeClick = false; }, 0); }
@@ -1002,6 +1126,31 @@ element('link-layer').addEventListener('click', (event) => {
   const group = event.target.closest('[data-link-id]');
   if (group) { state.selectedId = group.dataset.linkId; renderInspector(); }
 });
+element('node-layer').addEventListener('contextmenu', (event) => {
+  const button = event.target.closest('[data-device-id]');
+  if (button) openContextMenu(event, button.dataset.deviceId, 'device');
+});
+element('link-layer').addEventListener('contextmenu', (event) => {
+  const group = event.target.closest('[data-link-id]');
+  if (group) openContextMenu(event, group.dataset.linkId, 'link');
+});
+element('context-menu').addEventListener('click', (event) => {
+  const action = event.target.closest('[data-context-action]')?.dataset.contextAction;
+  if (action) runContextAction(action);
+});
+element('context-menu').addEventListener('keydown', (event) => {
+  const items = [...element('context-menu').querySelectorAll('[role="menuitem"]')];
+  const index = items.indexOf(document.activeElement);
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    items[(index + (event.key === 'ArrowDown' ? 1 : items.length - 1) + items.length) % items.length]?.focus();
+  }
+  if (event.key === 'Escape') { closeContextMenu(); document.querySelector(`[data-device-id="${CSS.escape(state.selectedId || '')}"]`)?.focus(); }
+});
+document.addEventListener('pointerdown', (event) => {
+  if (!element('context-menu').hidden && !event.target.closest('#context-menu')) closeContextMenu();
+}, true);
+document.querySelector('.topology-scroll').addEventListener('scroll', closeContextMenu);
 element('link-layer').addEventListener('keydown', (event) => {
   if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.target.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
 });

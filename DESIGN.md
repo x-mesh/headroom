@@ -381,6 +381,24 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Grade Line:** Head the panel with the counts for severed, short, and spare resources.
 - **Color:** Let the words carry the verdict. Color is secondary.
 
+### Connection Handles
+
+- **Reveal:** Show four handles on the symbol edges when the node is hovered, selected, or focused. Keep them hidden otherwise so a resting canvas stays quiet.
+- **Drag:** A drag from a handle draws a link; a drag from the node body moves it. The same press must never mean both.
+- **Rubber Band:** Draw a dashed line from the source to the pointer while dragging, and mark the node under the pointer as the target.
+- **Drop:** Release on a node to connect. Release anywhere else and nothing happens — no dialog, no orphan link.
+- **Undo:** Offer undo in the toast. A link made by accident must cost one click to remove.
+
+### Context Menu
+
+- **Trigger:** Open on right-click over a node or a link, and on the keyboard menu key. Select the resource as it opens, so the inspector agrees with the menu.
+- **Items:** Carry only what this tool does to that resource: delete, duplicate, start a link, inject or clear a fault. Do not mirror a drawing app's clipboard and z-order commands.
+- **Delete First:** Put delete at the top in fault red. It is the reason the menu gets opened.
+- **Fault Label:** Name the action, not the state: inject a fault on a live resource, clear it on a failed one.
+- **Dismiss:** Close on Escape, on a press outside, and on canvas scroll. Return focus to the resource.
+- **Keyboard:** Move through items with the arrow keys. Keep every action reachable without a pointer.
+- **Bounds:** Fold the menu back inside the viewport at the right and bottom edges.
+
 ### Canvas Zoom
 
 - **Control:** Put minus, the current percentage, plus, and fit in one bordered group in the topology header.
@@ -406,6 +424,7 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 
 ### Topology Node and Link
 
+- **Pointer Layers:** The node layer covers the whole canvas, so it must pass pointer events through and let only the nodes take them. Otherwise the links underneath cannot be clicked at all.
 - **Node:** Stack a 92 by 30 device symbol over a label block in a 104px column. Use no card border, no card surface, and no shadow. Keep the node small: a topology holds dozens of them, and the axis rows carry the reading.
 - **Anchor:** Keep the device position at the center of the symbol box. Offset the node by half the symbol height, never by half the node height.
 - **Symbol:** Draw one inline sprite symbol for each device. Map the device class to a symbol and fall back to the rack symbol. Paint the symbol with text color, never with state color. Shape carries the class. Color and token carry the state.

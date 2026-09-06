@@ -13,6 +13,71 @@ const { port } = server.address();
 const browser = await chromium.launch();
 const failures = [];
 
+// 캔버스 편집은 선택·스크롤·설계를 모두 바꾸므로 깨끗한 페이지에서 따로 확인한다.
+async function verifyCanvasEditing() {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } });
+  page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
+  page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
+  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+  await page.evaluate(() => document.fonts.ready);
+
+  // 링크 위에 노드가 겹칠 수 있으니 실제로 링크가 잡히는 지점을 찾는다.
+  const linkHit = await page.evaluate(() => {
+    for (const hit of document.querySelectorAll('.link-hit')) {
+      const box = hit.getBoundingClientRect();
+      if (box.bottom < 0 || box.top > window.innerHeight) continue;
+      for (let t = 0.2; t <= 0.8; t += 0.1) {
+        const x = box.left + box.width * t;
+        const y = box.top + box.height * (box.height > box.width ? t : 0.5);
+        if (document.elementFromPoint(x, y) === hit) return { x, y };
+      }
+    }
+    return null;
+  });
+  assert.ok(linkHit, 'a link must be reachable by pointer somewhere along its length');
+  await page.mouse.click(linkHit.x, linkHit.y);
+  await page.waitForFunction(() => document.querySelector('.resource-identity')?.textContent.includes('→'));
+  assert.match(await page.locator('.resource-identity strong').textContent(), /^[^-]+ → /, 'a link reads by its endpoints, never by its id');
+
+  await page.mouse.click(linkHit.x, linkHit.y, { button: 'right' });
+  await page.waitForSelector('#context-menu [role="menuitem"]');
+  assert.deepEqual(await page.locator('#context-menu [role="menuitem"]').allTextContents(), ['삭제', '장애 주입']);
+  const linkCount = await page.locator('.link-group').count();
+  await page.locator('[data-context-action="delete"]').click();
+  await page.waitForFunction((before) => document.querySelectorAll('.link-group').length === before - 1, linkCount);
+  await page.locator('[data-toast-undo]').click();
+  await page.waitForFunction((before) => document.querySelectorAll('.link-group').length === before, linkCount);
+
+  const someNode = page.locator('.mesh-node:not(.disabled)').first();
+  await someNode.click({ button: 'right' });
+  await page.waitForSelector('#context-menu [role="menuitem"]');
+  assert.deepEqual(await page.locator('#context-menu [role="menuitem"]').allTextContents(), ['삭제', '복제', '여기서 링크 시작', '장애 주입']);
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await page.evaluate(() => document.activeElement?.dataset?.contextAction), 'duplicate', 'arrow keys move through the menu');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('#context-menu')?.hidden);
+
+  // 핸들에서 끌어 링크를 잇는다.
+  const nodeCount = await page.locator('.link-group').count();
+  await someNode.hover();
+  const handle = await someNode.locator('[data-port="right"]').boundingBox();
+  const other = await page.locator('.mesh-node:not(.disabled)').nth(1).boundingBox();
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + 40, handle.y + 20, { steps: 4 });
+  assert.equal(await page.locator('.link-draft').count(), 1, 'dragging a port shows where the link would go');
+  await page.mouse.move(other.x + other.width / 2, other.y + 15, { steps: 8 });
+  assert.equal(await page.locator('.mesh-node.link-target').count(), 1, 'the node under the pointer marks itself as the target');
+  await page.mouse.up();
+  await page.waitForFunction((before) => document.querySelectorAll('.link-group').length === before + 1, nodeCount);
+  assert.equal(await page.locator('.link-draft').count(), 0, 'the rubber band does not outlive the drop');
+  await page.locator('[data-toast-undo]').click();
+  await page.waitForFunction((before) => document.querySelectorAll('.link-group').length === before, nodeCount);
+  // 토스트는 화면 하단에 고정이라 아래쪽 노드를 덮는다. 다음 클릭 전에 걷히기를 기다린다.
+  await page.waitForFunction(() => !document.querySelector('#toast')?.classList.contains('visible'), null, { timeout: 8000 });
+  await page.close();
+}
+
 async function verify(viewport, screenshot, interact = false) {
   const page = await browser.newPage({ viewport });
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
@@ -527,6 +592,8 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForTimeout(120);
     assert.equal(await page.evaluate(() => Math.round(document.querySelector('.topology-scroll').scrollLeft)), guardScroll,
       'a drag on a node must leave the scroll position alone');
+
+    // 노드 레이어가 캔버스를 덮어 링크가 포인터를 못 받던 문제. 링크는 눌러서 검사할 수 있어야 한다.
   }
   await page.screenshot({ path: screenshot, fullPage: true });
   await page.close();
@@ -535,6 +602,7 @@ async function verify(viewport, screenshot, interact = false) {
 try {
   await verify({ width: 1440, height: 1000 }, '.impeccable/review/desktop.png', true);
   await verify({ width: 390, height: 844 }, '.impeccable/review/mobile.png');
+  await verifyCanvasEditing();
   const reducedPage = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
   await reducedPage.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   assert.equal(await reducedPage.locator('.packet-dot').first().evaluate((node) => getComputedStyle(node).display), 'none');
