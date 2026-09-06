@@ -1,13 +1,14 @@
 // 장비 카탈로그의 단일 진입점. 클래스별 파일을 합치기만 하고 값은 갖지 않는다.
 // 엔진은 이 폴더 전체를 모른다(PRD 8절: 엔진 코드에 벤더 데이터를 두지 않는다).
 import { adapterCatalog } from './adapters.js';
+import { balancerCatalog } from './balancers.js';
 import { firewallCatalog } from './firewalls.js';
 import { routerCatalog } from './routers.js';
 import { storageCatalog } from './storage.js';
 import { switchCatalog } from './switches.js';
 
 export const deviceCatalog = Object.freeze([
-  ...firewallCatalog, ...switchCatalog, ...routerCatalog, ...storageCatalog, ...adapterCatalog,
+  ...firewallCatalog, ...switchCatalog, ...routerCatalog, ...balancerCatalog, ...storageCatalog, ...adapterCatalog,
 ]);
 
 export function catalogEntry(id) {

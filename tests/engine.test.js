@@ -450,8 +450,8 @@ test('an unreachable demand keeps the path it would have taken', () => {
 test('every catalog profile states axes the engine knows and numbers a datasheet could print', async () => {
   const { catalogFor, deviceCatalog } = await import('../src/devices/catalog.js');
   const { axisCatalog } = await import('../src/data.js');
-  assert.ok(deviceCatalog.length >= 16, 'the catalog covers more than one manufacturer and more than one class');
-  for (const kind of ['firewall', 'switch', 'router', 'server', 'nas', 'storage']) {
+  assert.ok(deviceCatalog.length >= 23, 'the catalog covers more than one manufacturer and more than one class');
+  for (const kind of ['firewall', 'switch', 'router', 'lb', 'waf', 'server', 'nas', 'storage']) {
     assert.ok(catalogFor(kind).length > 0, `${kind} needs at least one catalog entry`);
   }
   const ids = new Set();
@@ -464,7 +464,8 @@ test('every catalog profile states axes the engine knows and numbers a datasheet
       assert.ok(entry.source[field], `${entry.id} source is missing ${field}`);
     }
     assert.equal(entry.source.type, 'datasheet');
-    assert.ok(entry.profiles.length >= 2, `${entry.id} must offer more than one measurement condition`);
+    // 조건이 하나뿐인 표도 있다. FortiWeb 은 처리량과 지연만 싣는다. 없는 조건을 지어내지 않는다.
+    assert.ok(entry.profiles.length >= 1, `${entry.id} needs at least one measurement condition`);
     for (const profile of entry.profiles) {
       assert.ok(profile.label && profile.note, `${entry.id}/${profile.id} needs a label and a condition note`);
       const axes = Object.keys(profile.limits);
@@ -528,4 +529,30 @@ test('a storage appliance carries its port count, not its IOPS', async () => {
   assert.equal(withCard.nic_bps, 72e9, 'the optional 25GbE card adds 50 Gbps to the onboard 22');
   // IOPS 를 대역폭으로 바꾸려면 블록 크기와 큐 깊이를 지어내야 한다. 그 축은 여기 없다.
   assert.ok(nas.profiles.every(({ limits }) => Object.keys(limits).every((axis) => axis.startsWith('nic_'))));
+});
+
+test('a balancer datasheet changes layer, and the profiles keep that straight', async () => {
+  const { catalogEntry } = await import('../src/devices/catalog.js');
+  const f5 = catalogEntry('f5-big-ip-i10800');
+  const l4 = f5.profiles.find(({ id }) => id === 'l4').limits;
+  const l7 = f5.profiles.find(({ id }) => id === 'l7').limits;
+  assert.equal(l4.forwarding_bps, 160e9);
+  assert.equal(l7.forwarding_bps, 80e9, 'proxying at layer 7 halves the published throughput');
+  // 연결 수립과 동시 연결은 L4 기준으로만 실린다. L7 쪽으로 옮겨 적지 않는다.
+  assert.equal(l4.new_sessions_per_sec, 1.5e6);
+  assert.equal(l7.new_sessions_per_sec, null);
+  assert.equal(l7.concurrent_sessions, null);
+
+  // 같은 하드웨어가 RSA 보다 ECDSA 핸드셰이크를 적게 감당한다.
+  const rsa = f5.profiles.find(({ id }) => id === 'ssl-rsa').limits.tls_full_handshakes_per_sec;
+  const ecc = f5.profiles.find(({ id }) => id === 'ssl-ecc').limits.tls_full_handshakes_per_sec;
+  assert.ok(rsa > ecc, `RSA ${rsa} should exceed ECDSA ${ecc} on this platform`);
+  // 세션 재개 수치는 어느 프로필에도 없다. 발표되지 않은 값이다.
+  assert.ok(f5.profiles.every(({ limits }) => limits.tls_resumed_handshakes_per_sec === null));
+
+  const waf = catalogEntry('fortinet-fortiweb-3000f');
+  const only = waf.profiles[0].limits;
+  assert.equal(only.forwarding_bps, 10e9);
+  assert.ok([only.new_sessions_per_sec, only.concurrent_sessions, only.tls_full_handshakes_per_sec].every((v) => v === null),
+    'the FortiWeb table prints throughput and latency only');
 });
