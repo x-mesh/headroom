@@ -7,15 +7,23 @@ import { GLYPHS, GLYPH_SPRITE } from './glyphs.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
 import { vendorLogoFor } from './logos.js';
 import { buildTemplate, templates } from './templates.js';
-import { catalogEntry, catalogFor, catalogProfile } from './devices/catalog.js';
+import { buildSpec, catalogEntry, catalogFor, catalogProfile } from './devices/catalog.js';
+import { addConnector, addShape, alignSelection, copySelection, distributeSelection, exportDiagramSvg, groupSelection, importDrawio, moveSelection, pasteSelection, removeDiagramElements, ungroupSelection, updateShape } from './diagram.js';
+import { createHistory } from './history.js';
+import { evidenceApplicability } from './evidence.js';
 
 let topology = cloneTopology();
-const state = { scale: 1, selectedId: 'fw-a', disabledDevices: new Set(), disabledLinks: new Set(), editorMode: 'select', connectSource: null, leftPanel: 'palette', zoom: 1 };
-let baseline = calculateScenario(topology);
+const state = { scale: 1, selectedId: 'fw-a', selection: [{ type: 'device', id: 'fw-a' }], disabledDevices: new Set(), disabledLinks: new Set(), disabledDomains: new Set(), namedScenarios: [], editorMode: 'select', connectSource: null, leftPanel: 'palette', zoom: 1, viewMode: 'edit' };
+let baselineSnapshot = { topology: structuredClone(topology), scenario: { scale: 1, disabledDevices: [], disabledLinks: [], disabledDomains: [] } };
+let baseline = calculateScenario(baselineSnapshot.topology, baselineSnapshot.scenario);
 let current = baseline;
 let sweep = sweepSingleFaults(topology);
+let documentHistory = createHistory(topology);
+let clipboard = null;
+let persistenceWarningShown = false;
 let toastTimer;
 let dragState = null;
+let diagramDrag = null;
 let suppressNodeClick = false;
 let telemetryTick = 0;
 let telemetryTimer;
@@ -39,22 +47,49 @@ function resourceById(id) { return deviceById(id) || linkById(id); }
 function stateLabel(status) { return ({ healthy: '정상', warning: '주의', overloaded: '용량 초과', unknown: '한계 미확인', invalid: '입력 오류' })[status] || status; }
 
 function recalculate() {
-  current = calculateScenario(topology, { scale: state.scale, disabledDevices: state.disabledDevices, disabledLinks: state.disabledLinks });
+  current = calculateScenario(topology, { scale: state.scale, disabledDevices: state.disabledDevices, disabledLinks: state.disabledLinks, disabledDomains: state.disabledDomains });
   sweep = sweepSingleFaults(topology, { scale: state.scale });
   render();
   updateTelemetry();
+  persistWorkingCopy();
 }
 
-function resetScenario({ refreshBaseline = false } = {}) {
+function resetScenario() {
   state.disabledDevices.clear(); state.disabledLinks.clear(); state.connectSource = null;
   if (!topology.devices.some(({ id }) => id === state.selectedId) && !topology.links.some(({ id }) => id === state.selectedId)) state.selectedId = topology.devices[0]?.id || null;
-  if (refreshBaseline) baseline = calculateScenario(topology);
   recalculate();
 }
 
-function commitTopology(message, undo = null) {
-  resetScenario({ refreshBaseline: true });
-  showToast(message, undo);
+function commitTopology(message) {
+  documentHistory.record(topology, message);
+  recalculate();
+  showToast(message);
+}
+
+function captureBaseline() {
+  baselineSnapshot = { topology: structuredClone(topology), scenario: scenarioOptions(true) };
+  baseline = calculateScenario(baselineSnapshot.topology, baselineSnapshot.scenario);
+  recalculate();
+  showToast('현재 설계와 시나리오를 비교 기준선으로 확정했습니다.');
+}
+
+function historyStep(direction) {
+  if (direction === 'undo' ? !documentHistory.canUndo : !documentHistory.canRedo) return;
+  const entry = direction === 'undo' ? documentHistory.undo() : documentHistory.redo();
+  if (!entry) return;
+  topology = structuredClone(entry);
+  state.selectedId = topology.devices.some(({ id }) => id === state.selectedId) ? state.selectedId : topology.devices[0]?.id || null;
+  state.selection = state.selectedId ? [{ type: 'device', id: state.selectedId }] : [];
+  recalculate();
+  showToast(direction === 'undo' ? '이전 편집으로 돌아갔습니다.' : '편집을 다시 적용했습니다.');
+}
+
+function persistWorkingCopy() {
+  try {
+    localStorage.setItem('rack-mesh-working-copy', serializeProject(topology, { ...state, baseline: baselineSnapshot }));
+  } catch {
+    if (!persistenceWarningShown) { persistenceWarningShown = true; showToast('자동 저장을 사용할 수 없습니다. 프로젝트 저장으로 작업을 보관하세요.'); }
+  }
 }
 
 // 받침에 따라 조사를 고른다. 한글이 아니면 받침 없는 쪽으로 읽는다.
@@ -104,6 +139,9 @@ function redundancySentence() {
 
 function renderBottleneck() {
   const parts = [];
+  if (current.summary.evaluationStatus === 'invalid') parts.push('입력 오류가 있어 설계 생존성을 판정할 수 없습니다.');
+  else if (current.summary.evaluationStatus === 'not-ready') parts.push('서비스 수요 또는 검증 대상이 없어 생존성 판정을 시작할 수 없습니다.');
+  else if (current.summary.evaluationStatus === 'unknown') parts.push(`미확인 제약 ${current.summary.unknownCount || 0}개 때문에 통과 판정은 보류됩니다.`);
   const binding = current.summary.bindingResourceId
     ? [...current.devices, ...current.links].find(({ id }) => id === current.summary.bindingResourceId)
     : null;
@@ -125,7 +163,10 @@ function renderBottleneck() {
   if (current.demands.some(({ deliveredRatioBound }) => deliveredRatioBound === 'upper')) {
     parts.push('한계를 모르는 축이 있어 전달률은 상한값입니다.');
   }
-  parts.push(redundancySentence());
+  if (current.demands.some(({ deliveredRatioBound }) => deliveredRatioBound === 'indeterminate')) {
+    parts.push('동일 비용 경로가 계산 한도를 넘어 일부만 열거했습니다. 이 결과로 생존성을 판정할 수 없습니다.');
+  }
+  if (!['invalid', 'not-ready'].includes(current.summary.evaluationStatus)) parts.push(redundancySentence());
   element('bottleneck-note').textContent = parts.filter(Boolean).join(' ');
   renderHeadline(binding);
 }
@@ -179,6 +220,16 @@ function renderClassControl() {
     </div>`;
 }
 
+function renderLearningPanel() {
+  const panel = element('learning-panel');
+  const lesson = topology.template;
+  if (!lesson?.teaches) { panel.hidden = true; panel.innerHTML = ''; return; }
+  const experiment = lesson.experiment;
+  panel.hidden = false;
+  panel.innerHTML = `<strong>이 설계에서 확인할 것</strong>${escapeText(lesson.teaches)}
+    ${experiment ? `<div><span>${escapeText(experiment.prompt)}</span><br><button type="button" data-lesson-action="${escapeAttribute(experiment.action.type)}" data-lesson-id="${escapeAttribute(experiment.action.id || '')}" data-lesson-value="${escapeAttribute(experiment.action.value ?? '')}">${escapeText(experiment.action.label)}</button><output>${escapeText(experiment.observe)}</output></div>` : ''}`;
+}
+
 function render() {
   renderSummary();
   renderFailures();
@@ -188,6 +239,9 @@ function render() {
   renderBottleneck();
   renderEditorMode();
   renderClassControl();
+  renderLearningPanel();
+  document.querySelector('[data-editor-action="undo"]').disabled = !documentHistory.canUndo;
+  document.querySelector('[data-editor-action="redo"]').disabled = !documentHistory.canRedo;
 }
 
 function renderSummary() {
@@ -205,7 +259,10 @@ function renderSummary() {
   element('summary-delta').textContent = `headroom ${formatPercent(comparison.minHeadroomDelta, true)}`;
   // 엔진은 0.8 을 넘으면 warning 으로 판정하고 그 수를 summary.warningCount 에 담는데,
   // 상단 상태가 그 값을 보지 않아 주의 자원이 있어도 'BASELINE STABLE' 이라고 말했다.
-  const runState = summary.unreachableCount ? { text: 'TRAFFIC UNREACHABLE', tone: 'danger' }
+  const runState = summary.evaluationStatus === 'invalid' ? { text: 'MODEL INVALID', tone: 'danger' }
+    : summary.evaluationStatus === 'not-ready' ? { text: 'MODEL NOT READY', tone: 'unknown' }
+    : summary.evaluationStatus === 'unknown' ? { text: 'EVIDENCE INCOMPLETE', tone: 'unknown' }
+    : summary.unreachableCount ? { text: 'TRAFFIC UNREACHABLE', tone: 'danger' }
     : summary.overloadedCount ? { text: 'CAPACITY EXCEEDED', tone: 'danger' }
     : summary.warningCount ? { text: `CAPACITY WARNING · ${summary.warningCount}`, tone: 'amber' }
     : summary.activeFaults ? { text: 'FAILURE CONTAINED', tone: 'amber' }
@@ -244,8 +301,9 @@ function renderFailures() {
   const groups = [
     { title: '장비', items: order(topology.devices), set: state.disabledDevices, type: 'device' },
     { title: '링크', items: order(topology.links), set: state.disabledLinks, type: 'link' },
+    { title: '장애 도메인', items: topology.failureDomains || [], set: state.disabledDomains, type: 'domain' },
   ];
-  element('failure-count').textContent = `${state.disabledDevices.size + state.disabledLinks.size} ACTIVE`;
+  element('failure-count').textContent = `${state.disabledDevices.size + state.disabledLinks.size + state.disabledDomains.size} ACTIVE`;
   element('failure-grade').textContent = sweep.resources.length
     ? `단일 장애점 ${sweep.severs}개 · 용량 부족 ${sweep.overloads}개 · 여유 ${sweep.absorbs}개`
     : '끌 자원이 아직 없습니다.';
@@ -256,9 +314,9 @@ function renderFailures() {
       ${group.items.length ? group.items.map((item) => {
         const active = group.set.has(item.id);
         const verdict = verdicts.get(item.id);
-        const detail = group.type === 'device' ? item.zone : formatCompact(item.capacity?.forwarding_bps, 'bps');
+        const detail = group.type === 'device' ? item.zone : group.type === 'link' ? formatCompact(item.capacity?.forwarding_bps, 'bps') : `장비 ${item.deviceIds?.length || 0} · 링크 ${item.linkIds?.length || 0}`;
         return `<button class="failure-switch ${active ? 'active' : ''}" type="button" data-failure-type="${group.type}" data-failure-id="${escapeAttribute(item.id)}" aria-pressed="${active}">
-          <span class="switch-glyph" aria-hidden="true"></span><span><strong>${escapeText(resourceName(item))}</strong><small>${escapeText(detail)}</small><small class="failure-forecast" data-verdict="${escapeAttribute(verdict?.verdict === 'severs' && verdict.endpoint ? 'endpoint' : verdict?.verdict || 'none')}">${escapeText(faultForecast(verdict))}</small></span><span class="switch-state">${active ? 'DOWN' : 'UP'}</span>
+          <span class="switch-glyph" aria-hidden="true"></span><span><strong>${escapeText(resourceName(item))}</strong><small>${escapeText(detail)}</small><small class="failure-forecast" data-verdict="${escapeAttribute(verdict?.verdict === 'severs' && verdict.endpoint ? 'endpoint' : verdict?.verdict || 'none')}">${escapeText(group.type === 'domain' ? '묶인 자원을 함께 중단' : faultForecast(verdict))}</small></span><span class="switch-state">${active ? 'DOWN' : 'UP'}</span>
         </button>`;
       }).join('') : '<p class="failure-empty">아직 없습니다.</p>'}
     </section>`).join('');
@@ -388,6 +446,7 @@ const PALETTE_DRAG_THRESHOLD = 4;
 let paletteDrag = null;
 let linkDraft = null;
 let contextTarget = null;
+let pendingDeviceImport = null;
 
 function renderPalette() {
   const counts = PALETTE.reduce((map, item) => map.set(item.group, (map.get(item.group) || 0) + 1), new Map());
@@ -465,13 +524,17 @@ function groupBoxes(devices) {
 }
 
 function canvasViewport(devices) {
+  const shapeBounds = (topology.diagram?.shapes || []).reduce((box, shape) => ({
+    minX: Math.min(box.minX, shape.x), minY: Math.min(box.minY, shape.y),
+    maxX: Math.max(box.maxX, shape.x + shape.width), maxY: Math.max(box.maxY, shape.y + shape.height),
+  }), { minX: 0, minY: 0, maxX: CANVAS_MIN.width, maxY: CANVAS_MIN.height });
   const bounds = groupBoxes(devices).reduce((box, group) => ({
     minX: Math.min(box.minX, group.x), minY: Math.min(box.minY, group.y),
     maxX: Math.max(box.maxX, group.x + group.width), maxY: Math.max(box.maxY, group.y + group.height),
   }), devices.reduce((box, { position }) => ({
     minX: Math.min(box.minX, position.x - NODE_REACH.left), minY: Math.min(box.minY, position.y - NODE_REACH.top),
     maxX: Math.max(box.maxX, position.x + NODE_REACH.right), maxY: Math.max(box.maxY, position.y + NODE_REACH.bottom),
-  }), { minX: 0, minY: 0, maxX: CANVAS_MIN.width, maxY: CANVAS_MIN.height }));
+  }), shapeBounds));
   const minX = bounds.minX < 0 ? bounds.minX - CANVAS_PAD : 0;
   const minY = bounds.minY < 0 ? bounds.minY - CANVAS_PAD : 0;
   const maxX = bounds.maxX > CANVAS_MIN.width ? bounds.maxX + CANVAS_PAD : CANVAS_MIN.width;
@@ -562,6 +625,7 @@ function zoomToFit() {
 }
 
 let panState = null;
+let selectionBoxState = null;
 
 function endPan() {
   if (!panState) return;
@@ -589,6 +653,16 @@ function renderTopology() {
       <rect class="group-frame" x="${group.x}" y="${group.y}" width="${group.width}" height="${group.height}"></rect>
       <text class="group-label" x="${group.x + 11}" y="${group.y + 13}">${escapeText(group.label)}</text>
     </g>`).join('');
+  const endpointPoint = (id) => devices.get(id)?.position || (() => {
+    const shape = topology.diagram?.shapes?.find((item) => item.id === id);
+    return shape ? { x: shape.x + shape.width / 2, y: shape.y + shape.height / 2 } : null;
+  })();
+  const diagramConnectors = (topology.diagram?.connectors || []).map((connector) => {
+    const source = endpointPoint(connector.source); const target = endpointPoint(connector.target);
+    if (!source || !target) return '';
+    const points = [source, ...(connector.waypoints || []), target].map(({ x, y }) => `${x},${y}`).join(' ');
+    return `<g class="diagram-connector" data-connector-id="${escapeAttribute(connector.id)}"><polyline points="${points}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4"></polyline></g>`;
+  }).join('');
   element('link-layer').innerHTML = groupMarkup + current.links.map((link) => {
     const source = devices.get(link.source).position;
     const target = devices.get(link.target).position;
@@ -609,7 +683,13 @@ function renderTopology() {
       ${packetDots}
       <text class="link-label"${link.severed ? '' : ` data-live-util="${utilization ?? ''}" data-live-seed="${link.id}"`} x="${middleX}" y="${middleY}" text-anchor="middle">${link.severed ? 'DOWN' : formatPercent(utilization)}</text>
     </g>`;
-  }).join('');
+  }).join('') + diagramConnectors;
+
+  const selectionHas = (type, id) => state.selection.some((item) => item.type === type && item.id === id)
+    || type === 'shape' && state.selection.some((item) => item.type === 'group'
+      && topology.diagram?.groups?.find(({ id: groupId }) => groupId === item.id)?.memberIds.includes(id));
+  element('diagram-layer').innerHTML = (topology.diagram?.shapes || []).map((shape) =>
+    `<button type="button" class="diagram-shape${selectionHas('shape', shape.id) ? ' selected' : ''}" data-shape-id="${escapeAttribute(shape.id)}" data-kind="${escapeAttribute(shape.kind)}" style="left:${shape.x - viewport.minX}px;top:${shape.y - viewport.minY}px;width:${shape.width}px;height:${shape.height}px">${escapeText(shape.text || '')}</button>`).join('');
 
   element('node-layer').innerHTML = current.devices.map((device) => {
     const status = device.active ? device.primaryStatus : 'disabled';
@@ -622,7 +702,7 @@ function renderTopology() {
     const axes = device.active
       ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis)).join('')
       : '<span class="node-axis" data-axis-state="disabled"><i>x</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>';
-    return `<button type="button" class="mesh-node ${status} ${state.selectedId === device.id ? 'selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x - viewport.minX}px;top:${device.position.y - viewport.minY}px" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
+    return `<button type="button" class="mesh-node ${status} ${state.selectedId === device.id ? 'selected' : ''} ${selectionHas('device', device.id) ? 'multi-selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x - viewport.minX}px;top:${device.position.y - viewport.minY}px" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
       <span class="node-symbol">${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}${classView.badge === 'on' ? `<span class="node-class-badge">${escapeText(kindInitial(device.kind))}</span>` : ''}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolId(device.kind)}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
     </button>`;
   }).join('');
@@ -669,21 +749,31 @@ function renderSpecBlock(resource) {
 }
 
 function renderSourceNote(source, device) {
-  if (device?.spec) {
+  if (device?.spec || device?.metadata?.records) {
     const link = source.url ? `<a href="${escapeAttribute(source.url)}" target="_blank" rel="noreferrer noopener">원문</a>` : '';
+    const records = device.spec?.records || device.metadata?.records || [];
+    const evidence = records.map((record) => {
+      const applicability = (device.spec?.conditionSelection || device.metadata?.conditionSelection) === 'explicit-profile'
+        ? 'applicable' : evidenceApplicability(record, topology.workloadConditions || {}, topology.workloadScope || null);
+      const label = applicability === 'applicable' ? '조건 일치' : applicability === 'incompatible' ? '조건 불일치' : '적용 조건 미확인';
+      return `<span class="evidence-state">${escapeText(axisCatalog[record.axis]?.label || record.axis)} · ${escapeText(record.evidenceKind)} · ${label}</span>`;
+    }).join('');
     return `<div class="source-note">
       <strong>${escapeText(SOURCE_TYPE_LABEL[source.type] || source.type || '출처 미상')} · ${escapeText(source.label || '')}</strong> ${link}
       ${source.locator ? `<br>${escapeText(source.locator)}` : ''}
       ${source.retrievedAt ? `<br>수집 ${escapeText(source.retrievedAt)}` : ''}
       ${source.note ? `<br>${escapeText(source.note)}` : ''}
+      ${evidence}
+      ${(device.spec?.digest || device.metadata?.digest) ? `<br>근거 snapshot ${escapeText(device.spec?.digest || device.metadata?.digest)}` : ''}
       ${device.overrides ? `<br><b>보정한 축이 ${Object.keys(device.overrides).length}개 있습니다. 데이터시트 값은 그대로 보존됩니다.</b>` : ''}
       <br>실제 설계에는 이 환경에서 잰 값으로 다시 확인하세요.</div>`;
   }
   return `<div class="source-note"><strong>${escapeText(source.label)}</strong><br>${escapeText(source.condition || '조건 미지정')}<br>실제 설계에는 동일 조건의 측정값을 사용하세요.</div>`;
 }
 
-function scenarioOptions() {
-  return { scale: state.scale, disabledDevices: [...state.disabledDevices], disabledLinks: [...state.disabledLinks] };
+function scenarioOptions(clone = false) {
+  const value = { scale: state.scale, disabledDevices: [...state.disabledDevices], disabledLinks: [...state.disabledLinks], disabledDomains: [...state.disabledDomains] };
+  return clone ? structuredClone(value) : value;
 }
 
 function behaviorPreview(resource, mode) {
@@ -802,31 +892,26 @@ function renderSparkline(svg, values) {
 
 function updateTelemetry() {
   telemetryTick += 1;
-  const motionScale = reducedMotion.matches ? 0 : 1;
   document.querySelectorAll('[data-live-util]').forEach((target) => {
     if (target.dataset.liveUtil === '') return;
     const base = Number(target.dataset.liveUtil);
     if (!Number.isFinite(base)) return;
-    target.textContent = formatPercent(Math.max(0, base * (1 + telemetryWave(target.dataset.liveSeed || 'util') * motionScale)));
+    target.textContent = formatPercent(Math.max(0, base));
   });
   document.querySelectorAll('[data-live-load]').forEach((target) => {
     if (target.dataset.liveLoad === '') return;
     const base = Number(target.dataset.liveLoad);
     if (!Number.isFinite(base)) return;
-    const value = Math.max(0, base * (1 + telemetryWave(target.dataset.liveSeed || 'load', 0.012) * motionScale));
+    const value = Math.max(0, base);
     target.textContent = `${formatCompact(value, target.dataset.liveUnit)} load`;
   });
-  const jitter = telemetryWave('summary', 0.012) * motionScale;
-  const liveHeadroom = current.summary.minHeadroom == null ? null : current.summary.minHeadroom - (1 - current.summary.minHeadroom) * jitter;
-  // 헤드라인 숫자는 흔들지 않는다. 화면에서 가장 큰 값이 1초마다 14%/15% 를 오가면
-  // 비교 패널의 고정 표기와 어긋나 보이고, 읽는 사람이 어느 쪽을 믿을지 알 수 없다.
-  // 합성 진동은 스파크라인에만 남긴다.
+  const liveHeadroom = current.summary.minHeadroom;
   element('summary-headroom').dataset.liveValue = liveHeadroom == null ? '' : liveHeadroom.toFixed(6);
   const seriesValues = {
     headroom: liveHeadroom ?? 0,
-    utilization: (1 - (current.summary.minHeadroom ?? 1)) * (1 + jitter),
-    delivery: Math.max(0, 1 - current.summary.unreachableCount / Math.max(current.demands.length, 1) + jitter * 0.15),
-    traffic: current.scale * (1 + telemetryWave('traffic', 0.018) * motionScale),
+    utilization: 1 - (current.summary.minHeadroom ?? 1),
+    delivery: Math.max(0, 1 - current.summary.unreachableCount / Math.max(current.demands.length, 1)),
+    traffic: current.scale,
   };
   document.querySelectorAll('.metric-sparkline').forEach((svg) => renderSparkline(svg, pushTelemetry(svg.dataset.series, seriesValues[svg.dataset.series])));
 }
@@ -834,7 +919,6 @@ function updateTelemetry() {
 function startTelemetry() {
   clearInterval(telemetryTimer);
   updateTelemetry();
-  telemetryTimer = setInterval(() => { if (!document.hidden) updateTelemetry(); }, reducedMotion.matches ? 2400 : 820);
 }
 
 function renderComparison() {
@@ -919,10 +1003,14 @@ function filterTemplates(query) {
 function loadTopology(next, message, undo = null) {
   topology = next;
   state.scale = 1; state.selectedId = topology.devices[0]?.id || null;
-  state.disabledDevices.clear(); state.disabledLinks.clear();
+  state.selection = state.selectedId ? [{ type: 'device', id: state.selectedId }] : [];
+  state.disabledDevices.clear(); state.disabledLinks.clear(); state.disabledDomains.clear(); state.namedScenarios = [];
   element('scale-input').value = '100';
   closeEditorPanel();
-  commitTopology(message, undo);
+  documentHistory.reset(topology);
+  baselineSnapshot = { topology: structuredClone(topology), scenario: scenarioOptions(true) };
+  baseline = calculateScenario(baselineSnapshot.topology, baselineSnapshot.scenario);
+  recalculate(); showToast(message, undo);
   centerCanvas();
 }
 
@@ -930,13 +1018,15 @@ function applyTemplate(id) {
   const chosen = templates.find((item) => item.id === id);
   if (!chosen) return;
   const previous = structuredClone(topology);
-  const restore = { scale: state.scale, devices: [...state.disabledDevices], links: [...state.disabledLinks], selectedId: state.selectedId };
+  const previousBaseline = structuredClone(baselineSnapshot);
+  const restore = { scale: state.scale, devices: [...state.disabledDevices], links: [...state.disabledLinks], domains: [...state.disabledDomains], namedScenarios: structuredClone(state.namedScenarios), selectedId: state.selectedId };
   loadTopology(buildTemplate(id), `${chosen.name}을 불러왔습니다.`, () => {
     topology = previous;
     state.scale = restore.scale; state.selectedId = restore.selectedId;
-    state.disabledDevices = new Set(restore.devices); state.disabledLinks = new Set(restore.links);
+    state.disabledDevices = new Set(restore.devices); state.disabledLinks = new Set(restore.links); state.disabledDomains = new Set(restore.domains); state.namedScenarios = restore.namedScenarios;
+    baselineSnapshot = previousBaseline; baseline = calculateScenario(previousBaseline.topology, previousBaseline.scenario);
     element('scale-input').value = String(restore.scale * 100);
-    commitTopology('이전 설계로 되돌렸습니다.');
+    documentHistory.reset(topology); recalculate(); showToast('이전 설계로 되돌렸습니다.');
     centerCanvas();
   });
 }
@@ -949,6 +1039,7 @@ function openDeviceForm(template = null) {
     <label>처리량 한계 (bps)<input name="forwarding_bps" type="number" min="1" step="any" value="${template?.limits?.forwarding_bps ?? ''}"></label>
     <label>PPS 한계<input name="forwarding_pps" type="number" min="1" step="any" value="${template?.limits?.forwarding_pps ?? ''}"></label>
     <div class="form-actions"><button type="submit">장비 생성</button></div><p class="editor-error"></p></form>`);
+  element('editor-panel-content').querySelector('form')._deviceTemplate = template || {};
 }
 
 function openDemandForm() {
@@ -983,13 +1074,48 @@ function openDemandManager() {
   openEditorPanel('Traffic demand 관리', `<div class="demand-manager-head"><p class="editor-hint">endpoint나 부하를 수정하면 explicit path가 최단 ECMP 경로로 전환됩니다.</p><button type="button" data-new-demand>새 demand</button></div><div class="demand-editor-list">${rows}</div>`);
 }
 
-function downloadText(filename, text) {
-  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+function checkList(name, items, label) {
+  if (!items.length) return `<span>${escapeText(label)} 없음</span>`;
+  return `<fieldset><legend>${escapeText(label)}</legend>${items.map((item) => `<label><input type="checkbox" name="${name}" value="${escapeAttribute(item.id)}"> ${escapeText(item.name || item.id)}</label>`).join('')}</fieldset>`;
+}
+
+function openVerificationPanel() {
+  const services = (topology.services || []).map((item) => `<li><b>${escapeText(item.name)}</b> · demand ${item.demandIds.length}개 · ${(item.requiredDeliveryRatio ?? 1) * 100}% <button type="button" data-delete-model="service" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>정의된 서비스 없음</li>';
+  const domains = (topology.failureDomains || []).map((item) => `<li><b>${escapeText(item.name)}</b> · 자원 ${(item.deviceIds?.length || 0) + (item.linkIds?.length || 0)}개 <button type="button" data-delete-model="domain" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>정의된 장애 도메인 없음</li>';
+  const racks = (current.racks || []).map((item) => `<li><b>${escapeText(item.name || item.id)}</b> · 전력 ${item.powerStatus || item.status || '미확인'} · U ${item.spaceStatus || item.status || '미확인'} <button type="button" data-delete-model="rack" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>정의된 랙 없음</li>';
+  const scenarios = state.namedScenarios.map((item) => `<li><button type="button" data-load-scenario="${item.id}">${escapeText(item.name)}</button> <button type="button" data-delete-model="scenario" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>저장한 시나리오 없음</li>';
+  openEditorPanel('서비스 생존성 검증 설정', `
+    <p class="editor-hint">서비스 요구조건과 함께 장애 도메인, 랙 전력·U를 검증합니다. 비어 있는 근거는 통과로 처리하지 않습니다.</p>
+    <div class="verification-columns">
+      <section><h3>서비스</h3><ul>${services}</ul><form class="editor-form" data-editor-form="service"><label>이름<input name="name" required maxlength="80"></label><label>최소 전달률 (%)<input name="ratio" type="number" min="1" max="100" value="100"></label>${checkList('demandIds', topology.demands, '검증할 demand')}<button type="submit">서비스 추가</button><p class="editor-error"></p></form></section>
+      <section><h3>장애 도메인</h3><ul>${domains}</ul><form class="editor-form" data-editor-form="failure-domain"><label>이름<input name="name" required maxlength="80"></label>${checkList('deviceIds', topology.devices, '함께 멈출 장비')}${checkList('linkIds', topology.links, '함께 멈출 링크')}<button type="submit">장애 도메인 추가</button><p class="editor-error"></p></form></section>
+      <section><h3>랙</h3><ul>${racks}</ul><form class="editor-form" data-editor-form="rack"><label>이름<input name="name" required maxlength="80"></label><label>전력 예산 (W)<input name="power" type="number" min="1" required></label><label>공간 (U)<input name="units" type="number" min="1" required></label><label>전력 기준<select name="basis"><option value="nameplate">nameplate</option><option value="typical">typical</option><option value="measured">measured</option></select></label>${checkList('deviceIds', topology.devices, '랙 장비')}<button type="submit">랙 추가</button><p class="editor-error"></p></form></section>
+      <section><h3>시나리오</h3><ul>${scenarios}</ul><form class="editor-form" data-editor-form="scenario"><label>이름<input name="name" required maxlength="80"></label><button type="submit">현재 장애·부하 저장</button><p class="editor-error"></p></form></section>
+    </div>`);
+}
+
+function downloadText(filename, text, type = 'application/json') {
+  const url = URL.createObjectURL(new Blob([text], { type }));
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+async function exportPng() {
+  const svg = exportDiagramSvg(topology);
+  const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+  try {
+    const image = new Image(); image.src = url; await image.decode();
+    const canvas = document.createElement('canvas'); canvas.width = Math.min(image.naturalWidth * 2, 12000); canvas.height = Math.min(image.naturalHeight * 2, 12000);
+    const context = canvas.getContext('2d'); context.scale(canvas.width / image.naturalWidth, canvas.height / image.naturalHeight); context.drawImage(image, 0, 0);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('PNG 인코딩에 실패했습니다.');
+    const pngUrl = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = pngUrl; anchor.download = 'rack-mesh-diagram.png'; anchor.click(); setTimeout(() => URL.revokeObjectURL(pngUrl), 0);
+    showToast('설계 화면을 PNG로 내보냈습니다.');
+  } finally { URL.revokeObjectURL(url); }
+}
+
 function saveProject() {
-  downloadText('rack-mesh-project.json', serializeProject(topology, state));
+  downloadText('rack-mesh-project.json', serializeProject(topology, { ...state, baseline: baselineSnapshot }));
+  documentHistory.markSaved();
   showToast('versioned 프로젝트 JSON을 저장했습니다.');
 }
 
@@ -1001,17 +1127,46 @@ async function readFile(input) {
 }
 
 function handleEditorAction(action) {
+  if (action === 'undo' || action === 'redo') { historyStep(action); return; }
   if (action === 'device') openDeviceForm();
   if (action === 'demand') openDemandManager();
+  if (action === 'verification') openVerificationPanel();
   if (action === 'connect') { state.editorMode = state.editorMode === 'connect' ? 'select' : 'connect'; state.connectSource = null; closeEditorPanel(); renderTopology(); renderEditorMode(); }
   if (action === 'save') saveProject();
   if (action === 'open') element('project-file-input').click();
   if (action === 'import-device') element('device-file-input').click();
+  if (action === 'import-drawio') element('drawio-file-input').click();
+  if (action === 'export-svg') { downloadText('rack-mesh-diagram.svg', exportDiagramSvg(topology), 'image/svg+xml'); showToast('편집 가능한 설계를 SVG로 내보냈습니다.'); }
+  if (action === 'export-png') exportPng().catch((error) => showToast(error.message));
   if (action === 'new') openTemplatePicker();
+  if (action.startsWith('shape-')) {
+    const kind = action.slice(6);
+    const label = kind === 'text' ? '설명' : kind === 'ellipse' ? '영역' : '그룹';
+    topology = addShape(topology, kind, { text: label, x: viewport.minX + 80, y: viewport.minY + 70, width: kind === 'text' ? 160 : 180, height: kind === 'text' ? 44 : 90 });
+    const shape = topology.diagram.shapes.at(-1); state.selection = [{ type: 'shape', id: shape.id }];
+    commitTopology(`${label} 도형을 추가했습니다.`);
+  }
+  if (action === 'group' && state.selection.length > 1) { topology = groupSelection(topology, state.selection, '설계 그룹'); commitTopology('선택한 요소를 그룹으로 묶었습니다.'); }
+  if (action === 'ungroup') { topology = ungroupSelection(topology, state.selection); commitTopology('선택한 그룹을 해제했습니다.'); }
+  if (action === 'align-left' && state.selection.length > 1) { topology = alignSelection(topology, state.selection, 'left'); commitTopology('선택한 요소를 왼쪽으로 정렬했습니다.'); }
+  if (action === 'distribute-x' && state.selection.length > 2) { topology = distributeSelection(topology, state.selection, 'x'); commitTopology('선택한 요소를 가로로 분배했습니다.'); }
+  if (action === 'annotation-connect') {
+    const endpoints = state.selection.filter(({ type }) => type === 'device' || type === 'shape');
+    if (endpoints.length !== 2) { showToast('주석 연결선에는 장비 또는 도형 두 개를 선택하세요.'); return; }
+    topology = addConnector(topology, { source: endpoints[0].id, target: endpoints[1].id, kind: 'annotation' }); commitTopology('계산에서 제외되는 주석 연결선을 추가했습니다.');
+  }
+  if (action === 'map-device') {
+    const selected = state.selection.length === 1 && state.selection[0].type === 'shape' ? state.selection[0] : null;
+    const shape = selected && topology.diagram?.shapes?.find(({ id }) => id === selected.id);
+    if (!shape) { showToast('장비 의미를 붙일 도형 하나를 선택하세요.'); return; }
+    let deviceId = `device-${shape.id}`; let suffix = 2;
+    while (topology.devices.some(({ id }) => id === deviceId)) deviceId = `device-${shape.id}-${suffix++}`;
+    openDeviceForm({ name: shape.text || '가져온 장비', deviceId, zone: 'UNASSIGNED', position: { x: shape.x + shape.width / 2, y: shape.y + shape.height / 2 }, mapShapeId: shape.id });
+  }
 }
 
 function toggleFailure(type, id) {
-  const set = type === 'device' ? state.disabledDevices : state.disabledLinks;
+  const set = type === 'device' ? state.disabledDevices : type === 'link' ? state.disabledLinks : state.disabledDomains;
   set.has(id) ? set.delete(id) : set.add(id);
   showToast(`${id.toUpperCase()} ${set.has(id) ? '비활성화' : '복구'} · 경로 재계산 완료`);
   recalculate();
@@ -1122,7 +1277,17 @@ function runContextAction(action) {
   } catch (error) { showToast(error.message); }
 }
 
-function handleNodeSelection(id) {
+function selectElement(type, id, additive = false) {
+  const group = type === 'shape' ? topology.diagram?.groups?.find(({ memberIds }) => memberIds.includes(id)) : null;
+  const entry = group && !additive ? { type: 'group', id: group.id } : { type, id };
+  if (additive) {
+    const exists = state.selection.some((item) => item.type === type && item.id === id);
+    state.selection = exists ? state.selection.filter((item) => item.type !== type || item.id !== id) : [...state.selection, entry];
+  } else state.selection = [entry];
+  if (type === 'device' || type === 'link') state.selectedId = id;
+}
+
+function handleNodeSelection(id, additive = false) {
   if (state.editorMode === 'connect') {
     if (!state.connectSource) { state.connectSource = id; renderTopology(); renderEditorMode(); showToast('연결할 두 번째 장비를 선택하세요.'); return; }
     if (state.connectSource === id) { state.connectSource = null; renderTopology(); renderEditorMode(); return; }
@@ -1131,7 +1296,7 @@ function handleNodeSelection(id) {
     } catch (error) { showToast(error.message); state.connectSource = null; renderTopology(); renderEditorMode(); }
     return;
   }
-  state.selectedId = id; renderTopology(); renderInspector();
+  selectElement('device', id, additive); renderTopology(); renderInspector();
 }
 
 element('scale-input').addEventListener('input', (event) => { state.scale = Number(event.target.value) / 100; recalculate(); });
@@ -1152,7 +1317,7 @@ document.querySelector('.mobile-fault-tray').addEventListener('click', (event) =
 });
 element('node-layer').addEventListener('click', (event) => {
   const button = event.target.closest('[data-device-id]');
-  if (button && !suppressNodeClick) handleNodeSelection(button.dataset.deviceId);
+  if (button && !suppressNodeClick) handleNodeSelection(button.dataset.deviceId, event.shiftKey || event.metaKey || event.ctrlKey);
 });
 element('node-layer').addEventListener('pointerdown', (event) => {
   if (state.editorMode !== 'select') return;
@@ -1167,7 +1332,8 @@ element('node-layer').addEventListener('pointerdown', (event) => {
     return;
   }
   const device = topology.devices.find(({ id }) => id === button.dataset.deviceId);
-  dragState = { id: device.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, origin: { ...device.position }, button };
+  if (!state.selection.some((item) => item.type === 'device' && item.id === device.id)) selectElement('device', device.id);
+  dragState = { id: device.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, origin: { ...device.position }, initial: structuredClone(topology), selection: structuredClone(state.selection), button };
   button.setPointerCapture(event.pointerId); button.classList.add('dragging');
 });
 element('node-layer').addEventListener('pointermove', (event) => {
@@ -1207,12 +1373,48 @@ element('node-layer').addEventListener('pointerup', (event) => {
     return;
   }
   if (!dragState || dragState.pointerId !== event.pointerId) return;
-  dragState.button.classList.remove('dragging'); const moved = suppressNodeClick; dragState = null;
-  if (moved) { commitTopology('장비 위치를 저장했습니다.'); setTimeout(() => { suppressNodeClick = false; }, 0); }
+  dragState.button.classList.remove('dragging'); const moved = suppressNodeClick; const finished = dragState; dragState = null;
+  if (moved) {
+    const device = topology.devices.find(({ id }) => id === finished.id);
+    const dx = device.position.x - finished.origin.x; const dy = device.position.y - finished.origin.y;
+    topology = moveSelection(finished.initial, finished.selection, dx, dy, { grid: 15 });
+    commitTopology('선택한 요소의 위치를 저장했습니다.'); setTimeout(() => { suppressNodeClick = false; }, 0);
+  }
+});
+element('diagram-layer').addEventListener('click', (event) => {
+  const shape = event.target.closest('[data-shape-id]');
+  if (!shape) return;
+  selectElement('shape', shape.dataset.shapeId, event.shiftKey || event.metaKey || event.ctrlKey);
+  renderTopology();
+});
+element('diagram-layer').addEventListener('dblclick', (event) => {
+  const target = event.target.closest('[data-shape-id]'); if (!target) return;
+  const shape = topology.diagram?.shapes?.find(({ id }) => id === target.dataset.shapeId); if (!shape) return;
+  const text = window.prompt('도형 텍스트', shape.text || ''); if (text == null) return;
+  topology = updateShape(topology, shape.id, { text }); commitTopology('도형 텍스트를 수정했습니다.');
+});
+element('diagram-layer').addEventListener('pointerdown', (event) => {
+  const target = event.target.closest('[data-shape-id]'); if (!target || event.button !== 0) return;
+  if (!event.shiftKey && !event.metaKey && !event.ctrlKey && !state.selection.some((item) => item.type === 'shape' && item.id === target.dataset.shapeId)) selectElement('shape', target.dataset.shapeId);
+  diagramDrag = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, initial: structuredClone(topology), selection: structuredClone(state.selection), target };
+  target.setPointerCapture(event.pointerId); event.preventDefault();
+});
+element('diagram-layer').addEventListener('pointermove', (event) => {
+  if (!diagramDrag || diagramDrag.pointerId !== event.pointerId) return;
+  const dx = (event.clientX - diagramDrag.startX) / state.zoom; const dy = (event.clientY - diagramDrag.startY) / state.zoom;
+  diagramDrag.target.style.transform = `translate(${dx}px, ${dy}px)`;
+});
+element('diagram-layer').addEventListener('pointerup', (event) => {
+  if (!diagramDrag || diagramDrag.pointerId !== event.pointerId) return;
+  const drag = diagramDrag; diagramDrag = null;
+  const dx = (event.clientX - drag.startX) / state.zoom; const dy = (event.clientY - drag.startY) / state.zoom;
+  if (Math.hypot(dx, dy) < 3) { drag.target.style.transform = ''; return; }
+  topology = moveSelection(drag.initial, drag.selection, dx, dy, { grid: 15 });
+  commitTopology('선택한 도형을 이동했습니다.');
 });
 element('link-layer').addEventListener('click', (event) => {
   const group = event.target.closest('[data-link-id]');
-  if (group) { state.selectedId = group.dataset.linkId; renderInspector(); }
+  if (group) { selectElement('link', group.dataset.linkId, event.shiftKey || event.metaKey || event.ctrlKey); renderTopology(); renderInspector(); }
 });
 element('node-layer').addEventListener('contextmenu', (event) => {
   const button = event.target.closest('[data-device-id]');
@@ -1242,7 +1444,8 @@ document.querySelector('.topology-scroll').addEventListener('scroll', closeConte
 element('link-layer').addEventListener('keydown', (event) => {
   if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.target.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
 });
-element('reset-button').addEventListener('click', () => { state.disabledDevices.clear(); state.disabledLinks.clear(); state.scale = 1; element('scale-input').value = '100'; showToast('기준선으로 복구했습니다.'); recalculate(); });
+element('capture-baseline-button').addEventListener('click', captureBaseline);
+element('reset-button').addEventListener('click', () => { state.disabledDevices.clear(); state.disabledLinks.clear(); state.disabledDomains.clear(); state.scale = 1; element('scale-input').value = '100'; showToast('장애와 배율을 초기화했습니다.'); recalculate(); });
 element('export-button').addEventListener('click', exportResult);
 document.querySelector('.editor-tools').addEventListener('click', (event) => { const button = event.target.closest('[data-editor-action]'); if (button) handleEditorAction(button.dataset.editorAction); });
 element('editor-close').addEventListener('click', closeEditorPanel);
@@ -1251,7 +1454,14 @@ element('editor-panel-content').addEventListener('submit', (event) => {
   try {
     if (form.dataset.editorForm === 'device') {
       const template = form._deviceTemplate || {};
-      const device = addDevice(topology, { name: data.get('name'), kind: data.get('kind'), zone: data.get('zone'), position: nextDevicePosition(), limits: { ...(template.limits || {}), forwarding_bps: data.get('forwarding_bps') || template.limits?.forwarding_bps || null, forwarding_pps: data.get('forwarding_pps') || template.limits?.forwarding_pps || null }, source: template.source, metadata: template.metadata });
+      const device = addDevice(topology, { id: template.deviceId, name: data.get('name'), kind: data.get('kind'), zone: data.get('zone'), position: template.position || nextDevicePosition(), limits: { ...(template.limits || {}), forwarding_bps: data.get('forwarding_bps') || template.limits?.forwarding_bps || null, forwarding_pps: data.get('forwarding_pps') || template.limits?.forwarding_pps || null }, source: template.source, metadata: template.metadata, vendor: template.vendor, model: template.model });
+      if (template.mapShapeId && topology.diagram) {
+        topology.diagram.connectors = topology.diagram.connectors.map((connector) => ({ ...connector,
+          source: connector.source === template.mapShapeId ? device.id : connector.source,
+          target: connector.target === template.mapShapeId ? device.id : connector.target }));
+        topology.diagram.shapes = topology.diagram.shapes.filter(({ id }) => id !== template.mapShapeId);
+        topology.diagram.groups = topology.diagram.groups.map((group) => ({ ...group, memberIds: group.memberIds.map((id) => id === template.mapShapeId ? device.id : id) }));
+      }
       state.selectedId = device.id; closeEditorPanel(); commitTopology(`장비 ${device.name}을 추가했습니다.`);
     }
     if (form.dataset.editorForm === 'demand') {
@@ -1262,6 +1472,29 @@ element('editor-panel-content').addEventListener('submit', (event) => {
       const demand = updateDemand(topology, form.dataset.demandId, { name: data.get('name'), source: data.get('source'), target: data.get('target'), load: { forwarding_bps: data.get('forwarding_bps'), forwarding_pps: data.get('forwarding_pps') || 0, new_sessions_per_sec: data.get('new_sessions_per_sec') || 0, concurrent_sessions: data.get('concurrent_sessions') || 0 } });
       commitTopology(`Demand ${demand.name}을 수정했습니다.`); openDemandManager();
     }
+    if (form.dataset.editorForm === 'service') {
+      const demandIds = data.getAll('demandIds'); if (!demandIds.length) throw new Error('서비스에는 demand가 하나 이상 필요합니다.');
+      const id = normalizeId(data.get('name')); if ((topology.services || []).some((item) => item.id === id)) throw new Error('같은 이름의 서비스가 있습니다.');
+      topology.services = [...(topology.services || []), { id, name: String(data.get('name')), demandIds, requiredDeliveryRatio: Number(data.get('ratio')) / 100 }];
+      commitTopology('서비스 생존성 요구조건을 추가했습니다.'); openVerificationPanel();
+    }
+    if (form.dataset.editorForm === 'failure-domain') {
+      const deviceIds = data.getAll('deviceIds'); const linkIds = data.getAll('linkIds'); if (!deviceIds.length && !linkIds.length) throw new Error('장애 도메인에는 자원이 하나 이상 필요합니다.');
+      const id = normalizeId(data.get('name')); if ((topology.failureDomains || []).some((item) => item.id === id)) throw new Error('같은 이름의 장애 도메인이 있습니다.');
+      topology.failureDomains = [...(topology.failureDomains || []), { id, name: String(data.get('name')), deviceIds, linkIds }];
+      commitTopology('장애 도메인을 추가했습니다.'); openVerificationPanel();
+    }
+    if (form.dataset.editorForm === 'rack') {
+      const deviceIds = data.getAll('deviceIds'); if (!deviceIds.length) throw new Error('랙에는 장비가 하나 이상 필요합니다.');
+      const id = normalizeId(data.get('name')); if ((topology.racks || []).some((item) => item.id === id)) throw new Error('같은 이름의 랙이 있습니다.');
+      topology.racks = [...(topology.racks || []), { id, name: String(data.get('name')), deviceIds, powerBudgetWatts: Number(data.get('power')), capacityU: Number(data.get('units')), powerBasis: String(data.get('basis')) }];
+      commitTopology('랙 전력·U 검증 범위를 추가했습니다.'); openVerificationPanel();
+    }
+    if (form.dataset.editorForm === 'scenario') {
+      const id = normalizeId(data.get('name')); if (state.namedScenarios.some((item) => item.id === id)) throw new Error('같은 이름의 시나리오가 있습니다.');
+      state.namedScenarios.push({ id, name: String(data.get('name')), scenario: scenarioOptions(true) });
+      recalculate(); showToast('현재 장애·부하 시나리오를 저장했습니다.'); openVerificationPanel();
+    }
   } catch (error) { formError(form, error.message); }
 });
 element('editor-panel-content').addEventListener('input', (event) => {
@@ -1271,6 +1504,27 @@ element('editor-panel-content').addEventListener('click', (event) => {
   const template = event.target.closest('[data-template]');
   if (template) { applyTemplate(template.dataset.template); return; }
   if (event.target.closest('[data-new-demand]')) { openDemandForm(); return; }
+  const modelDelete = event.target.closest('[data-delete-model]');
+  if (modelDelete) {
+    const key = ({ service: 'services', domain: 'failureDomains', rack: 'racks' })[modelDelete.dataset.deleteModel];
+    if (modelDelete.dataset.deleteModel === 'scenario') state.namedScenarios = state.namedScenarios.filter(({ id }) => id !== modelDelete.dataset.modelId);
+    else topology[key] = (topology[key] || []).filter(({ id }) => id !== modelDelete.dataset.modelId);
+    state.disabledDomains.delete(modelDelete.dataset.modelId); commitTopology('검증 설정을 삭제했습니다.'); openVerificationPanel(); return;
+  }
+  const loadScenario = event.target.closest('[data-load-scenario]');
+  if (loadScenario) {
+    const saved = state.namedScenarios.find(({ id }) => id === loadScenario.dataset.loadScenario)?.scenario; if (!saved) return;
+    state.scale = saved.scale; state.disabledDevices = new Set(saved.disabledDevices); state.disabledLinks = new Set(saved.disabledLinks); state.disabledDomains = new Set(saved.disabledDomains || []);
+    element('scale-input').value = String(state.scale * 100); recalculate(); showToast('저장한 시나리오를 적용했습니다.'); openVerificationPanel(); return;
+  }
+  const condition = event.target.closest('[data-import-condition]');
+  if (condition && pendingDeviceImport) {
+    try {
+      const template = importDeviceDefinition(pendingDeviceImport, { conditionId: condition.dataset.importCondition });
+      pendingDeviceImport = null; openDeviceForm(template); element('editor-panel-content').querySelector('form')._deviceTemplate = template;
+    } catch (error) { showToast(error.message); }
+    return;
+  }
   const button = event.target.closest('[data-delete-demand]'); if (!button) return;
   const demand = topology.demands.find(({ id }) => id === button.dataset.deleteDemand);
   if (!window.confirm(`${demand?.name || button.dataset.deleteDemand} demand와 해당 부하 정의를 삭제합니다. 계속하시겠습니까?`)) return;
@@ -1290,8 +1544,7 @@ element('inspector-content').addEventListener('change', (event) => {
       const entryId = spec === 'catalog' ? event.target.value : device.spec.catalogId;
       const entry = catalogEntry(entryId);
       const profile = catalogProfile(entryId, spec === 'profile' ? event.target.value : device.spec?.profileId);
-      applySpec(topology, id, { catalogId: entry.id, profileId: profile.id, profileLabel: profile.label,
-        limits: profile.limits, note: profile.note, vendor: entry.vendor, model: entry.model, source: entry.source });
+      applySpec(topology, id, { ...buildSpec(entry, profile), conditionSelection: 'explicit-profile', vendor: entry.vendor, model: entry.model });
       commitTopology(`${entry.vendor} ${entry.model} · ${profile.label} 값을 적용했습니다.`);
     } catch (error) { showToast(error.message); }
     return;
@@ -1335,8 +1588,8 @@ element('inspector-content').addEventListener('click', (event) => {
   const resource = resourceById(state.selectedId);
   const dependentLinks = button.dataset.deleteResource === 'device' ? topology.links.filter((link) => link.source === state.selectedId || link.target === state.selectedId).length : 0;
   const message = button.dataset.deleteResource === 'device'
-    ? `${resource?.name || state.selectedId} 장비와 연결 링크 ${dependentLinks}개, 관련 demand를 삭제합니다. 계속하시겠습니까?`
-    : `${state.selectedId} 링크와 이 링크만 사용하는 explicit demand 경로를 삭제합니다. 계속하시겠습니까?`;
+    ? `${resource?.name || state.selectedId} 장비와 연결 링크 ${dependentLinks}개를 삭제합니다. 관련 demand는 남겨 단절 상태로 표시합니다. 계속하시겠습니까?`
+    : `${state.selectedId} 링크를 삭제합니다. 관련 demand는 남겨 단절 또는 경로 오류로 표시합니다. 계속하시겠습니까?`;
   if (!window.confirm(message)) return;
   try { if (button.dataset.deleteResource === 'device') removeDevice(topology, state.selectedId); else removeLink(topology, state.selectedId); state.selectedId = topology.devices[0]?.id || null; commitTopology('선택한 자원을 삭제했습니다.'); } catch (error) { showToast(error.message); }
 });
@@ -1346,17 +1599,46 @@ element('project-file-input').addEventListener('change', async (event) => {
     const incoming = `${project.topology.devices.length}개 장비, ${project.topology.links.length}개 링크, ${project.topology.demands.length}개 demand`;
     const currentImpact = `${topology.devices.length}개 장비, ${topology.links.length}개 링크, ${topology.demands.length}개 demand`;
     if (!window.confirm(`${incoming}를 포함한 프로젝트를 엽니다. 현재 설계의 ${currentImpact}는 교체됩니다. 계속하시겠습니까?`)) return;
-    topology = project.topology; state.scale = project.scenario.scale; state.disabledDevices = new Set(project.scenario.disabledDevices); state.disabledLinks = new Set(project.scenario.disabledLinks); state.selectedId = project.scenario.selectedId; element('scale-input').value = String(state.scale * 100); baseline = calculateScenario(topology); closeEditorPanel(); recalculate(); showToast(project.notices?.[0]?.message || '프로젝트를 검증하고 복원했습니다.');
+    topology = project.topology; state.scale = project.scenario.scale; state.disabledDevices = new Set(project.scenario.disabledDevices); state.disabledLinks = new Set(project.scenario.disabledLinks); state.disabledDomains = new Set(project.scenario.disabledDomains || []); state.namedScenarios = project.scenario.namedScenarios || []; state.selectedId = project.scenario.selectedId;
+    state.selection = state.selectedId ? [{ type: topology.links.some(({ id }) => id === state.selectedId) ? 'link' : 'device', id: state.selectedId }] : [];
+    baselineSnapshot = project.scenario.baseline || { topology: structuredClone(topology), scenario: scenarioOptions(true) };
+    baseline = calculateScenario(baselineSnapshot.topology, baselineSnapshot.scenario); documentHistory.reset(topology);
+    element('scale-input').value = String(state.scale * 100); closeEditorPanel(); recalculate(); showToast(project.notices?.[0]?.message || '프로젝트와 기준선 근거를 검증하고 복원했습니다.');
   } catch (error) { showToast(`열기 실패: ${error.message}`); }
 });
 element('device-file-input').addEventListener('change', async (event) => {
-  try { const text = await readFile(event.target); if (!text) return; const template = importDeviceDefinition(text); openDeviceForm(template); const form = element('editor-panel-content').querySelector('form'); form._deviceTemplate = template; showToast(`${template.schema} 장비 정의를 읽었습니다.`); } catch (error) { showToast(`가져오기 실패: ${error.message}`); }
+  let text;
+  try { text = await readFile(event.target); if (!text) return; const template = importDeviceDefinition(text); openDeviceForm(template); const form = element('editor-panel-content').querySelector('form'); form._deviceTemplate = template; showToast(`${template.schema} 장비 정의를 읽었습니다.`); }
+  catch (error) {
+    if (/Ambiguous conditions/.test(error.message)) {
+      try {
+        pendingDeviceImport = JSON.parse(text);
+        const ids = [...new Set((pendingDeviceImport.performance_profile?.limits || []).map(({ condition_id: id }) => id).filter(Boolean))];
+        openEditorPanel('측정 조건 선택', `<p class="editor-hint">같은 축에 조건이 다른 값이 있습니다. 계산에 적용할 측정 조건을 선택하세요.</p><div class="form-actions">${ids.map((id) => `<button type="button" data-import-condition="${escapeAttribute(id)}">${escapeText(id)}</button>`).join('')}</div>`);
+        return;
+      } catch { pendingDeviceImport = null; }
+    }
+    showToast(`가져오기 실패: ${error.message}`);
+  }
+});
+element('drawio-file-input').addEventListener('change', async (event) => {
+  try {
+    const text = await readFile(event.target); if (!text) return;
+    const imported = importDrawio(text);
+    topology = { ...topology, diagram: imported };
+    state.selection = imported.shapes.map(({ id }) => ({ type: 'shape', id }));
+    commitTopology(`drawio에서 도형 ${imported.shapes.length}개와 연결선 ${imported.connectors.length}개를 가져왔습니다. 계산 의미는 장비에 별도로 지정하세요.`);
+  } catch (error) { showToast(`drawio 가져오기 실패: ${error.message}`); }
 });
 const topologyScroll = document.querySelector('.topology-scroll');
 topologyScroll.addEventListener('pointerdown', (event) => {
   if (event.pointerType === 'touch') return;
-  const onResource = event.target.closest('.mesh-node, .link-hit');
+  const onResource = event.target.closest('.mesh-node, .link-hit, .diagram-shape');
   const middleButton = event.button === 1;
+  if (!onResource && event.button === 0 && event.shiftKey && state.editorMode === 'select') {
+    const start = canvasPoint(event); selectionBoxState = { pointerId: event.pointerId, start, end: start };
+    topologyScroll.setPointerCapture(event.pointerId); element('selection-marquee').hidden = false; event.preventDefault(); return;
+  }
   if (!middleButton && (event.button !== 0 || onResource || state.editorMode === 'connect')) return;
   panState = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, left: topologyScroll.scrollLeft, top: topologyScroll.scrollTop };
   topologyScroll.setPointerCapture(event.pointerId);
@@ -1364,13 +1646,30 @@ topologyScroll.addEventListener('pointerdown', (event) => {
   event.preventDefault();
 });
 topologyScroll.addEventListener('pointermove', (event) => {
+  if (selectionBoxState && event.pointerId === selectionBoxState.pointerId) {
+    selectionBoxState.end = canvasPoint(event);
+    const left = Math.min(selectionBoxState.start.x, selectionBoxState.end.x) - viewport.minX;
+    const top = Math.min(selectionBoxState.start.y, selectionBoxState.end.y) - viewport.minY;
+    Object.assign(element('selection-marquee').style, { left: `${left}px`, top: `${top}px`, width: `${Math.abs(selectionBoxState.end.x - selectionBoxState.start.x)}px`, height: `${Math.abs(selectionBoxState.end.y - selectionBoxState.start.y)}px` });
+    return;
+  }
   if (!panState || event.pointerId !== panState.pointerId) return;
   topologyScroll.scrollLeft = panState.left - (event.clientX - panState.startX);
   topologyScroll.scrollTop = panState.top - (event.clientY - panState.startY);
 });
-topologyScroll.addEventListener('pointerup', endPan);
-topologyScroll.addEventListener('pointercancel', endPan);
-topologyScroll.addEventListener('lostpointercapture', endPan);
+topologyScroll.addEventListener('pointerup', (event) => {
+  if (selectionBoxState && event.pointerId === selectionBoxState.pointerId) {
+    const box = { left: Math.min(selectionBoxState.start.x, selectionBoxState.end.x), right: Math.max(selectionBoxState.start.x, selectionBoxState.end.x), top: Math.min(selectionBoxState.start.y, selectionBoxState.end.y), bottom: Math.max(selectionBoxState.start.y, selectionBoxState.end.y) };
+    state.selection = [
+      ...topology.devices.filter(({ position }) => position.x >= box.left && position.x <= box.right && position.y >= box.top && position.y <= box.bottom).map(({ id }) => ({ type: 'device', id })),
+      ...(topology.diagram?.shapes || []).filter((shape) => shape.x < box.right && shape.x + shape.width > box.left && shape.y < box.bottom && shape.y + shape.height > box.top).map(({ id }) => ({ type: 'shape', id })),
+    ];
+    selectionBoxState = null; element('selection-marquee').hidden = true; renderTopology(); return;
+  }
+  endPan();
+});
+topologyScroll.addEventListener('pointercancel', () => { selectionBoxState = null; element('selection-marquee').hidden = true; endPan(); });
+topologyScroll.addEventListener('lostpointercapture', () => { if (!selectionBoxState) endPan(); });
 
 element('toast').addEventListener('click', (event) => {
   if (!event.target.closest('[data-toast-undo]')) return;
@@ -1380,7 +1679,34 @@ element('toast').addEventListener('click', (event) => {
   undo?.();
 });
 document.addEventListener('keydown', (event) => {
+  if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+    const node = document.activeElement?.closest?.('[data-device-id]'); const link = document.activeElement?.closest?.('[data-link-id]');
+    if (node || link) {
+      event.preventDefault(); const box = (node || link).getBoundingClientRect();
+      openContextMenu({ preventDefault() {}, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 }, node?.dataset.deviceId || link.dataset.linkId, node ? 'device' : 'link');
+      return;
+    }
+  }
   if (event.key === 'Escape' && !element('editor-panel').hidden) closeEditorPanel();
+  if (event.target.closest('input, select, textarea')) return;
+  const command = event.metaKey || event.ctrlKey;
+  if (command && event.key.toLowerCase() === 'z') { event.preventDefault(); historyStep(event.shiftKey ? 'redo' : 'undo'); }
+  if (command && event.key.toLowerCase() === 'y') { event.preventDefault(); historyStep('redo'); }
+  if (command && event.key.toLowerCase() === 's') { event.preventDefault(); saveProject(); }
+  if (command && event.key.toLowerCase() === 'c' && state.selection.length) { event.preventDefault(); clipboard = copySelection(topology, state.selection); showToast(`${state.selection.length}개 요소를 복사했습니다.`); }
+  if (command && event.key.toLowerCase() === 'v' && clipboard) {
+    event.preventDefault(); const pasted = pasteSelection(topology, clipboard); topology = pasted.topology; state.selection = pasted.selection;
+    state.selectedId = pasted.selection.find(({ type }) => type === 'device')?.id || state.selectedId; commitTopology('복사한 요소를 붙여넣었습니다.');
+  }
+  if ((event.key === 'Delete' || event.key === 'Backspace') && state.selection.length) {
+    event.preventDefault();
+    topology = removeDiagramElements(topology, state.selection);
+    for (const item of state.selection) {
+      if (item.type === 'link' && topology.links.some(({ id }) => id === item.id)) removeLink(topology, item.id);
+      if (item.type === 'device' && topology.devices.some(({ id }) => id === item.id)) removeDevice(topology, item.id);
+    }
+    state.selection = []; state.selectedId = topology.devices[0]?.id || null; commitTopology('선택한 요소를 삭제했습니다.');
+  }
 });
 document.addEventListener('pointerdown', (event) => {
   if (element('editor-panel').hidden) return;
@@ -1394,6 +1720,11 @@ document.querySelector('.zoom-control').addEventListener('click', (event) => {
   if (action === 'out') stepZoom(-1);
   if (action === 'reset') setZoom(1);
   if (action === 'fit') zoomToFit();
+});
+element('learning-panel').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-lesson-action]'); if (!button) return;
+  if (button.dataset.lessonAction === 'fault-device') { state.disabledDevices.add(button.dataset.lessonId); setLeftPanel('failure'); recalculate(); }
+  if (button.dataset.lessonAction === 'scale') { state.scale = Number(button.dataset.lessonValue); element('scale-input').value = String(state.scale * 100); recalculate(); }
 });
 // 트랙패드 핀치와 Ctrl+휠은 같은 이벤트로 온다. 포인터 자리를 기준으로 확대한다.
 document.querySelector('.topology-scroll').addEventListener('wheel', (event) => {
@@ -1463,6 +1794,19 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) upda
 
 element('icon-sprite').innerHTML = ICON_SPRITE + GLYPH_SPRITE;
 element('topology-stage').style.setProperty('--zoom', String(state.zoom));
+try {
+  const saved = localStorage.getItem('rack-mesh-working-copy');
+  if (saved) {
+    const project = parseProject(saved);
+    topology = project.topology; state.scale = project.scenario.scale;
+    state.disabledDevices = new Set(project.scenario.disabledDevices); state.disabledLinks = new Set(project.scenario.disabledLinks); state.disabledDomains = new Set(project.scenario.disabledDomains || []); state.namedScenarios = project.scenario.namedScenarios || [];
+    state.selectedId = project.scenario.selectedId; state.viewMode = project.scenario.viewMode || 'edit';
+    state.selection = state.selectedId ? [{ type: topology.links.some(({ id }) => id === state.selectedId) ? 'link' : 'device', id: state.selectedId }] : [];
+    baselineSnapshot = project.scenario.baseline || { topology: structuredClone(topology), scenario: scenarioOptions(true) };
+    baseline = calculateScenario(baselineSnapshot.topology, baselineSnapshot.scenario); current = calculateScenario(topology, scenarioOptions()); sweep = sweepSingleFaults(topology, { scale: state.scale });
+    documentHistory.reset(topology); element('scale-input').value = String(state.scale * 100);
+  }
+} catch { try { localStorage.removeItem('rack-mesh-working-copy'); } catch { /* 저장소 접근 자체가 막힌 환경 */ } }
 renderPalette();
 setLeftPanel(state.leftPanel);
 render();

@@ -26,6 +26,7 @@
           <span id="run-state">BASELINE STABLE</span>
         </div>
         <div class="top-actions">
+          <button class="text-button" id="capture-baseline-button" type="button">기준선 확정</button>
           <button class="text-button" id="reset-button" type="button">장애 초기화</button>
           <button class="solid-button" id="export-button" type="button">결과 내보내기</button>
         </div>
@@ -56,17 +57,33 @@
       <section class="editor-deck" aria-label="토폴로지 편집 도구">
         <div class="editor-tools" role="toolbar" aria-label="설계 편집">
           <button type="button" data-editor-action="new">설계 템플릿</button>
+          <button type="button" data-editor-action="undo" disabled aria-label="실행 취소">실행 취소</button>
+          <button type="button" data-editor-action="redo" disabled aria-label="다시 실행">다시 실행</button>
           <button type="button" data-editor-action="device">장비 추가</button>
           <button type="button" data-editor-action="connect" aria-pressed="false">링크 연결</button>
+          <button type="button" data-editor-action="shape-rect">사각형</button>
+          <button type="button" data-editor-action="shape-ellipse">타원</button>
+          <button type="button" data-editor-action="shape-text">텍스트</button>
+          <button type="button" data-editor-action="group">그룹</button>
+          <button type="button" data-editor-action="ungroup">그룹 해제</button>
+          <button type="button" data-editor-action="align-left">왼쪽 정렬</button>
+          <button type="button" data-editor-action="distribute-x">가로 분배</button>
+          <button type="button" data-editor-action="annotation-connect">주석 연결</button>
+          <button type="button" data-editor-action="map-device">도형을 장비로</button>
           <button type="button" data-editor-action="demand">Traffic demand</button>
+          <button type="button" data-editor-action="verification">검증 설정</button>
           <span class="tool-separator" aria-hidden="true"></span>
           <button type="button" data-editor-action="save">프로젝트 저장</button>
           <button type="button" data-editor-action="open">프로젝트 열기</button>
           <button type="button" data-editor-action="import-device">장비 JSON 가져오기</button>
+          <button type="button" data-editor-action="import-drawio">drawio 가져오기</button>
+          <button type="button" data-editor-action="export-svg">SVG 내보내기</button>
+          <button type="button" data-editor-action="export-png">PNG 내보내기</button>
         </div>
         <div class="editor-mode" id="editor-mode" aria-live="polite"><span></span>SELECT MODE</div>
         <input class="visually-hidden" id="project-file-input" type="file" accept="application/json,.json">
         <input class="visually-hidden" id="device-file-input" type="file" accept="application/json,.json">
+        <input class="visually-hidden" id="drawio-file-input" type="file" accept="application/xml,text/xml,.drawio,.xml">
         <section class="editor-panel" id="editor-panel" aria-labelledby="editor-panel-heading" hidden>
           <header><div><span class="section-code">EDITOR TASK</span><h2 id="editor-panel-heading">설계 편집</h2></div><button type="button" id="editor-close" aria-label="편집 패널 닫기">닫기</button></header>
           <div class="editor-panel-content" id="editor-panel-content"></div>
@@ -125,7 +142,7 @@
                 <button type="button" data-zoom="in" aria-label="확대">+</button>
                 <button type="button" data-zoom="fit">맞춤</button>
               </div>
-              <div class="topology-live-status"><span><i></i> LIVE · SYNTHETIC TELEMETRY</span><div class="path-readout" id="path-readout">2 DEMANDS · 4 ACTIVE PATHS</div></div>
+              <div class="topology-live-status"><span><i></i> DETERMINISTIC MODEL</span><div class="path-readout" id="path-readout">2 DEMANDS · 4 ACTIVE PATHS</div></div>
               <div class="layout-control" id="class-control" aria-label="클래스 표현 후보"></div>
             </div>
           </header>
@@ -134,12 +151,14 @@
             <div class="topology-stage" id="topology-stage">
             <div class="topology-canvas" id="topology-canvas">
               <svg class="link-layer" id="link-layer" viewBox="0 0 940 580" role="img" aria-label="장비 연결 링크"></svg>
+              <div class="diagram-layer" id="diagram-layer" aria-label="도형과 주석"></div>
               <div class="node-layer" id="node-layer"></div>
+              <div class="selection-marquee" id="selection-marquee" hidden></div>
             </div>
             </div>
           </div>
           <footer class="canvas-footer">
-            <p class="bottleneck-note" id="bottleneck-note" aria-live="polite">계산 중</p>
+            <div><p class="bottleneck-note" id="bottleneck-note" aria-live="polite">계산 중</p><div class="learning-panel" id="learning-panel" hidden></div></div>
             <span id="calculation-note">DETERMINISTIC · ECMP EQUAL SPLIT</span>
           </footer>
         </section>

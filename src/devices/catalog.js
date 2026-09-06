@@ -6,10 +6,12 @@ import { firewallCatalog } from './firewalls.js';
 import { routerCatalog } from './routers.js';
 import { storageCatalog } from './storage.js';
 import { switchCatalog } from './switches.js';
+import { buildSpec } from '../evidence.js';
+export { buildSpec } from '../evidence.js';
 
 export const deviceCatalog = Object.freeze([
   ...firewallCatalog, ...switchCatalog, ...routerCatalog, ...balancerCatalog, ...storageCatalog, ...adapterCatalog,
-]);
+].map((entry) => ({ ...entry, profiles: entry.profiles.map((profile) => ({ ...profile, records: buildSpec(entry, profile).records })) })));
 
 export function catalogEntry(id) {
   return deviceCatalog.find((entry) => entry.id === id) || null;

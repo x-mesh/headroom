@@ -26,7 +26,7 @@ export const behaviorCatalog = {
       },
       dsr: {
         label: 'DSR (직접 반환)', token: 'DSR', carries: { request: true, response: false },
-        note: '응답은 서버에서 클라이언트로 직행합니다. 처리량 부담은 사라지고 연결 추적 부담은 그대로 남습니다.',
+        note: 'DSR의 응답 직접 반환을 장비 부하 비율로 근사합니다. 연결 추적 부하는 유지하며, 실제 응답 우회 링크·경로는 별도로 모델링해야 합니다.',
       },
     },
   },

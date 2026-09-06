@@ -20,3 +20,16 @@ test('rejects unsupported and malformed device files', () => {
   assert.throws(() => importDeviceDefinition({ hello: 'world' }), /Unsupported/);
   assert.throws(() => importDeviceDefinition('{bad'), /valid JSON/);
 });
+
+test('requires explicit condition selection instead of overwriting duplicate axes', () => {
+  const input = { performance_profile: { profile_id: 'lab', limits: [
+    { axis: 'forwarding_bps', value: 1, unit: 'Gbps', condition_id: 'inspection', conditions: { inspection: true } },
+    { axis: 'forwarding_bps', value: 20, unit: 'Gbps', condition_id: 'plain', conditions: { inspection: false } },
+  ] } };
+  assert.throws(() => importDeviceDefinition(input), /Ambiguous conditions/);
+  const selected = importDeviceDefinition(input, { conditionId: 'inspection' });
+  assert.equal(selected.limits.forwarding_bps, 1e9);
+  assert.equal(selected.metadata.records[0].originalValue, 1);
+  assert.equal(selected.metadata.records[0].conditions.inspection, true);
+  assert.throws(() => importDeviceDefinition(input, { conditionId: 'missing' }), /at least one limit/);
+});

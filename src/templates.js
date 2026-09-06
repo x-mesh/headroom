@@ -380,6 +380,7 @@ export const templates = [
     summary: '방화벽과 로드밸런서를 각각 한 대로 세운 구성입니다.',
     teaches: '무장애일 때는 모든 축이 75%로 아래 이중화 구성과 똑같습니다. 방화벽 한 대가 죽는 순간 트래픽 전부가 끊깁니다. 둘을 나란히 열어 비교하세요.',
     tags: ['단일 장애점', '이중화', '비교', '방화벽'],
+    experiment: { prompt: '방화벽 한 대가 멈추면 서비스가 얼마나 전달될까요?', action: { type: 'fault-device', id: 'fw', label: 'FW 장애 실험' }, observe: '경로가 사라져 두 demand가 모두 단절됩니다.' },
     build: singleStack,
   },
   {
@@ -387,6 +388,7 @@ export const templates = [
     summary: '같은 부하를 같은 총용량으로 받되 절반짜리 장비 두 대로 나눈 구성입니다.',
     teaches: '방화벽 한 대가 죽어도 끊기지 않습니다. 대신 남은 쪽 대역폭이 150%가 되고, 세션 동기화가 없어 재수립 폭증까지 겹친 신규 세션은 178%가 됩니다. 이중화했다고 용량이 따라오는 것은 아닙니다.',
     tags: ['이중화', '단일 장애점', '비교', 'ECMP'],
+    experiment: { prompt: 'FW A가 멈추면 연결은 유지되지만 남은 장비 용량도 충분할까요?', action: { type: 'fault-device', id: 'fw-a', label: 'FW A 장애 실험' }, observe: '트래픽은 FW B로 모이고 처리량과 신규 세션 한계를 넘습니다.' },
     build: dualStack,
   },
   {
@@ -464,6 +466,7 @@ export const templates = [
     summary: '서비스끼리 서로 호출하는 다대다 구성입니다.',
     teaches: '작은 패킷이 아주 많습니다. 대역폭은 남는데 스위치의 패킷 처리량이 먼저 찹니다.',
     tags: ['마이크로서비스', 'East-West', 'PPS', '스위치'],
+    experiment: { prompt: '대역폭을 많이 쓰지 않아도 스위치가 포화될 수 있을까요?', action: { type: 'scale', value: 1.25, label: '부하를 1.25배로' }, observe: '작은 패킷 수가 늘면서 forwarding_pps가 먼저 한계에 닿습니다.' },
     build: microservices,
   },
   {
@@ -517,4 +520,13 @@ export const templates = [
   },
 ];
 
-export const buildTemplate = (id) => (templates.find((template) => template.id === id) || templates[0]).build();
+export const buildTemplate = (id) => {
+  const definition = templates.find((template) => template.id === id) || templates[0];
+  const topology = definition.build();
+  topology.synthetic = definition.id !== 'blank';
+  topology.template = {
+    id: definition.id, name: definition.name, teaches: definition.teaches || '',
+    ...(definition.experiment ? { experiment: structuredClone(definition.experiment) } : {}),
+  };
+  return topology;
+};

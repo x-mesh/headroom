@@ -1,16 +1,17 @@
 import { calculateScenario } from './engine.js';
+import { validateEvidenceRecords } from './evidence.js';
 
-export const PROJECT_SCHEMA_VERSION = 2;
-const SUPPORTED_SCHEMAS = new Set([1, 2]);
+export const PROJECT_SCHEMA_VERSION = 3;
+const SUPPORTED_SCHEMAS = new Set([1, 2, 3]);
 
 // v1 은 링크 용량을 양방향 합산으로 읽히던 파일이다. 숫자는 그대로 두고 의미만 바로잡는다.
 // 인스펙터가 처음부터 그 입력을 방향별 용량이라고 라벨링해 왔으므로 값이 틀린 게 아니다.
 function migrationNotices(schemaVersion) {
-  if (schemaVersion !== 1) return [];
-  return [{
+  if (schemaVersion === 3) return [];
+  return [...(schemaVersion === 1 ? [{
     code: 'link-capacity-reinterpreted',
     message: '링크 용량을 방향별 값으로 해석합니다. 양방향 트래픽이 흐르는 링크의 사용률이 이전보다 낮게 표시됩니다.',
-  }];
+  }] : []), { code: 'evidence-unverified', message: '기존 수치는 보존했습니다. 구조화된 측정 근거가 없는 값의 적용 조건은 미확인입니다.' }];
 }
 
 function plainObject(value) { return value && typeof value === 'object' && !Array.isArray(value); }
@@ -22,6 +23,51 @@ function stringArray(value, label) {
   return [...new Set(value)];
 }
 
+// 새 문서 영역은 임의 HTML, 이벤트 속성, 실행 코드를 저장하지 않는다.
+function safeContent(value, label = 'Document', depth = 0) {
+  if (depth > 30) throw new Error(`${label} is too deeply nested`);
+  if (typeof value === 'string' && (/[<>]/.test(value) || /^\s*(javascript|vbscript):/i.test(value))) throw new Error(`${label} cannot contain executable markup`);
+  if (typeof value === 'number' && !Number.isFinite(value)) throw new Error(`${label} requires finite numbers`);
+  if (value && typeof value === 'object') for (const [key, item] of Object.entries(value)) {
+    if (['__proto__', 'prototype', 'constructor', 'html', 'innerHTML', 'script'].includes(key) || /^on[a-z]+$/i.test(key)) throw new Error(`${label} contains unsafe content: ${key}`);
+    safeContent(item, label, depth + 1);
+  }
+}
+function uniqueIds(items, label) {
+  const ids = new Set();
+  for (const item of items) { validId(item.id, label); if (ids.has(item.id)) throw new Error(`${label} contains duplicate ID ${item.id}`); ids.add(item.id); }
+  return ids;
+}
+function validateDiagram(diagram, deviceIds) {
+  if (!plainObject(diagram)) throw new Error('Diagram must be an object');
+  if (Object.keys(diagram).some((key) => !['shapes', 'connectors', 'groups'].includes(key))) throw new Error('Unknown diagram content');
+  for (const key of ['shapes', 'connectors', 'groups']) if (!Array.isArray(diagram[key])) throw new Error(`Diagram requires ${key}`);
+  safeContent(diagram, 'Diagram');
+  const ids = uniqueIds([...diagram.shapes, ...diagram.connectors, ...diagram.groups], 'Diagram');
+  for (const id of deviceIds) if (ids.has(id)) throw new Error('Diagram and device IDs must be distinct');
+  const endpoints = new Set([...deviceIds, ...diagram.shapes.map(({ id }) => id)]);
+  for (const shape of diagram.shapes) {
+    if (Object.keys(shape).some((key) => !['id', 'kind', 'type', 'text', 'x', 'y', 'width', 'height', 'fill', 'stroke', 'groupId', 'unmapped'].includes(key))) throw new Error('Unknown diagram shape content');
+    if (!['rectangle', 'ellipse', 'text', 'note', 'rect'].includes(shape.kind ?? shape.type)) throw new Error('Unknown diagram shape type');
+    for (const key of ['x', 'y', 'width', 'height']) if (!Number.isFinite(shape[key]) || (['width', 'height'].includes(key) && shape[key] <= 0)) throw new Error(`Diagram shape requires valid ${key}`);
+    if (shape.text != null && (typeof shape.text !== 'string' || shape.text.length > 10000)) throw new Error('Diagram text must be under 10000 characters');
+  }
+  for (const connector of diagram.connectors) {
+    if (Object.keys(connector).some((key) => !['id', 'source', 'target', 'kind', 'label', 'text', 'points', 'waypoints', 'stroke'].includes(key))) throw new Error('Unknown diagram connector content');
+    if (connector.kind != null && !['annotation', 'dependency'].includes(connector.kind)) throw new Error('Unknown diagram connector kind');
+    if (!endpoints.has(connector.source) || !endpoints.has(connector.target)) throw new Error('Diagram connector references an unknown endpoint');
+    const points = connector.waypoints ?? connector.points;
+    if (points != null && (!Array.isArray(points) || points.some((p) => !Number.isFinite(p.x) || !Number.isFinite(p.y)))) throw new Error('Diagram connector points must be coordinates');
+  }
+  const groupIds = new Set(diagram.groups.map(({ id }) => id));
+  for (const group of diagram.groups) {
+    if (Object.keys(group).some((key) => !['id', 'name', 'memberIds'].includes(key))) throw new Error('Unknown diagram group content');
+    boundedText(group.name, 'Group name');
+    if (!Array.isArray(group.memberIds) || group.memberIds.some((id) => !endpoints.has(id))) throw new Error('Diagram group references an unknown member');
+  }
+  for (const shape of diagram.shapes) if (shape.groupId != null && !groupIds.has(shape.groupId)) throw new Error('Diagram shape references an unknown group');
+}
+
 export function createProject(topology, scenario = {}) {
   const project = {
     schemaVersion: PROJECT_SCHEMA_VERSION, product: 'Rack Mesh',
@@ -31,6 +77,10 @@ export function createProject(topology, scenario = {}) {
       disabledDevices: [...(scenario.disabledDevices || [])],
       disabledLinks: [...(scenario.disabledLinks || [])],
       selectedId: scenario.selectedId || null,
+      disabledDomains: [...(scenario.disabledDomains || [])],
+      viewMode: scenario.viewMode ?? 'edit',
+      ...(scenario.baseline ? { baseline: structuredClone(scenario.baseline) } : {}),
+      ...(scenario.namedScenarios ? { namedScenarios: structuredClone(scenario.namedScenarios) } : {}),
     },
   };
   return validateProject(project);
@@ -46,6 +96,15 @@ export function validateProject(input) {
   if (!plainObject(input.topology)) throw new Error('Project topology is required');
   const topology = structuredClone(input.topology);
   if (!Array.isArray(topology.devices) || !Array.isArray(topology.links) || !Array.isArray(topology.demands)) throw new Error('Topology requires devices, links, and demands');
+  const deviceIds = uniqueIds(topology.devices, 'Device');
+  const linkIds = uniqueIds(topology.links, 'Link');
+  uniqueIds(topology.demands, 'Demand');
+  if (topology.diagram != null) validateDiagram(topology.diagram, deviceIds);
+  for (const key of ['services', 'racks', 'failureDomains']) if (topology[key] != null) {
+    if (!Array.isArray(topology[key])) throw new Error(`${key} must be an array`);
+    uniqueIds(topology[key], key); safeContent(topology[key], key);
+  }
+  for (const key of ['template', 'evidence']) if (topology[key] != null) safeContent(topology[key], key);
   for (const device of topology.devices) {
     validId(device.id, 'Device'); boundedText(device.name, 'Device name'); boundedText(device.kind, 'Device kind'); boundedText(device.zone, 'Device zone');
     if (device.vendor != null) boundedText(device.vendor, 'Device vendor');
@@ -57,6 +116,10 @@ export function validateProject(input) {
     if (device.spec != null) {
       boundedText(device.spec.catalogId, 'Device spec catalog'); boundedText(device.spec.profileId, 'Device spec profile');
       if (!plainObject(device.spec.limits)) throw new Error('Device spec requires the datasheet limits it came from');
+      if (device.spec.records != null) {
+        validateEvidenceRecords(device.spec.records); safeContent(device.spec.records, 'Evidence');
+        for (const record of device.spec.records) if (record.value !== device.spec.limits[record.axis]) throw new Error('Evidence does not match the original spec limits');
+      }
     }
     // 보정은 원본과 나란히 실려 온다. 원본이 없으면 무엇을 보정한 것인지 말할 수 없다.
     if (device.overrides != null) {
@@ -71,16 +134,38 @@ export function validateProject(input) {
   if (!Number.isFinite(scale) || scale < 0) throw new Error('Project scale must be a non-negative number');
   const disabledDevices = stringArray(scenario.disabledDevices || [], 'disabledDevices');
   const disabledLinks = stringArray(scenario.disabledLinks || [], 'disabledLinks');
-  const deviceIds = new Set((topology.devices || []).map(({ id }) => id));
-  const linkIds = new Set((topology.links || []).map(({ id }) => id));
+  const disabledDomains = stringArray(scenario.disabledDomains || [], 'disabledDomains');
+  const domainIds = new Set((topology.failureDomains || []).map(({ id }) => id));
+  if (disabledDomains.some((id) => !domainIds.has(id))) throw new Error('disabledDomains contains an unknown domain');
+  const viewMode = scenario.viewMode ?? 'edit';
+  if (!['edit', 'verify'].includes(viewMode)) throw new Error('Unknown view mode');
+  let baseline;
+  if (scenario.baseline != null) {
+    if (!plainObject(scenario.baseline) || !plainObject(scenario.baseline.topology)) throw new Error('Baseline requires a topology snapshot');
+    if (scenario.baseline.scenario?.baseline || scenario.baseline.scenario?.namedScenarios) throw new Error('Baseline cannot contain nested snapshots');
+    const validated = createProject(scenario.baseline.topology, scenario.baseline.scenario || {});
+    baseline = { ...structuredClone(scenario.baseline), topology: validated.topology, scenario: validated.scenario };
+  }
+  let namedScenarios;
+  if (scenario.namedScenarios != null) {
+    if (!Array.isArray(scenario.namedScenarios)) throw new Error('namedScenarios must be an array');
+    uniqueIds(scenario.namedScenarios, 'Scenario');
+    namedScenarios = scenario.namedScenarios.map((entry) => {
+      boundedText(entry.name, 'Scenario name');
+      const state = entry.scenario ?? entry;
+      if (state.baseline || state.namedScenarios) throw new Error('Named scenarios cannot contain nested snapshots');
+      const validated = createProject(topology, state).scenario;
+      return entry.scenario ? { ...structuredClone(entry), scenario: validated } : { ...structuredClone(entry), ...validated };
+    });
+  }
   if (disabledDevices.some((id) => !deviceIds.has(id))) throw new Error('disabledDevices contains an unknown device');
   if (disabledLinks.some((id) => !linkIds.has(id))) throw new Error('disabledLinks contains an unknown link');
-  calculateScenario(topology, { scale, disabledDevices, disabledLinks });
+  calculateScenario(topology, { scale, disabledDevices, disabledLinks, disabledDomains });
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION, product: 'Rack Mesh',
     ...(input.schemaVersion === PROJECT_SCHEMA_VERSION ? {} : { migratedFrom: input.schemaVersion }),
     topology,
-    scenario: { scale, disabledDevices, disabledLinks, selectedId: scenario.selectedId == null ? null : String(scenario.selectedId) },
+    scenario: { scale, disabledDevices, disabledLinks, disabledDomains, viewMode, selectedId: scenario.selectedId == null ? null : String(scenario.selectedId), ...(baseline ? { baseline } : {}), ...(namedScenarios ? { namedScenarios } : {}) },
   };
 }
 

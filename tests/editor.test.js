@@ -12,17 +12,20 @@ test('creates, moves, and links devices with validated IDs', () => {
   moveDevice(topology, 'leaf-a', { x: -4, y: 900 });
   assert.deepEqual(topology.devices[0].position, { x: -4, y: 900 }, 'the canvas grows to the device, so a move is not clamped');
   assert.throws(() => moveDevice(topology, 'leaf-a', { x: Number.NaN, y: 0 }), /Device x/);
-  assert.throws(() => addLink(topology, { source: 'api-a', target: 'leaf-a' }), /already exists/);
+  addLink(topology, { id: 'parallel', source: 'api-a', target: 'leaf-a' });
+  assert.equal(topology.links.length, 2);
+  assert.throws(() => addLink(topology, { id: 'parallel', source: 'api-a', target: 'leaf-a' }), /already exists/);
 });
 
-test('removes dependent links and demands with a device', () => {
+test('removes dependent links but retains service demand when deleting a device', () => {
   const topology = createEmptyTopology();
   for (const id of ['a', 'b']) addDevice(topology, { id, limits: { forwarding_bps: 1e9 } });
   addLink(topology, { source: 'a', target: 'b' });
   addDemand(topology, { id: 'a-b', source: 'a', target: 'b', load: { forwarding_bps: 1e8 } });
   removeDevice(topology, 'a');
   assert.equal(topology.links.length, 0);
-  assert.equal(topology.demands.length, 0);
+  assert.equal(topology.demands.length, 1);
+  assert.equal(calculateScenario(topology).demands[0].validity, 'invalid');
 });
 
 test('a removed device leaves no dangling HA group member', () => {

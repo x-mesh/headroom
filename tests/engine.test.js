@@ -43,15 +43,16 @@ test('reports a resource with no limits as unknown, never healthy', () => {
   const topology = createEmptyTopology();
   addDevice(topology, { id: 'bare', limits: {} });
   const [device] = calculateScenario(topology).devices;
-  assert.deepEqual(device.axes, {});
+  assert.equal(device.axes.forwarding_bps.status, 'unknown');
+  assert.equal(device.axes.forwarding_pps.status, 'unknown');
   assert.equal(device.bindingAxis, null);
   assert.equal(device.primaryStatus, 'unknown', 'knowing no limit is not the same as passing every limit');
 });
 
-test('rejects a dangling path reference', () => {
+test('reports a dangling path reference without refusing the editable document', () => {
   const topology = cloneTopology();
   topology.demands[0].paths[0].links.push('missing-link');
-  assert.throws(() => calculateScenario(topology), /missing link/);
+  assert.equal(calculateScenario(topology).summary.validationStatus, 'invalid');
 });
 
 test('compares a fixed baseline with a failure scenario', () => {

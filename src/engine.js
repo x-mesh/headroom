@@ -1,9 +1,27 @@
-import { axisCatalog, behaviorCatalog, DEFAULT_RESPONSE_SHARE } from './data.js';
+import { axisCatalog, behaviorCatalog, DEFAULT_RESPONSE_SHARE, STATEFUL_KINDS } from './data.js';
+import { evidenceApplicability } from './evidence.js';
 
 export const SESSION_SYNC_DEFAULT = 'stateful';
-export const ENGINE_VERSION = '2.0.0';
+export const ENGINE_VERSION = '3.0.0';
 
 const EPSILON = 1e-9;
+
+// NIC와 forwarding은 동일한 물리 트래픽의 장비별 이름이다.
+export function normalizeTraffic(load = {}) {
+  const normalized = { ...load };
+  for (const [a, b] of [['forwarding_bps', 'nic_bps'], ['forwarding_pps', 'nic_pps']]) {
+    if (Object.hasOwn(normalized, a) && !Object.hasOwn(normalized, b)) normalized[b] = normalized[a];
+    if (Object.hasOwn(normalized, b) && !Object.hasOwn(normalized, a)) normalized[a] = normalized[b];
+  }
+  return normalized;
+}
+
+export function requiredAxes(device) {
+  if (device.external === true) return Object.keys(device.limits || {});
+  const nic = ['server', 'web', 'vm', 'db', 'mail', 'mainframe', 'storage', 'nas', 'backup', 'client'].includes(device.kind);
+  return [...new Set([...(nic ? ['nic_bps', 'nic_pps'] : ['forwarding_bps', 'forwarding_pps']),
+    ...(STATEFUL_KINDS.has(device.kind) ? ['new_sessions_per_sec', 'concurrent_sessions'] : []), ...Object.keys(device.limits || {})])];
+}
 
 // 초과분이 곧 드롭인 축과, 신규 연결만 거절되는 축을 나눈다. 세션 테이블이 넘쳤다고
 // 살아 있는 플로우의 대역이 줄지는 않는다.
@@ -11,11 +29,9 @@ export const deliveryRoleOf = (axis) => axisCatalog[axis]?.deliveryRole ?? null;
 // 링크는 세션 테이블을 들지 않는다. admission 축을 쌓아 두면 판정도 못 하면서 목록만 더럽힌다.
 const linkCarriesAxis = (axis) => deliveryRoleOf(axis) !== 'admission';
 
-function addLoad(target, source, factor, accept, carried = 1) {
-  for (const [axis, value] of Object.entries(source)) {
-    if (!Number.isFinite(value) || value < 0) throw new Error(`Invalid load for ${axis}`);
-    if (accept && !accept(axis)) continue;
-    const share = deliveryRoleOf(axis) === 'throughput' ? carried : 1;
+function addLoad(target, entries, factor, carried = 1) {
+  for (const [axis, value, throughput] of entries) {
+    const share = throughput ? carried : 1;
     target[axis] = (target[axis] || 0) + value * factor * share;
   }
 }
@@ -35,30 +51,65 @@ function validateTopology(topology) {
   if (!topology || !Array.isArray(topology.devices) || !Array.isArray(topology.links) || !Array.isArray(topology.demands)) {
     throw new Error('Topology requires devices, links, and demands');
   }
+  const issues = [];
+  const issue = (resourceId, reason) => issues.push({ resourceId, reason });
   const deviceIds = new Set(topology.devices.map(({ id }) => id));
   const linkIds = new Set(topology.links.map(({ id }) => id));
   if (deviceIds.size !== topology.devices.length || linkIds.size !== topology.links.length) throw new Error('Topology IDs must be unique');
+  const demandIds = new Set(topology.demands.map(({ id }) => id));
+  if (demandIds.size !== topology.demands.length) throw new Error('Demand IDs must be unique');
+  const usedPorts = new Set();
   for (const link of topology.links) {
-    if (!deviceIds.has(link.source) || !deviceIds.has(link.target)) throw new Error(`Link ${link.id} has a missing endpoint`);
-  }
-  for (const group of topology.haGroups || []) {
-    if (!Array.isArray(group.members) || !group.members.length) throw new Error(`HA group ${group.id} requires members`);
-    for (const member of group.members) if (!deviceIds.has(member)) throw new Error(`HA group ${group.id} has a missing member`);
-  }
-  for (const demand of topology.demands) {
-    if (!demand.paths?.length && !(demand.source && demand.target)) throw new Error(`Demand ${demand.id} requires paths or endpoints`);
-    if ((demand.source && !deviceIds.has(demand.source)) || (demand.target && !deviceIds.has(demand.target))) throw new Error(`Demand ${demand.id} has a missing endpoint`);
-    for (const path of demand.paths || []) {
-      if (path.devices.some((id) => !deviceIds.has(id))) throw new Error(`Path ${path.id} has a missing device`);
-      if (path.links.some((id) => !linkIds.has(id))) throw new Error(`Path ${path.id} has a missing link`);
+    if (!deviceIds.has(link.source) || !deviceIds.has(link.target)) issue(link.id, 'missing-endpoint');
+    for (const side of ['source', 'target']) {
+      const portId = link[`${side}Port`];
+      if (!portId) continue;
+      const port = topology.devices.find(({ id }) => id === link[side])?.ports?.find(({ id }) => id === portId);
+      const key = `${link[side]}:${portId}`;
+      if (!port) issue(link.id, 'missing-port');
+      if (usedPorts.has(key)) issue(link.id, 'port-already-connected');
+      usedPorts.add(key);
+      if (port && Number.isFinite(port.speedBps) && link.capacity?.forwarding_bps > port.speedBps) issue(link.id, 'link-exceeds-port-speed');
     }
   }
+  for (const group of topology.haGroups || []) {
+    if (!Array.isArray(group.members) || !group.members.length) issue(group.id, 'ha-members-missing');
+    for (const member of group.members || []) if (!deviceIds.has(member)) issue(group.id, 'ha-member-missing');
+  }
+  for (const demand of topology.demands) {
+    if (!demand.paths?.length && !(demand.source && demand.target)) issue(demand.id, 'paths-or-endpoints-missing');
+    if ((demand.source && !deviceIds.has(demand.source)) || (demand.target && !deviceIds.has(demand.target))) issue(demand.id, 'missing-endpoint');
+    for (const [axis, value] of Object.entries(demand.load || {})) if (!Number.isFinite(value) || value < 0) issue(demand.id, `invalid-load:${axis}`);
+    for (const [a, b] of [['forwarding_bps', 'nic_bps'], ['forwarding_pps', 'nic_pps']]) {
+      if (Object.hasOwn(demand.load || {}, a) && Object.hasOwn(demand.load || {}, b) && demand.load[a] !== demand.load[b]) issue(demand.id, `conflicting-load:${a}:${b}`);
+    }
+    for (const path of demand.pathMode === 'shortest' ? [] : demand.paths || []) {
+      if (!Array.isArray(path.devices) || path.devices.some((id) => !deviceIds.has(id))) issue(demand.id, 'path-missing-device');
+      if (!Array.isArray(path.links) || path.links.some((id) => !linkIds.has(id))) issue(demand.id, 'path-missing-link');
+    }
+  }
+  for (const service of topology.services || []) {
+    if (!service.demandIds?.length || service.demandIds.some((id) => !demandIds.has(id))) issue(service.id, 'service-demand-missing');
+    if (!Number.isFinite(service.requiredDeliveryRatio ?? 1) || (service.requiredDeliveryRatio ?? 1) < 0 || (service.requiredDeliveryRatio ?? 1) > 1) issue(service.id, 'invalid-delivery-ratio');
+    for (const group of service.endpointGroups || []) {
+      if (!group.members?.length || group.members.some((id) => !deviceIds.has(id))) issue(service.id, 'service-endpoint-missing');
+      if (!Number.isInteger(group.minAvailable ?? 1) || (group.minAvailable ?? 1) < 1 || (group.minAvailable ?? 1) > (group.members?.length || 0)) issue(service.id, 'invalid-min-available');
+    }
+  }
+  for (const domain of topology.failureDomains || []) {
+    if ((domain.deviceIds || []).some((id) => !deviceIds.has(id)) || (domain.linkIds || []).some((id) => !linkIds.has(id))) issue(domain.id, 'domain-member-missing');
+  }
+  for (const rack of topology.racks || []) if ((rack.deviceIds || []).some((id) => !deviceIds.has(id))) issue(rack.id, 'rack-member-missing');
+  return issues;
 }
 
 export function findShortestPaths(topology, source, target, options = {}) {
   const disabledDevices = new Set(options.disabledDevices || []);
   const disabledLinks = new Set(options.disabledLinks || []);
-  if (disabledDevices.has(source) || disabledDevices.has(target)) return [];
+  return enumerateShortestPaths(adjacencyFor(topology, disabledDevices, disabledLinks), source, target, options);
+}
+
+function adjacencyFor(topology, disabledDevices, disabledLinks) {
   const adjacency = new Map(topology.devices.filter(({ id }) => !disabledDevices.has(id)).map(({ id }) => [id, []]));
   for (const link of topology.links) {
     if (disabledLinks.has(link.id) || disabledDevices.has(link.source) || disabledDevices.has(link.target)) continue;
@@ -66,6 +117,11 @@ export function findShortestPaths(topology, source, target, options = {}) {
     adjacency.get(link.target)?.push({ device: link.source, link: link.id });
   }
   for (const edges of adjacency.values()) edges.sort((a, b) => a.device.localeCompare(b.device) || a.link.localeCompare(b.link));
+  return adjacency;
+}
+
+function enumerateShortestPaths(adjacency, source, target, options) {
+  if (options.maxPaths != null && (!Number.isInteger(options.maxPaths) || options.maxPaths < 1)) throw new Error('maxPaths must be a positive integer');
   if (!adjacency.has(source) || !adjacency.has(target)) return [];
   const distance = new Map([[source, 0]]);
   const parents = new Map();
@@ -81,7 +137,7 @@ export function findShortestPaths(topology, source, target, options = {}) {
   if (!distance.has(target)) return [];
   const paths = [];
   const visit = (node, devices, links) => {
-    if (paths.length >= 16) return;
+    if (paths.length >= (options.maxPaths ?? 64)) { paths.truncated = true; return; }
     if (node === source) {
       const orderedDevices = [source, ...devices.slice().reverse()];
       const orderedLinks = links.slice().reverse();
@@ -107,6 +163,7 @@ function resolveHops(path, linkIndex) {
   const hops = [];
   for (let index = 0; index < linkIds.length; index += 1) {
     const link = linkIndex.get(linkIds[index]);
+    if (!link) return { valid: false, reason: 'missing-link', hopIndex: index };
     const from = devices[index];
     const to = devices[index + 1];
     const direction = link.source === from && link.target === to ? 'forward'
@@ -119,14 +176,21 @@ function resolveHops(path, linkIndex) {
 
 export function resolveDemandPaths(topology, disabledDevices = new Set(), disabledLinks = new Set(), options = {}) {
   const linkIndex = new Map(topology.links.map((link) => [link.id, link]));
+  const deviceIds = new Set(topology.devices.map(({ id }) => id));
+  const shortestCache = new Map();
+  let adjacency;
   const resolved = new Map();
   for (const demand of topology.demands) {
-    const candidatePaths = demand.paths?.length
-      ? demand.paths
-      : findShortestPaths(topology, demand.source, demand.target, { disabledDevices, disabledLinks });
+    const cacheKey = JSON.stringify([demand.source, demand.target]);
+    const explicit = demand.pathMode === 'explicit' || (demand.pathMode !== 'shortest' && demand.paths?.length);
+    if (!explicit && shortestCache.has(cacheKey)) { resolved.set(demand.id, shortestCache.get(cacheKey)); continue; }
+    const candidatePaths = explicit
+      ? demand.paths || []
+      : enumerateShortestPaths(adjacency ??= adjacencyFor(topology, disabledDevices, disabledLinks), demand.source, demand.target, options);
     const activePaths = [];
     const invalidPaths = [];
     for (const path of candidatePaths) {
+      if (!Array.isArray(path.devices) || !Array.isArray(path.links) || path.devices.some((id) => !deviceIds.has(id))) { invalidPaths.push({ id: path.id, reason: 'missing-device' }); continue; }
       if (path.devices.some((id) => disabledDevices.has(id)) || path.links.some((id) => disabledLinks.has(id))) continue;
       const walk = resolveHops(path, linkIndex);
       if (!walk.valid) {
@@ -137,13 +201,15 @@ export function resolveDemandPaths(topology, disabledDevices = new Set(), disabl
       activePaths.push({ ...path, hops: walk.hops });
     }
     resolved.set(demand.id, { candidatePaths, activePaths, invalidPaths });
+    if (!explicit) shortestCache.set(cacheKey, resolved.get(demand.id));
   }
   return resolved;
 }
 
 function axisResult(load, limit, warningThreshold) {
-  if (limit == null) return { load, limit: null, utilization: null, headroom: null, status: 'unknown' };
+  if (limit == null) return { load: load ?? null, limit: null, utilization: null, headroom: null, status: 'unknown', unknownReason: 'limit-missing' };
   if (!Number.isFinite(limit) || limit <= 0) return { load, limit, utilization: null, headroom: null, status: 'invalid' };
+  if (load == null) return { load: null, limit, utilization: null, headroom: null, status: 'unknown', unknownReason: 'workload-missing' };
   const utilization = load / limit;
   const headroom = 1 - utilization;
   const status = utilization > 1 + EPSILON ? 'overloaded' : utilization >= warningThreshold ? 'warning' : 'healthy';
@@ -163,26 +229,56 @@ function summarizeAxes(axes) {
 }
 
 export function calculateScenario(topology, options = {}) {
-  validateTopology(topology);
+  const validationIssues = validateTopology(topology);
+  topology = { ...topology, demands: topology.demands.map((demand) => ({ ...demand, load: normalizeTraffic(demand.load) })) };
   const scale = options.scale ?? 1;
   if (!Number.isFinite(scale) || scale < 0) throw new Error('Scale must be a non-negative finite number');
   const disabledDevices = new Set(options.disabledDevices || []);
   const disabledLinks = new Set(options.disabledLinks || []);
+  for (const id of options.disabledDomains || []) {
+    const domain = topology.failureDomains?.find((item) => item.id === id);
+    if (!domain) { validationIssues.push({ resourceId: id, reason: 'failure-domain-missing' }); continue; }
+    for (const deviceId of domain.deviceIds || []) disabledDevices.add(deviceId);
+    for (const linkId of domain.linkIds || []) disabledLinks.add(linkId);
+  }
   const warningThreshold = topology.warningThreshold ?? 0.8;
   const deviceIndex = new Map(topology.devices.map((device) => [device.id, device]));
+  const deviceAxes = new Map(topology.devices.map((device) => [device.id, requiredAxes(device)]));
+  const linkAxes = new Map(topology.links.map((link) => [link.id, Object.keys({ forwarding_bps: null, ...link.capacity, ...link.capacityByDirection?.forward, ...link.capacityByDirection?.reverse })]));
   const deviceLoads = Object.fromEntries(topology.devices.map(({ id }) => [id, {}]));
   const linkLoads = Object.fromEntries(topology.links.map(({ id }) => [id, { forward: {}, reverse: {} }]));
   const demandResults = [];
+  const missingDeviceLoads = Object.fromEntries(topology.devices.map(({ id }) => [id, new Set()]));
+  const missingLinkLoads = Object.fromEntries(topology.links.map(({ id }) => [id, { forward: new Set(), reverse: new Set() }]));
   const resolvedPaths = resolveDemandPaths(topology, disabledDevices, disabledLinks, options);
   // 장애가 있을 때만 푼다. 끊긴 demand 가 무장애였다면 어디를 지났는지는 결과에 남지 않으므로
   // 캔버스가 무엇이 끊겼는지 그릴 수 없다. 폭증 계산도 같은 경로를 쓴다.
   const noFaultPaths = disabledDevices.size || disabledLinks.size
     ? resolveDemandPaths(topology, new Set(), new Set(), options)
     : null;
+  // 같은 ECMP 경로가 여러 수요에서 재사용된다. 각 자원을 지나는 경로 수를 한 번
+  // 집계하면 부하는 경로 길이 × 경로 수 대신 고유 자원 수만큼만 누적하면 된다.
+  const footprintCache = new WeakMap();
+  const footprintFor = (paths) => {
+    if (footprintCache.has(paths)) return footprintCache.get(paths);
+    const devices = new Map();
+    const hops = new Map();
+    for (const path of paths) {
+      for (const id of new Set(path.devices)) devices.set(id, (devices.get(id) || 0) + 1);
+      for (const hop of path.hops) {
+        const key = `${hop.linkId}:${hop.direction}`;
+        if (!hops.has(key)) hops.set(key, { ...hop, count: 0 });
+        hops.get(key).count += 1;
+      }
+    }
+    const footprint = { devices, hops: [...hops.values()] };
+    footprintCache.set(paths, footprint);
+    return footprint;
+  };
 
   for (const demand of topology.demands) {
     const { activePaths, invalidPaths } = resolvedPaths.get(demand.id);
-    const validity = invalidPaths.length ? 'invalid' : 'valid';
+    const validity = invalidPaths.length || validationIssues.some(({ resourceId }) => resourceId === demand.id) ? 'invalid' : 'valid';
     if (!activePaths.length) {
       demandResults.push({ id: demand.id, name: demand.name, status: 'unreachable', validity, invalidPaths, deliveredRatio: 0, paths: [],
         severedPaths: (noFaultPaths?.get(demand.id)?.activePaths || []).map(({ id, devices, links }) => ({ id, devices, links })),
@@ -190,11 +286,17 @@ export function calculateScenario(topology, options = {}) {
       continue;
     }
     const share = 1 / activePaths.length;
-    for (const path of activePaths) {
-      for (const deviceId of new Set(path.devices)) {
-        addLoad(deviceLoads[deviceId], demand.load, scale * share, null, carriedFraction(deviceIndex.get(deviceId), demand));
-      }
-      for (const hop of path.hops) addLoad(linkLoads[hop.linkId][hop.direction], demand.load, scale * share, linkCarriesAxis);
+    const entries = Object.entries(demand.load).filter(([, value]) => Number.isFinite(value) && value >= 0)
+      .map(([axis, value]) => [axis, value, deliveryRoleOf(axis) === 'throughput']);
+    const linkEntries = entries.filter(([axis]) => linkCarriesAxis(axis));
+    const footprint = footprintFor(activePaths);
+    for (const [deviceId, count] of footprint.devices) {
+        addLoad(deviceLoads[deviceId], entries, scale * share * count, carriedFraction(deviceIndex.get(deviceId), demand));
+        for (const axis of deviceAxes.get(deviceId)) if (!Number.isFinite(demand.load[axis])) missingDeviceLoads[deviceId].add(axis);
+    }
+    for (const hop of footprint.hops) {
+        addLoad(linkLoads[hop.linkId][hop.direction], linkEntries, scale * share * hop.count);
+        for (const axis of linkAxes.get(hop.linkId)) if (!Number.isFinite(demand.load[axis])) missingLinkLoads[hop.linkId][hop.direction].add(axis);
     }
     demandResults.push({
       id: demand.id, name: demand.name, status: 'delivered', validity, invalidPaths, load: scaledLoad(demand.load, scale),
@@ -208,7 +310,28 @@ export function calculateScenario(topology, options = {}) {
   }
 
   const devices = topology.devices.map((device) => {
-    const axes = Object.fromEntries(Object.entries(device.limits).map(([axis, limit]) => [axis, axisResult(deviceLoads[device.id][axis] || 0, limit, warningThreshold)]));
+    const axes = Object.fromEntries(requiredAxes(device).map((axis) => [axis, axisResult(missingDeviceLoads[device.id].has(axis) ? null : deviceLoads[device.id][axis] ?? 0, device.limits?.[axis], warningThreshold)]));
+    const records = device.spec?.records ?? device.metadata?.records ?? [];
+    for (const [axis, result] of Object.entries(axes)) {
+      const record = records.find((item) => item.axis === axis);
+      if (Object.hasOwn(device.overrides || {}, axis)) {
+        result.evidenceApplicability = 'user-correction';
+        result.source = { type: 'user-correction', original: structuredClone(record?.source ?? null) };
+        continue;
+      }
+      if (!record) continue;
+      const applicability = (device.spec?.conditionSelection || device.metadata?.conditionSelection) === 'explicit-profile'
+        ? 'applicable'
+        : evidenceApplicability(record, topology.workloadConditions ?? {}, topology.workloadScope ?? null);
+      result.evidenceApplicability = applicability;
+      result.source = structuredClone(record.source ?? null);
+      if (applicability === 'applicable') continue;
+      if (applicability === 'incompatible') validationIssues.push({ resourceId: device.id, axis, category: 'applicability', reason: 'evidence-incompatible' });
+      // 잘못된 숫자 자체는 조건 미확인으로 가리지 않는다.
+      if (result.status === 'invalid') continue;
+      axes[axis] = { ...result, utilization: null, headroom: null, status: 'unknown',
+        unknownReason: applicability === 'incompatible' ? 'evidence-incompatible' : 'evidence-applicability-unknown' };
+    }
     const surge = failover.surge[device.id];
     if (surge && axes.new_sessions_per_sec) {
       axes.new_sessions_per_sec.contributions = { steady: axes.new_sessions_per_sec.load - surge, failoverSurge: surge };
@@ -221,15 +344,15 @@ export function calculateScenario(topology, options = {}) {
   });
   const links = topology.links.map((link) => {
     const directions = Object.fromEntries(LINK_DIRECTIONS.map((direction) => {
-      const capacity = { ...link.capacity, ...(link.capacityByDirection?.[direction] || {}) };
+      const capacity = { forwarding_bps: null, ...link.capacity, ...(link.capacityByDirection?.[direction] || {}) };
       const load = linkLoads[link.id][direction];
-      const axes = Object.fromEntries(Object.entries(capacity).map(([axis, limit]) => [axis, axisResult(load[axis] || 0, limit, warningThreshold)]));
+      const axes = Object.fromEntries(Object.entries(capacity).map(([axis, limit]) => [axis, axisResult(missingLinkLoads[link.id][direction].has(axis) ? null : load[axis] ?? 0, limit, warningThreshold)]));
       return [direction, { load, axes }];
     }));
     // 평면 axes 는 사용률이 큰 방향을 고른다. 동률이면 forward. UI 는 이 형태를 그대로 읽는다.
     const axes = {};
     const load = {};
-    for (const axis of Object.keys(link.capacity)) {
+    for (const axis of new Set([...Object.keys(directions.forward.axes), ...Object.keys(directions.reverse.axes)])) {
       const forward = directions.forward.axes[axis];
       const reverse = directions.reverse.axes[axis];
       const pick = (reverse?.utilization ?? -1) > (forward?.utilization ?? -1) ? 'reverse' : 'forward';
@@ -270,6 +393,25 @@ export function calculateScenario(topology, options = {}) {
   for (const link of links) {
     for (const direction of LINK_DIRECTIONS) passTable.set(`link:${link.id}:${direction}`, passFor(link.directions[direction].axes));
   }
+  const pathPassCache = new WeakMap();
+  const pathPassFor = (path) => {
+    if (pathPassCache.has(path)) return pathPassCache.get(path);
+    const outcome = { pass: 1, admit: 1, choke: null, admissionLimit: null, unknownConstraints: [], invalid: false };
+    for (let index = 0; index < path.devices.length; index += 1) {
+      const stops = [{ key: `device:${path.devices[index]}`, resourceId: path.devices[index], direction: null }];
+      const hop = path.hops[index];
+      if (hop) stops.push({ key: `link:${hop.linkId}:${hop.direction}`, resourceId: hop.linkId, direction: hop.direction });
+      for (const stop of stops) {
+        const entry = passTable.get(stop.key);
+        for (const axis of entry.unknownAxes) outcome.unknownConstraints.push({ resourceId: stop.resourceId, direction: stop.direction, axis });
+        if (entry.invalidAxes.length) outcome.invalid = true;
+        if (entry.throughputPass < outcome.pass) { outcome.pass = entry.throughputPass; outcome.choke = stop; }
+        if (entry.admissionPass < outcome.admit) { outcome.admit = entry.admissionPass; outcome.admissionLimit = stop; }
+      }
+    }
+    pathPassCache.set(path, outcome);
+    return outcome;
+  };
 
   for (const result of demandResults) {
     if (result.status === 'unreachable') { result.deliveredRatio = 0; result.deliveredRatioBound = 'exact'; result.droppedLoad = result.load; continue; }
@@ -280,28 +422,23 @@ export function calculateScenario(topology, options = {}) {
     let admitted = 0;
     let admissionLimit = null;
     result.paths = activePaths.map((path) => {
-      let pass = 1;
-      let admit = 1;
-      let choke = null;
-      for (let index = 0; index < path.devices.length; index += 1) {
-        const stops = [{ key: `device:${path.devices[index]}`, resourceId: path.devices[index], direction: null }];
-        const hop = path.hops[index];
-        if (hop) stops.push({ key: `link:${hop.linkId}:${hop.direction}`, resourceId: hop.linkId, direction: hop.direction });
-        for (const stop of stops) {
-          const entry = passTable.get(stop.key);
-          for (const axis of entry.unknownAxes) unknownConstraints.push({ resourceId: stop.resourceId, direction: stop.direction, axis });
-          if (entry.invalidAxes.length) result.validity = 'invalid';
-          if (entry.throughputPass < pass) { pass = entry.throughputPass; choke = { ...stop, axis: null }; }
-          if (entry.admissionPass < admit) { admit = entry.admissionPass; admissionLimit = stop; }
-        }
-      }
+      const outcome = pathPassFor(path);
+      const { pass, admit, choke } = outcome;
+      unknownConstraints.push(...outcome.unknownConstraints);
+      if (outcome.invalid) result.validity = 'invalid';
+      if (outcome.admissionLimit) admissionLimit = outcome.admissionLimit;
       delivered += share * pass;
       admitted += share * admit;
       return { id: path.id, share, deliveredRatio: pass, admissionRatio: admit, choke: choke && { resourceId: choke.resourceId, direction: choke.direction } };
     });
     result.deliveredRatio = delivered;
+    result.admissionRatio = admitted;
+    result.admissionRatio = admitted;
     // 모르는 한계는 스로틀에 관여시키지 않되 결과를 오염시킨다. 82% 가 아니라 82% 이하다.
-    result.deliveredRatioBound = unknownConstraints.length ? 'upper' : 'exact';
+    const truncated = resolvedPaths.get(result.id).candidatePaths.truncated;
+    if (truncated) unknownConstraints.push({ resourceId: result.id, axis: 'paths', reason: 'path-enumeration-limit' });
+    result.deliveredRatioBound = truncated ? 'indeterminate' : unknownConstraints.length ? 'upper' : 'exact';
+    result.pathEnumeration = { complete: !truncated, evaluatedPaths: activePaths.length, limit: options.maxPaths ?? 64 };
     if (unknownConstraints.length) result.unknownConstraints = unknownConstraints;
     result.deliveredLoad = scaledLoad(result.load, delivered);
     result.droppedLoad = scaledLoad(result.load, 1 - delivered);
@@ -321,11 +458,29 @@ export function calculateScenario(topology, options = {}) {
     .filter(({ minHeadroom }) => minHeadroom != null)
     .sort((a, b) => a.minHeadroom - b.minHeadroom)[0] || null;
   const unreachable = demandResults.filter(({ status }) => status === 'unreachable');
+  const invalidAxes = activeResources.flatMap((resource) => Object.entries(resource.axes).filter(([, axis]) => axis.status === 'invalid').map(([axis]) => ({ resourceId: resource.id, reason: `invalid-limit:${axis}` })));
+  validationIssues.push(...invalidAxes);
+  let unknownCount = activeResources.reduce((sum, resource) => sum + Object.values(resource.axes).filter(({ status }) => status === 'unknown').length, 0)
+    + demandResults.filter(({ deliveredRatioBound }) => deliveredRatioBound !== 'exact').length;
+  const services = evaluateServices(topology, demandResults, disabledDevices);
+  const racks = evaluateRacks(topology);
+  unknownCount += racks.filter(({ status }) => status === 'unknown').length;
+  const invalid = validationIssues.some(({ category }) => category !== 'applicability') || demandResults.some(({ validity }) => validity === 'invalid');
+  const evidenceUnknown = devices.filter(({ active }) => active).some(({ axes }) => Object.values(axes).some(({ evidenceApplicability: status }) => status === 'unknown' || status === 'incompatible'));
+  const failed = unreachable.length > 0 || demandResults.some((demand) => demand.deliveredRatio < 1 - EPSILON || demand.admissionRatio < 1 - EPSILON);
+  const evaluationStatus = invalid ? 'invalid' : !topology.demands.length ? 'not-ready'
+    : evidenceUnknown ? 'unknown'
+    : demandResults.some(({ deliveredRatioBound }) => deliveredRatioBound === 'indeterminate') ? 'unknown'
+    : racks.some(({ status }) => status === 'fail') ? 'fail'
+    : racks.some(({ status }) => status === 'unknown') ? 'unknown'
+    : services.length ? services.some(({ status }) => status === 'fail') ? 'fail' : services.some(({ status }) => status !== 'pass') ? 'unknown' : 'pass'
+      : failed ? 'fail' : unknownCount ? 'unknown' : 'pass';
 
   return {
-    schemaVersion: 2, engineVersion: ENGINE_VERSION, scale, devices, links, demands: demandResults,
-    faults: { devices: [...disabledDevices].sort(), links: [...disabledLinks].sort() },
+    schemaVersion: 3, engineVersion: ENGINE_VERSION, scale, devices, links, demands: demandResults, services, racks, validationIssues,
+    faults: { devices: [...disabledDevices].sort(), links: [...disabledLinks].sort(), domains: [...(options.disabledDomains || [])].sort() },
     summary: {
+      validationStatus: invalid ? 'invalid' : 'valid', unknownCount, evaluationStatus,
       bindingResourceId: binding?.id || null, bindingAxis: binding?.bindingAxis || null,
       minHeadroom: binding?.minHeadroom ?? null, unreachableCount: unreachable.length,
       unreachableLoadBps: unreachable.reduce((sum, item) => sum + (item.load.forwarding_bps || 0), 0),
@@ -338,6 +493,40 @@ export function calculateScenario(topology, options = {}) {
     },
     failover: failover.report,
   };
+}
+
+export function evaluateServices(topology, demands, disabledDevices = new Set()) {
+  return (topology.services || []).map((service) => {
+    const selected = (service.demandIds || []).map((id) => demands.find((demand) => demand.id === id));
+    const endpointGroups = (service.endpointGroups || []).map((group) => ({ ...group,
+      available: (group.members || []).filter((id) => !disabledDevices.has(id) && topology.devices.some((device) => device.id === id)).length }));
+    const required = service.requiredDeliveryRatio ?? 1;
+    const invalid = selected.some((demand) => !demand || demand.validity === 'invalid');
+    const failed = endpointGroups.some((group) => group.available < (group.minAvailable ?? 1))
+      || selected.some((demand) => demand && demand.deliveredRatioBound !== 'indeterminate' && (demand.deliveredRatio < required - EPSILON || (demand.admissionRatio ?? 1) < required - EPSILON));
+    const unknown = !selected.length || selected.some((demand) => demand?.deliveredRatioBound !== 'exact');
+    return { ...service, endpointGroups, status: invalid ? 'invalid' : failed ? 'fail' : unknown ? 'unknown' : 'pass' };
+  });
+}
+
+export function evaluateRacks(topology) {
+  const powerFields = { nameplate: 'maximumDrawWatts', typical: 'typicalDrawWatts', measured: 'measuredDrawWatts' };
+  return (topology.racks || []).map((rack) => {
+    const devices = (rack.deviceIds || []).map((id) => topology.devices.find((device) => device.id === id));
+    const values = (field) => devices.map((device) => device?.metadata?.[field]);
+    const power = values(powerFields[rack.powerBasis]);
+    const units = values('uHeight');
+    const known = (numbers) => numbers.length > 0 && numbers.every((value) => Number.isFinite(value) && value >= 0);
+    const powerKnown = Boolean(powerFields[rack.powerBasis]) && known(power) && devices.every((device) => !device?.metadata?.powerBasis || device.metadata.powerBasis === rack.powerBasis);
+    const powerWatts = powerKnown ? power.reduce((sum, value) => sum + value, 0) : null;
+    const usedU = known(units) ? units.reduce((sum, value) => sum + value, 0) : null;
+    const powerBudgetKnown = Number.isFinite(rack.powerBudgetWatts) && rack.powerBudgetWatts > 0;
+    const capacityKnown = Number.isFinite(rack.capacityU) && rack.capacityU > 0;
+    const overloaded = (powerKnown && powerBudgetKnown && powerWatts > rack.powerBudgetWatts) || (usedU != null && capacityKnown && usedU > rack.capacityU);
+    return { ...rack, powerWatts, usedU, powerHeadroomWatts: powerKnown && powerBudgetKnown ? rack.powerBudgetWatts - powerWatts : null,
+      remainingU: usedU != null && capacityKnown ? rack.capacityU - usedU : null,
+      status: overloaded ? 'fail' : !powerKnown || usedU == null || !powerBudgetKnown || !capacityKnown ? 'unknown' : 'pass' };
+  });
 }
 
 function failoverSurge(topology, options, disabledDevices, disabledLinks, scale, currentPaths, baselinePaths) {
@@ -353,7 +542,7 @@ function failoverSurge(topology, options, disabledDevices, disabledLinks, scale,
   if (!disabledDevices.size) return { surge, unknownSurge, report };
 
   for (const failedId of disabledDevices) {
-    const group = groups.find(({ members }) => members.includes(failedId));
+    const group = groups.find(({ members }) => members?.includes(failedId));
     const sessionSync = override || group?.sessionSync || SESSION_SYNC_DEFAULT;
     if (sessionSync !== 'none') continue;
     const windowSec = options.reestablishWindowSec ?? group?.reestablishWindowSec ?? null;
@@ -378,7 +567,7 @@ function failoverSurge(topology, options, disabledDevices, disabledLinks, scale,
 }
 
 function scaledLoad(load, scale) {
-  return Object.fromEntries(Object.entries(load).map(([axis, value]) => [axis, value * scale]));
+  return Object.fromEntries(Object.entries(load || {}).filter(([, value]) => Number.isFinite(value) && value >= 0).map(([axis, value]) => [axis, value * scale]));
 }
 
 export function compareScenarios(baseline, current) {
@@ -405,12 +594,14 @@ export function sweepSingleFaults(topology, options = {}) {
   const endpoints = new Set(topology.demands.flatMap((demand) => [demand.source, demand.target,
     ...(demand.paths || []).flatMap(({ devices }) => [devices?.[0], devices?.at(-1)])]).filter(Boolean));
   const resources = [];
+  const baseline = calculateScenario(topology, base);
 
   for (const [type, items, key] of [['device', topology.devices, 'disabledDevices'], ['link', topology.links, 'disabledLinks']]) {
     for (const item of items) {
       const result = calculateScenario(topology, { ...base, [key]: [item.id] });
-      const partial = result.demands.some(({ deliveredRatio }) => deliveredRatio != null && deliveredRatio < 1);
-      const verdict = result.summary.unreachableCount > 0 ? 'severs'
+      const partial = result.demands.some(({ deliveredRatio, admissionRatio }) => deliveredRatio != null && deliveredRatio < 1 || admissionRatio < 1);
+      const verdict = result.summary.evaluationStatus === 'invalid' || result.summary.evaluationStatus === 'not-ready' ? 'unknown'
+        : result.summary.unreachableCount > 0 ? 'severs'
         : result.summary.overloadedCount > 0 || partial ? 'overloads'
         : 'absorbs';
       const worstId = result.summary.bindingResourceId;
@@ -418,8 +609,9 @@ export function sweepSingleFaults(topology, options = {}) {
       resources.push({
         id: item.id, type, verdict,
         // 한계를 모르는 축이 있으면 판정은 상한이다. 모름을 안전으로 바꾸지 않는다.
-        bounded: result.demands.some(({ deliveredRatioBound }) => deliveredRatioBound === 'upper'),
-        endpoint: type === 'device' && endpoints.has(item.id),
+        bounded: result.summary.evaluationStatus === 'unknown' || result.demands.some(({ deliveredRatioBound }) => deliveredRatioBound !== 'exact'),
+        endpoint: type === 'device' && (item.external === true || (!topology.services?.length && endpoints.has(item.id) && item.external !== false)),
+        evaluationStatus: result.summary.evaluationStatus,
         unreachableCount: result.summary.unreachableCount,
         minDeliveredRatio: result.demands.reduce((min, { deliveredRatio }) => deliveredRatio == null ? min : Math.min(min, deliveredRatio), 1),
         worstResourceId: worstId,
@@ -434,12 +626,13 @@ export function sweepSingleFaults(topology, options = {}) {
   const overloads = counted.filter(({ verdict }) => verdict === 'overloads').length;
   const absorbs = counted.filter(({ verdict }) => verdict === 'absorbs').length;
   const bounded = counted.filter(({ verdict, bounded: b }) => verdict === 'absorbs' && b).length;
-  const grade = !counted.length ? 'unknown'
+  const grade = !counted.length || ['invalid', 'not-ready'].includes(baseline.summary.evaluationStatus) || counted.some(({ verdict }) => verdict === 'unknown') ? 'unknown'
     : severs > 0 ? 'single-point'
     : overloads > 0 ? 'partial'
-    : bounded > 0 ? 'unknown'
+    : bounded > 0 || baseline.summary.evaluationStatus === 'unknown' ? 'unknown'
     : 'redundant';
-  return { resources, severs, overloads, absorbs, bounded, endpoints: resources.length - counted.length, grade };
+  return { resources, severs, overloads, absorbs, bounded, endpoints: resources.length - counted.length, grade,
+    evaluationBoundary: topology.services?.length ? 'declared-services; explicitly external devices excluded' : 'legacy-demand-endpoints-excluded; service survival not asserted' };
 }
 
 export function createExport(topology, scenario, baseline) {
@@ -452,9 +645,11 @@ export function createExport(topology, scenario, baseline) {
     ...(resource.directions ? { directions: resource.directions } : {}),
   });
   return {
-    schemaVersion: 2, engineVersion: ENGINE_VERSION, product: 'Rack Mesh',
+    schemaVersion: 3, engineVersion: ENGINE_VERSION, product: 'Rack Mesh',
     exportedAt: new Date().toISOString(), synthetic: Boolean(topology.synthetic),
-    topology: { name: topology.name, deviceCount: topology.devices.length, linkCount: topology.links.length, demandCount: topology.demands.length },
+    topology: { ...structuredClone(topology), deviceCount: topology.devices.length, linkCount: topology.links.length, demandCount: topology.demands.length },
+    baseline: structuredClone(baseline),
+    evidence: [...topology.devices, ...topology.links].map(({ id, source, spec, overrides, metadata }) => ({ id, source: structuredClone(source ?? null), spec: structuredClone(spec ?? null), overrides: structuredClone(overrides ?? null), metadata: structuredClone(metadata ?? null) })),
     assumptions: {
       warningThreshold: topology.warningThreshold ?? 0.8,
       linkCapacitySemantics: 'per-direction',
@@ -462,7 +657,7 @@ export function createExport(topology, scenario, baseline) {
       responseShareDefault: DEFAULT_RESPONSE_SHARE,
       haGroups: topology.haGroups ?? [],
     },
-    scenario: { scale: scenario.scale, faults: scenario.faults, summary: scenario.summary, demands: scenario.demands, failover: scenario.failover },
+    scenario: { scale: scenario.scale, faults: scenario.faults, summary: scenario.summary, demands: scenario.demands, services: scenario.services, racks: scenario.racks, validationIssues: scenario.validationIssues, failover: scenario.failover },
     resources: [...scenario.devices, ...scenario.links].map(compact),
     comparison: compareScenarios(baseline, scenario),
   };

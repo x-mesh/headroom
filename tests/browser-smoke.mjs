@@ -16,6 +16,7 @@ const failures = [];
 // 캔버스 편집은 선택·스크롤·설계를 모두 바꾸므로 깨끗한 페이지에서 따로 확인한다.
 async function verifyCanvasEditing() {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } });
+  await page.addInitScript(() => localStorage.clear());
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
@@ -45,7 +46,7 @@ async function verifyCanvasEditing() {
   const linkCount = await page.locator('.link-group').count();
   await page.locator('[data-context-action="delete"]').click();
   await page.waitForFunction((before) => document.querySelectorAll('.link-group').length === before - 1, linkCount);
-  await page.locator('[data-toast-undo]').click();
+  await page.locator('[data-editor-action="undo"]').click();
   await page.waitForFunction((before) => document.querySelectorAll('.link-group').length === before, linkCount);
 
   const someNode = page.locator('.mesh-node:not(.disabled)').first();
@@ -56,6 +57,9 @@ async function verifyCanvasEditing() {
   assert.equal(await page.evaluate(() => document.activeElement?.dataset?.contextAction), 'duplicate', 'arrow keys move through the menu');
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => document.querySelector('#context-menu')?.hidden);
+  await page.keyboard.press('Shift+F10');
+  await page.waitForSelector('#context-menu [role="menuitem"]');
+  await page.keyboard.press('Escape');
 
   // 핸들에서 끌어 링크를 잇는다.
   const nodeCount = await page.locator('.link-group').count();
@@ -71,8 +75,37 @@ async function verifyCanvasEditing() {
   await page.mouse.up();
   await page.waitForFunction((before) => document.querySelectorAll('.link-group').length === before + 1, nodeCount);
   assert.equal(await page.locator('.link-draft').count(), 0, 'the rubber band does not outlive the drop');
-  await page.locator('[data-toast-undo]').click();
+  await page.locator('[data-editor-action="undo"]').click();
   await page.waitForFunction((before) => document.querySelectorAll('.link-group').length === before, nodeCount);
+
+  // 자유 도형도 계산 그래프와 분리된 채 같은 편집 이력에 들어간다.
+  await page.locator('[data-editor-action="shape-rect"]').click();
+  assert.equal(await page.locator('.diagram-shape').count(), 1);
+  await page.locator('[data-editor-action="undo"]').click();
+  assert.equal(await page.locator('.diagram-shape').count(), 0);
+  await page.locator('[data-editor-action="redo"]').click();
+  assert.equal(await page.locator('.diagram-shape').count(), 1);
+  const svgDownload = page.waitForEvent('download');
+  await page.locator('[data-editor-action="export-svg"]').click();
+  assert.match((await svgDownload).suggestedFilename(), /\.svg$/);
+  const pngDownload = page.waitForEvent('download');
+  await page.locator('[data-editor-action="export-png"]').click();
+  assert.match((await pngDownload).suggestedFilename(), /\.png$/);
+
+  await page.locator('[data-editor-action="shape-text"]').click();
+  await page.locator('.diagram-shape').first().click({ modifiers: ['Shift'] });
+  await page.locator('[data-editor-action="annotation-connect"]').click();
+  assert.equal(await page.locator('.diagram-connector').count(), 1, 'annotation connectors remain visually connected but outside the traffic graph');
+
+  const drawio = '<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="2" value="설명" vertex="1" parent="1"><mxGeometry x="20" y="30" width="120" height="60" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>';
+  await page.locator('#drawio-file-input').setInputFiles({ name: 'sample.drawio', mimeType: 'application/xml', buffer: Buffer.from(drawio) });
+  await page.waitForFunction(() => document.querySelector('.diagram-shape')?.textContent === '설명');
+  assert.match(await page.locator('#toast').textContent(), /계산 의미는 장비에 별도로 지정/);
+  const devicesBeforeMapping = await page.locator('.mesh-node').count();
+  await page.locator('[data-editor-action="map-device"]').click();
+  await page.locator('[data-editor-form="device"] button[type="submit"]').click();
+  assert.equal(await page.locator('.diagram-shape').count(), 0);
+  assert.equal(await page.locator('.mesh-node').count(), devicesBeforeMapping + 1, 'an imported shape can receive infrastructure meaning explicitly');
   // 토스트는 화면 하단에 고정이라 아래쪽 노드를 덮는다. 다음 클릭 전에 걷히기를 기다린다.
   await page.waitForFunction(() => !document.querySelector('#toast')?.classList.contains('visible'), null, { timeout: 8000 });
   await page.close();
@@ -80,6 +113,7 @@ async function verifyCanvasEditing() {
 
 async function verify(viewport, screenshot, interact = false) {
   const page = await browser.newPage({ viewport });
+  await page.addInitScript(() => localStorage.clear());
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
   page.on('requestfailed', (request) => failures.push(`request: ${request.url()} ${request.failure()?.errorText}`));
@@ -90,9 +124,9 @@ async function verify(viewport, screenshot, interact = false) {
   const restingNote = await page.locator('#bottleneck-note').textContent();
   assert.match(restingNote, /가장 빠듯합니다/);
   assert.match(restingNote, /LEAF B → API 02/, 'a link must read by its endpoints, not its id');
-  // 엔진이 주의로 판정한 자원이 있으면 상단도 그렇게 말해야 한다. 데모는 3개로 시작한다.
-  assert.match(await page.locator('#run-state').textContent(), /^CAPACITY WARNING · \d+$/,
-    'a design with warning-tier resources must not read as stable');
+  // 미확인 축이 남은 설계는 알려진 축이 정상이어도 통과로 읽히면 안 된다.
+  assert.equal(await page.locator('#run-state').textContent(), 'EVIDENCE INCOMPLETE',
+    'unknown constraints must take precedence over a safe-looking headline');
   assert.match(await page.locator('#topology-heading').textContent(), /\d+%$/, 'the canvas headline states the answer, not the question');
   assert.equal(await page.locator('#summary-headroom').getAttribute('data-tone'), 'amber', 'headroom is coloured by the engine threshold');
   assert.ok(await page.locator('.packet-dot').count() > 0, 'active links must render packet dots');
@@ -104,7 +138,7 @@ async function verify(viewport, screenshot, interact = false) {
   const liveBefore = await page.locator('#summary-headroom').getAttribute('data-live-value');
   await page.waitForTimeout(900);
   const liveAfter = await page.locator('#summary-headroom').getAttribute('data-live-value');
-  assert.notEqual(liveBefore, liveAfter, 'synthetic telemetry must update the displayed value');
+  assert.equal(liveBefore, liveAfter, 'deterministic results must not drift while the input is unchanged');
   const bodyOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   assert.ok(bodyOverflow <= 1, `body overflows horizontally by ${bodyOverflow}px`);
 
@@ -230,10 +264,8 @@ async function verify(viewport, screenshot, interact = false) {
     assert.equal(await page.locator('.limit-field.corrected').count(), 0);
     await page.selectOption('[data-spec-field="catalog"]', '');
     await page.waitForFunction(() => !document.querySelector('[data-spec-field="profile"]'));
-    // 스펙을 바꾸면 토폴로지가 커밋되고 시나리오가 초기화된다. 장애 흐름을 이어가려면 다시 주입한다.
-    await failure.click();
+    // 설계 편집은 현재 장애 시나리오와 사용자가 확정한 기준선을 바꾸지 않는다.
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
-
     await failure.click();
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '00');
     const severs = page.locator('.failure-switch').filter({ has: page.locator('.failure-forecast[data-verdict="severs"]') }).first();
@@ -323,15 +355,23 @@ async function verify(viewport, screenshot, interact = false) {
     await demandEditor.locator('[name="forwarding_bps"]').fill('2000000000');
     await demandEditor.locator('button[type="submit"]').click();
     assert.equal(await page.locator('[data-editor-form="demand-edit"] [name="forwarding_bps"]').inputValue(), '2000000000');
+    await page.locator('[data-editor-action="verification"]').click();
+    const serviceForm = page.locator('[data-editor-form="service"]');
+    await serviceForm.locator('[name="name"]').fill('Public API');
+    await serviceForm.locator('[name="demandIds"]').check();
+    await serviceForm.locator('button[type="submit"]').click();
+    assert.match(await page.locator('[data-editor-form="service"]').locator('xpath=preceding-sibling::ul[1]').textContent(), /Public API/);
     const downloadPromise = page.waitForEvent('download');
     await page.locator('[data-editor-action="save"]').click();
     const download = await downloadPromise;
     const downloadPath = await download.path();
     const project = JSON.parse(await readFile(downloadPath, 'utf8'));
-    assert.equal(project.schemaVersion, 2);
+    assert.equal(project.schemaVersion, 3);
+    assert.ok(project.scenario.baseline?.topology, 'the project keeps the explicit comparison baseline');
     assert.equal(project.topology.devices.length, 2);
     assert.equal(project.topology.links.length, 1);
     assert.equal(project.topology.demands.length, 1);
+    assert.equal(project.topology.services[0].name, 'Public API');
     await page.locator('#device-file-input').setInputFiles({ name: 'device.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ manufacturer: { name: 'Acme' }, model: 'Leaf 48', slug: 'acme-leaf-48', interfaces: [{ name: 'eth1', type: '25gbase-x-sfp28' }] })) });
     const importedForm = page.locator('[data-editor-form="device"]');
     assert.equal(await importedForm.locator('[name="name"]').inputValue(), 'Acme Leaf 48');
@@ -522,8 +562,8 @@ async function verify(viewport, screenshot, interact = false) {
     await page.mouse.up();
     await page.waitForTimeout(120);
     const movedLeft = await dragTarget.evaluate((node) => parseFloat(node.style.left));
-    assert.ok(Math.abs((movedLeft - startLeft) - 120 / zoomed.zoom) < 2,
-      `a drag must move the device by the screen distance divided by the zoom, got ${movedLeft - startLeft}`);
+    assert.ok(Math.abs((movedLeft - startLeft) - 120 / zoomed.zoom) <= 8,
+      `a drag must divide screen distance by zoom and snap to the 15px grid, got ${movedLeft - startLeft}`);
 
     await page.locator('[data-zoom="out"]').click();
     assert.equal((await zoomState()).zoom, 1);

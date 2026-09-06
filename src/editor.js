@@ -74,6 +74,8 @@ export function addDevice(topology, input) {
     ...(normalizeVendorLogo(input.vendorLogo) ? { vendorLogo: normalizeVendorLogo(input.vendorLogo) } : {}),
     ...(normalizeBehavior(String(input.kind || 'switch'), input.behavior) ? { behavior: normalizeBehavior(String(input.kind || 'switch'), input.behavior) } : {}),
     ...(input.metadata ? { metadata: structuredClone(input.metadata) } : {}),
+    ...(input.ports ? { ports: structuredClone(input.ports) } : {}),
+    ...(input.external != null ? { external: Boolean(input.external) } : {}),
   };
   topology.devices.push(device);
   return device;
@@ -105,6 +107,9 @@ export function updateDevice(topology, id, patch) {
     if (behavior) device.behavior = behavior;
     else delete device.behavior;
   }
+  if (patch.metadata) device.metadata = structuredClone(patch.metadata);
+  if (patch.ports) device.ports = structuredClone(patch.ports);
+  if (patch.external != null) device.external = Boolean(patch.external);
   return device;
 }
 
@@ -133,6 +138,7 @@ export function applySpec(topology, id, spec) {
   if (!spec) { delete device.spec; delete device.overrides; return device; }
   const limits = normalizeLimits(spec.limits || {});
   device.spec = {
+    ...structuredClone(spec),
     catalogId: String(spec.catalogId), profileId: String(spec.profileId),
     profileLabel: String(spec.profileLabel || spec.profileId), limits,
     ...(spec.note ? { note: String(spec.note).slice(0, 400) } : {}),
@@ -168,11 +174,6 @@ export function removeDevice(topology, id) {
   const removedLinks = new Set(topology.links.filter((link) => link.source === id || link.target === id).map(({ id: linkId }) => linkId));
   topology.devices = topology.devices.filter((device) => device.id !== id);
   topology.links = topology.links.filter((link) => !removedLinks.has(link.id));
-  topology.demands = topology.demands.filter((demand) => {
-    if (demand.source === id || demand.target === id) return false;
-    if (demand.paths) demand.paths = demand.paths.filter((path) => !path.devices.includes(id) && path.links.every((linkId) => !removedLinks.has(linkId)));
-    return !demand.paths || demand.paths.length > 0;
-  });
   // HA 그룹에 남은 멤버 id 는 검증에서 걸려 이후 계산 전체를 멈춘다.
   if (Array.isArray(topology.haGroups)) {
     topology.haGroups = topology.haGroups
@@ -188,12 +189,17 @@ export function addLink(topology, input) {
   const target = requireId(input.target, 'Target');
   if (source === target) throw new Error('A link requires two different devices');
   if (!devices.has(source) || !devices.has(target)) throw new Error('Link endpoints must exist');
-  if (topology.links.some((link) => (link.source === source && link.target === target) || (link.source === target && link.target === source))) {
-    throw new Error(`A link between ${source} and ${target} already exists`);
-  }
   const id = requireId(input.id || `${source}-${target}`, 'Link');
   if (linkIds(topology).has(id)) throw new Error(`Link ${id} already exists`);
   const link = { id, source, target, capacity: { forwarding_bps: finite(input.capacityBps ?? 10e9, 'Link capacity', { min: Number.EPSILON }) }, enabled: true };
+  for (const side of ['source', 'target']) {
+    if (!input[`${side}Port`]) continue;
+    const portId = String(input[`${side}Port`]);
+    const owner = topology.devices.find(({ id: deviceId }) => deviceId === link[side]);
+    if (!owner.ports?.some(({ id: port }) => port === portId)) throw new Error(`Port ${portId} does not exist`);
+    if (topology.links.some((item) => ['source', 'target'].some((end) => item[end] === owner.id && item[`${end}Port`] === portId))) throw new Error(`Port ${portId} is already connected`);
+    link[`${side}Port`] = portId;
+  }
   topology.links.push(link);
   return link;
 }
@@ -201,17 +207,25 @@ export function addLink(topology, input) {
 export function updateLink(topology, id, patch) {
   const link = topology.links.find((item) => item.id === id);
   if (!link) throw new Error(`Link ${id} does not exist`);
-  if (patch.capacityBps != null) link.capacity.forwarding_bps = finite(patch.capacityBps, 'Link capacity', { min: Number.EPSILON });
+  const next = structuredClone(link);
+  if (patch.capacityBps != null) next.capacity.forwarding_bps = finite(patch.capacityBps, 'Link capacity', { min: Number.EPSILON });
+  for (const side of ['source', 'target']) {
+    if (!Object.hasOwn(patch, `${side}Port`)) continue;
+    const portId = patch[`${side}Port`];
+    if (!portId) { delete next[`${side}Port`]; continue; }
+    const owner = topology.devices.find((device) => device.id === next[side]);
+    if (!owner?.ports?.some(({ id: port }) => port === portId)) throw new Error(`Port ${portId} does not exist`);
+    if (topology.links.some((item) => item.id !== id && ['source', 'target'].some((end) => item[end] === owner.id && item[`${end}Port`] === portId))) throw new Error(`Port ${portId} is already connected`);
+    next[`${side}Port`] = portId;
+  }
+  for (const side of ['source', 'target']) delete link[`${side}Port`];
+  Object.assign(link, next);
   return link;
 }
 
 export function removeLink(topology, id) {
   if (!linkIds(topology).has(id)) throw new Error(`Link ${id} does not exist`);
   topology.links = topology.links.filter((link) => link.id !== id);
-  topology.demands = topology.demands.filter((demand) => {
-    if (demand.paths) demand.paths = demand.paths.filter((path) => !path.links.includes(id));
-    return !demand.paths || demand.paths.length > 0;
-  });
 }
 
 export function addDemand(topology, input) {
@@ -234,15 +248,20 @@ export function updateDemand(topology, id, patch) {
   const demand = topology.demands.find((item) => item.id === id);
   if (!demand) throw new Error(`Demand ${id} does not exist`);
   const devices = deviceIds(topology);
+  const endpointsChanged = ['source', 'target'].some((key) => patch[key] != null && normalizeId(patch[key]) !== demand[key]);
   for (const endpoint of ['source', 'target']) if (patch[endpoint] != null) {
     const value = requireId(patch[endpoint], `Demand ${endpoint}`);
-    if (!devices.has(value)) throw new Error(`Demand ${endpoint} must exist`);
+    if (!devices.has(value) && value !== demand[endpoint]) throw new Error(`Demand ${endpoint} must exist`);
     demand[endpoint] = value;
   }
   if (demand.source === demand.target) throw new Error('Demand source and target must differ');
-  if (patch.source != null || patch.target != null) { delete demand.paths; demand.pathMode = 'shortest'; }
+  if (endpointsChanged) { delete demand.paths; demand.pathMode = 'shortest'; }
   if (patch.name != null) demand.name = String(patch.name).trim().slice(0, 80) || demand.name;
   if (patch.load) for (const [axis, value] of Object.entries(patch.load)) demand.load[axis] = finite(value, axis);
+  for (const [forwarding, nic] of [['forwarding_bps', 'nic_bps'], ['forwarding_pps', 'nic_pps']]) {
+    if (patch.load && Object.hasOwn(patch.load, forwarding) && !Object.hasOwn(patch.load, nic)) delete demand.load[nic];
+    if (patch.load && Object.hasOwn(patch.load, nic) && !Object.hasOwn(patch.load, forwarding)) delete demand.load[forwarding];
+  }
   if (patch.directionality) demand.directionality = normalizeDirectionality(patch.directionality);
   return demand;
 }
