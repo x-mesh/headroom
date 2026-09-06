@@ -236,6 +236,41 @@ async function verify(viewport, screenshot, interact = false) {
   assert.equal(await page.locator('[data-device-id="api-a"] .node-axis[data-axis-state="unknown"][style*="--util"]').count(), 0,
     'an unknown limit must draw no meter, so it never reads as spare capacity');
 
+  // 한계값은 숫자를 치는 것보다 막대를 끌어 정하는 편이 이 도구가 답하는 질문에 가깝다.
+  await page.locator('[data-device-id="fw-a"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-axis-drag]'));
+  const meter = page.locator('[data-axis-drag]').first();
+  await meter.scrollIntoViewIfNeeded();
+  const axisKey = await meter.getAttribute('data-axis-drag');
+  const meterBox = await meter.boundingBox();
+  const limitBefore = await page.locator(`[data-axis-limit="${axisKey}"]`).first().textContent();
+  await page.mouse.move(meterBox.x + meterBox.width * 0.4, meterBox.y + meterBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(meterBox.x + meterBox.width * 0.88, meterBox.y + meterBox.height / 2, { steps: 6 });
+  // 끄는 동안 상태 이름과 상태 색이 같은 말을 해야 한다. 하나만 바뀌면 둘이 어긋난다.
+  const dragging = await page.locator('.axis-row').first().evaluate((row) => ({
+    state: row.className.replace('axis-row ', ''),
+    title: row.querySelector('.axis-title span:last-child').textContent.trim(),
+  }));
+  const stateName = { healthy: '정상', warning: '주의', overloaded: '용량 초과' }[dragging.state];
+  assert.ok(stateName, `끄는 동안 상태가 ${dragging.state} 였습니다.`);
+  assert.ok(dragging.title.startsWith(stateName), `상태 색은 ${dragging.state} 인데 글자는 "${dragging.title}" 입니다.`);
+  const draggedPercent = Number(dragging.title.match(/(\d+)%/)[1]);
+  assert.equal(dragging.state === 'healthy', draggedPercent < 80, '80% 를 기준으로 상태와 백분율이 함께 움직여야 합니다.');
+  await page.mouse.up();
+  await page.waitForFunction(() => document.querySelector('#toast')?.textContent.includes('한계를'));
+  const limitAfter = await page.locator(`[data-axis-limit="${axisKey}"]`).first().textContent();
+  assert.notEqual(limitAfter, limitBefore, 'dragging the meter must change the stored limit');
+  // 숫자 입력이 여전히 정본이다. 끌어서 정한 값이 그대로 보인다.
+  assert.ok(Number(await page.locator(`[data-resource-form="device"] input[name="${axisKey}"]`).inputValue()) > 0);
+  // 키보드로도 같은 일을 할 수 있어야 한다.
+  await meter.focus();
+  await page.keyboard.press('ArrowLeft');
+  await page.waitForFunction((before) => document.querySelector('[data-axis-limit]')?.textContent !== before, limitAfter);
+  await page.locator('[data-editor-action="undo"]').click();
+  await page.locator('[data-editor-action="undo"]').click();
+  await page.waitForFunction((before) => document.querySelector('[data-axis-limit]')?.textContent === before, limitBefore);
+
   assert.equal(await page.locator('.failure-switch').count(), 20, 'every device and link must be failable, not two classes');
   assert.match(await page.locator('#failure-grade').textContent(), /단일 장애점 \d+개/, 'the panel must grade the design before anything is turned off');
   const forecasts = await page.locator('.failure-forecast').evaluateAll((nodes) => nodes.map((node) => node.dataset.verdict));

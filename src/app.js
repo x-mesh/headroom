@@ -708,7 +708,7 @@ function renderInspector() {
   element('inspector-content').innerHTML = `
     <div class="resource-identity"><strong>${escapeText(resourceName(resource))}</strong><span>${escapeText(isDevice ? [[resource.vendor, resource.model].filter(Boolean).join(' '), resource.kind.toUpperCase(), resource.zone].filter(Boolean).join(' · ') : `링크 · ${formatCompact(resource.capacity?.forwarding_bps, 'bps')} 방향별`)}</span></div>
     <div class="binding-callout"><span>BINDING AXIS</span><strong><span>${axisCatalog[resource.bindingAxis]?.label || resource.bindingAxis || '알려진 축 없음'}</span><span data-live-util="${binding?.utilization ?? ''}" data-live-seed="${resource.id}-binding">${binding ? formatPercent(binding.utilization) : '—'}</span></strong></div>
-    <div class="axis-list">${Object.entries(resource.axes).map(([axis, result]) => renderAxis(axis, result, resource.id)).join('')}</div>
+    <div class="axis-list">${Object.entries(resource.axes).map(([axis, result]) => renderAxis(axis, result, resource.id, resource)).join('')}</div>
     ${isDevice ? renderBehavior(resource) : ''}
     ${isDevice ? renderSpecBlock(resource) : ''}
     ${renderSourceNote(source, isDevice ? resource : null)}
@@ -843,13 +843,38 @@ function renderLinkEditor(resource) {
 function escapeAttribute(value) { return String(value ?? '').replaceAll('&', '&amp;').replaceAll('\"', '&quot;').replaceAll('<', '&lt;'); }
 function escapeText(value) { return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
 
-function renderAxis(axis, result, resourceId) {
+// 한계값은 사람이 장비 사양에서 읽는 모양으로 떨어져야 한다. 1-2-5 사다리에 붙인다.
+// 미세 조정(Shift)일 때는 유효숫자 세 자리로만 다듬는다.
+const SNAP_LADDER = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+function snapLimit(value, fine = false) {
+  if (!(value > 0) || !Number.isFinite(value)) return null;
+  const base = 10 ** Math.floor(Math.log10(value));
+  if (fine) return Math.round(value / (base / 100)) * (base / 100);
+  const scaled = value / base;
+  return SNAP_LADDER.reduce((best, step) => (Math.abs(step - scaled) < Math.abs(best - scaled) ? step : best), SNAP_LADDER[0]) * base;
+}
+
+// 막대를 끌어 한계값을 정할 수 있는 조건. 부하를 알아야 "몇 %에 두겠다"가 한계값이 된다.
+// 부하가 0 이거나 미확인이면 나눌 것이 없으므로 숫자 입력만 남긴다.
+function axisDraggable(resource, axis, result) {
+  return Boolean(resource.kind && topology.devices.some(({ id }) => id === resource.id)
+    && Number.isFinite(result.load) && result.load > 0 && Object.hasOwn(resource.limits || {}, axis));
+}
+
+function renderAxis(axis, result, resourceId, resource = null) {
   const catalog = axisCatalog[axis] || { label: axis, shortLabel: axis, unit: '' };
   const width = result.utilization == null ? 0 : Math.max(2, result.utilization * 100);
-  return `<div class="axis-row ${result.status}">
+  const drag = resource && axisDraggable(resource, axis, result);
+  // 끌어서 정하는 것은 목표 사용률이고, 저장되는 것은 거기서 나온 한계값이다.
+  const meter = drag
+    ? `<div class="axis-meter" data-axis-drag="${escapeAttribute(axis)}" data-axis-resource="${escapeAttribute(resourceId)}" data-axis-load="${result.load}"
+        role="slider" tabindex="0" aria-valuemin="2" aria-valuemax="100" aria-valuenow="${Math.round((result.utilization ?? 0) * 100)}"
+        aria-label="${escapeAttribute(`${catalog.label} 한계값. 좌우로 끌면 이 축의 목표 사용률을 정하고 그 값이 한계값이 됩니다.`)}" style="--axis-width:${width}%"><span style="--axis-width:${width}%"></span><i class="axis-grip"></i></div>`
+    : `<div class="axis-meter" aria-label="${catalog.label} ${formatPercent(result.utilization)}"><span style="--axis-width:${width}%"></span></div>`;
+  return `<div class="axis-row ${result.status}"${drag ? ' data-axis-editable=""' : ''}>
     <div class="axis-title"><span>${catalog.label}</span><span>${stateLabel(result.status)} · <b data-live-util="${result.utilization ?? ''}" data-live-seed="${resourceId}:${axis}">${formatPercent(result.utilization)}</b></span></div>
-    <div class="axis-meter" aria-label="${catalog.label} ${formatPercent(result.utilization)}"><span style="--axis-width:${width}%"></span></div>
-    <div class="axis-values"><span data-live-load="${result.load}" data-live-unit="${catalog.unit}" data-live-seed="${resourceId}:${axis}-load">${formatCompact(result.load, catalog.unit)} load</span><span>${formatCompact(result.limit, catalog.unit)} limit</span></div>
+    ${meter}
+    <div class="axis-values"><span data-live-load="${result.load}" data-live-unit="${catalog.unit}" data-live-seed="${resourceId}:${axis}-load">${formatCompact(result.load, catalog.unit)} load</span><span data-axis-limit="${escapeAttribute(axis)}">${formatCompact(result.limit, catalog.unit)} limit</span></div>
   </div>`;
 }
 
@@ -1609,6 +1634,96 @@ element('editor-panel-content').addEventListener('change', (event) => {
   const form = event.target.closest('form[data-editor-form="device"]');
   if (form && event.target.name === 'kind') renderDeviceLimitFields(form);
 });
+// 막대를 끌어 한계값을 정한다. 끄는 동안은 이 행만 고쳐 그린다 — 전체 재계산은 인스펙터를
+// 다시 만들어 끌던 요소를 없애 버린다. 부하는 이 장비의 한계값에 좌우되지 않으므로(단일 통과
+// offered load 모델) 끄는 동안의 미리보기는 실제 재계산과 같은 값을 낸다.
+let axisDrag = null;
+
+function axisLimitFrom(meter, clientX, fine) {
+  const box = meter.getBoundingClientRect();
+  const ratio = Math.min(1, Math.max(0.02, (clientX - box.left) / Math.max(box.width, 1)));
+  return snapLimit(Number(meter.dataset.axisLoad) / ratio, fine);
+}
+
+function previewAxisLimit(meter, limit) {
+  const row = meter.closest('.axis-row');
+  const axis = meter.dataset.axisDrag;
+  const load = Number(meter.dataset.axisLoad);
+  const utilization = load / limit;
+  const status = utilization > 1 + 1e-9 ? 'overloaded' : utilization >= (topology.warningThreshold ?? 0.8) ? 'warning' : 'healthy';
+  row.className = `axis-row ${status}`;
+  const percent = `${Math.max(2, utilization * 100)}%`;
+  meter.style.setProperty('--axis-width', percent);
+  meter.querySelector('span').style.setProperty('--axis-width', percent);
+  meter.setAttribute('aria-valuenow', String(Math.round(utilization * 100)));
+  // 상태 이름도 함께 바꾼다. 색만 주의로 바뀌고 글자가 정상으로 남으면 둘이 다른 말을 한다.
+  const value = row.querySelector('[data-live-util]');
+  value.textContent = formatPercent(utilization);
+  value.dataset.liveUtil = String(utilization);
+  value.previousSibling.textContent = `${stateLabel(status)} · `;
+  row.querySelector(`[data-axis-limit="${axis}"]`).textContent = `${formatCompact(limit, axisCatalog[axis]?.unit)} limit`;
+  const field = document.querySelector(`[data-resource-form="device"] input[name="${axis}"]`);
+  if (field) field.value = String(limit);
+}
+
+// 데이터시트가 붙은 장비에서는 한계값 입력이 보정이다. 원본과 같은 값은 보정으로 남기지 않는다.
+function applyAxisLimit(id, axis, limit) {
+  const device = topology.devices.find((item) => item.id === id);
+  if (!device) return;
+  if (device.spec) setLimitOverride(topology, id, axis, limit === device.spec.limits[axis] ? null : limit);
+  else updateDevice(topology, id, { limits: { ...device.limits, [axis]: limit } });
+}
+
+element('inspector-content').addEventListener('pointerdown', (event) => {
+  const meter = event.target.closest('[data-axis-drag]');
+  if (!meter || event.button !== 0) return;
+  event.preventDefault();
+  meter.setPointerCapture(event.pointerId);
+  const limit = axisLimitFrom(meter, event.clientX, event.shiftKey);
+  axisDrag = { meter, id: meter.dataset.axisResource, axis: meter.dataset.axisDrag, limit };
+  meter.classList.add('dragging');
+  if (limit) previewAxisLimit(meter, limit);
+});
+
+element('inspector-content').addEventListener('pointermove', (event) => {
+  if (!axisDrag) return;
+  const limit = axisLimitFrom(axisDrag.meter, event.clientX, event.shiftKey);
+  if (!limit || limit === axisDrag.limit) return;
+  axisDrag.limit = limit;
+  previewAxisLimit(axisDrag.meter, limit);
+});
+
+for (const type of ['pointerup', 'pointercancel']) {
+  element('inspector-content').addEventListener(type, () => {
+    if (!axisDrag) return;
+    const { id, axis, limit } = axisDrag;
+    axisDrag.meter.classList.remove('dragging');
+    axisDrag = null;
+    if (!limit) { renderInspector(); return; }
+    applyAxisLimit(id, axis, limit);
+    commitTopology(`${resourceName(resourceById(id)) || id}의 ${axisCatalog[axis]?.label || axis} 한계를 ${formatCompact(limit, axisCatalog[axis]?.unit)}로 정했습니다.`);
+  });
+}
+
+// 키보드로도 같은 일을 할 수 있어야 한다. 한 칸은 1-2-5 사다리의 한 단계다.
+element('inspector-content').addEventListener('keydown', (event) => {
+  const meter = event.target.closest('[data-axis-drag]');
+  if (!meter || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+  event.preventDefault();
+  const id = meter.dataset.axisResource;
+  const axis = meter.dataset.axisDrag;
+  const device = topology.devices.find((item) => item.id === id);
+  const current = device?.limits?.[axis];
+  if (!(current > 0)) return;
+  // 오른쪽은 사용률이 오르는 쪽이다. 화면에서 막대가 자라는 방향과 같다.
+  const step = ['ArrowRight', 'ArrowUp'].includes(event.key) ? 0.8 : 1.25;
+  const next = snapLimit(current * step, event.shiftKey);
+  if (!next || next === current) return;
+  applyAxisLimit(id, axis, next);
+  commitTopology(`${resourceName(resourceById(id)) || id}의 ${axisCatalog[axis]?.label || axis} 한계를 ${formatCompact(next, axisCatalog[axis]?.unit)}로 정했습니다.`);
+  document.querySelector(`[data-axis-drag="${axis}"][data-axis-resource="${id}"]`)?.focus();
+});
+
 element('inspector-content').addEventListener('click', (event) => {
   const accept = event.target.closest('[data-evidence-accept]');
   const release = event.target.closest('[data-evidence-release]');

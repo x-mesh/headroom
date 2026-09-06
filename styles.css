@@ -362,7 +362,15 @@ button { color: inherit; }
 .axis-title, .axis-values { display: flex; justify-content: space-between; gap: 10px; }
 .axis-title { margin-bottom: 7px; font: 600 10px/1 var(--font-data); }
 .axis-title span:last-child { color: var(--axis-color); }
-.axis-meter { height: 7px; background: var(--surface-tint); overflow: hidden; }
+.axis-meter { position: relative; height: 7px; background: var(--surface-tint); overflow: hidden; }
+/* 끌 수 있는 막대. 손잡이와 커서로 조작 가능한 것임을 알린다 — 색만으로 알리지 않는다. */
+.axis-meter[data-axis-drag] { height: 11px; overflow: visible; cursor: ew-resize; touch-action: none; }
+.axis-meter[data-axis-drag]::before { content: ''; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, var(--line-soft) 0 1px, transparent 1px 9px); opacity: .7; }
+.axis-grip { position: absolute; z-index: 2; top: -3px; left: min(var(--axis-width, 0%), 100%); width: 3px; height: 17px; margin-left: -1.5px; background: var(--axis-color); box-shadow: 0 0 0 2px var(--surface); pointer-events: none; }
+.axis-meter[data-axis-drag] span { position: relative; z-index: 1; }
+.axis-meter[data-axis-drag]:hover .axis-grip, .axis-meter.dragging .axis-grip { width: 5px; margin-left: -2.5px; }
+.axis-meter[data-axis-drag]:focus-visible { outline: 2px solid var(--signal-deep); outline-offset: 3px; }
+.axis-row[data-axis-editable] .axis-values [data-axis-limit] { color: var(--text); font-weight: 700; }
 .axis-meter span { display: block; width: min(var(--axis-width), 100%); height: 100%; background: var(--axis-color); }
 .axis-row.overloaded .axis-meter { background-image: repeating-linear-gradient(135deg, color-mix(in srgb, var(--danger) 18%, var(--ground)) 0 4px, color-mix(in srgb, var(--danger) 32%, var(--ground)) 4px 8px); }
 .axis-row.invalid .axis-meter { background-image: repeating-linear-gradient(135deg, color-mix(in srgb, var(--danger) 26%, var(--ground)) 0 2px, transparent 2px 5px); }
