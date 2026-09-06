@@ -294,6 +294,16 @@ button { color: inherit; }
 .behavior-preview b { font-weight: 700; font-variant-numeric: tabular-nums; }
 .behavior-preview s { text-decoration: none; color: var(--signal-deep); font-weight: 700; }
 .behavior-preview small { color: var(--muted); font-size: 9px; }
+.spec-block { display: grid; gap: 7px; margin: 0 22px 14px; padding: 12px 14px; border: 1px solid var(--line-soft); background: var(--surface-raised); }
+.spec-code { color: var(--muted); font: 600 8px/1 var(--font-data); letter-spacing: .12em; }
+.spec-block label { display: grid; gap: 4px; color: var(--muted); font: 500 9px/1.2 var(--font-ui); }
+.spec-block select { min-height: 32px; padding: 0 8px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font: 500 11px/1 var(--font-ui); }
+.spec-note { margin: 0; color: var(--muted); font: 400 10px/1.45 var(--font-ui); }
+.limit-field small { display: flex; align-items: center; gap: 6px; margin-top: 3px; color: var(--muted); font: 500 9px/1.2 var(--font-data); }
+.limit-field small button { padding: 1px 5px; border: 1px solid var(--line-soft); background: var(--surface); color: var(--muted); font: 600 8px/1.4 var(--font-data); cursor: pointer; }
+.limit-field small button:hover { border-color: var(--signal-deep); color: var(--signal-deep); }
+.limit-field.corrected input { border-color: var(--amber); }
+.limit-field b { color: var(--amber); font-weight: 700; }
 .source-note { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 10px; line-height: 1.55; }
 .source-note strong { color: var(--text); }
 .inspector-editor { margin-top: 22px; padding-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; border-top: 1px solid var(--line); }

@@ -280,6 +280,15 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Empty:** Show an inline empty state and a clear action to create the first demand.
 - **Errors:** Keep validation errors inside the related row. Do not clear valid field values.
 
+### Datasheet Profile
+
+- **Placement:** Put the profile block between the mode block and the edit form, only for classes that have a catalog.
+- **Two Choices:** Pick the device first, then the measurement condition. A device with no catalog entry keeps plain manual entry.
+- **Condition Is Not a Detail:** Name the condition in the option itself. The same firewall reads 20 Gbps with inspection off and 1 Gbps with threat protection on; a profile list that hides that teaches the wrong thing.
+- **Silent Axes:** When a profile's datasheet does not state an axis, leave it unknown. Never carry a value over from another condition.
+- **Correction:** Let the reader enter a measured value over the datasheet one. Mark the corrected field, keep the datasheet number beside it, and offer a reset. Both values ship in the project file.
+- **Source Block:** State the source type, the document, the section it came from, the retrieval date, and the datasheet's own caveat. Link the original. Say how many axes carry a correction.
+
 ### Resource Inspector Editor
 
 - **Device:** Edit the name, zone, and independent capacity limits below the device telemetry.

@@ -1,11 +1,12 @@
 import { axisCatalog, behaviorCatalog, cloneTopology } from './data.js';
 import { calculateScenario, compareScenarios, createExport, sweepSingleFaults } from './engine.js';
-import { addDemand, addDevice, addLink, moveDevice, normalizeId, removeDemand, removeDevice, removeLink, updateDemand, updateDevice, updateLink } from './editor.js';
+import { addDemand, addDevice, addLink, applySpec, moveDevice, normalizeId, removeDemand, removeDevice, removeLink, setLimitOverride, updateDemand, updateDevice, updateLink } from './editor.js';
 import { importDeviceDefinition } from './device-import.js';
 import { parseProject, serializeProject } from './project.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
 import { vendorLogoFor } from './logos.js';
 import { buildTemplate, templates } from './templates.js';
+import { catalogEntry, catalogProfile, deviceCatalog } from './devices/firewalls.js';
 
 let topology = cloneTopology();
 const state = { scale: 1, selectedId: 'fw-a', disabledDevices: new Set(), disabledLinks: new Set(), editorMode: 'select', connectSource: null, leftPanel: 'palette', zoom: 1 };
@@ -563,8 +564,41 @@ function renderInspector() {
     <div class="binding-callout"><span>BINDING AXIS</span><strong><span>${axisCatalog[resource.bindingAxis]?.label || resource.bindingAxis || '알려진 축 없음'}</span><span data-live-util="${binding?.utilization ?? ''}" data-live-seed="${resource.id}-binding">${binding ? formatPercent(binding.utilization) : '—'}</span></strong></div>
     <div class="axis-list">${Object.entries(resource.axes).map(([axis, result]) => renderAxis(axis, result, resource.id)).join('')}</div>
     ${isDevice ? renderBehavior(resource) : ''}
-    <div class="source-note"><strong>${escapeText(source.label)}</strong><br>${escapeText(source.condition)}<br>실제 설계에는 동일 조건의 측정값을 사용하세요.</div>
+    ${isDevice ? renderSpecBlock(resource) : ''}
+    ${renderSourceNote(source, isDevice ? resource : null)}
     ${isDevice ? renderDeviceEditor(resource) : renderLinkEditor(resource)}`;
+}
+
+const SOURCE_TYPE_LABEL = { datasheet: '데이터시트', third_party_test: '제3자 시험', user_measured: '실측', estimate: '추정' };
+
+// 어느 조건의 값을 쓰고 있는지가 값 자체만큼 중요하다. 같은 장비가 조건에 따라 20배 갈린다.
+function renderSpecBlock(resource) {
+  const entries = deviceCatalog.filter(({ kind }) => kind === resource.kind);
+  if (!entries.length) return '';
+  const entry = resource.spec ? catalogEntry(resource.spec.catalogId) : null;
+  const profile = entry ? catalogProfile(entry.id, resource.spec.profileId) : null;
+  return `<div class="spec-block">
+    <span class="spec-code">DATASHEET PROFILE</span>
+    <label>장비<select data-spec-field="catalog"><option value="">직접 입력</option>${entries.map((item) =>
+      `<option value="${escapeAttribute(item.id)}"${entry?.id === item.id ? ' selected' : ''}>${escapeText(`${item.vendor} ${item.model}`)}</option>`).join('')}</select></label>
+    ${entry ? `<label>측정 조건<select data-spec-field="profile">${entry.profiles.map((item) =>
+      `<option value="${escapeAttribute(item.id)}"${profile?.id === item.id ? ' selected' : ''}>${escapeText(item.label)}</option>`).join('')}</select></label>` : ''}
+    ${profile?.note ? `<p class="spec-note">${escapeText(profile.note)}</p>` : ''}
+  </div>`;
+}
+
+function renderSourceNote(source, device) {
+  if (device?.spec) {
+    const link = source.url ? `<a href="${escapeAttribute(source.url)}" target="_blank" rel="noreferrer noopener">원문</a>` : '';
+    return `<div class="source-note">
+      <strong>${escapeText(SOURCE_TYPE_LABEL[source.type] || source.type || '출처 미상')} · ${escapeText(source.label || '')}</strong> ${link}
+      ${source.locator ? `<br>${escapeText(source.locator)}` : ''}
+      ${source.retrievedAt ? `<br>수집 ${escapeText(source.retrievedAt)}` : ''}
+      ${source.note ? `<br>${escapeText(source.note)}` : ''}
+      ${device.overrides ? `<br><b>보정한 축이 ${Object.keys(device.overrides).length}개 있습니다. 데이터시트 값은 그대로 보존됩니다.</b>` : ''}
+      <br>실제 설계에는 이 환경에서 잰 값으로 다시 확인하세요.</div>`;
+  }
+  return `<div class="source-note"><strong>${escapeText(source.label)}</strong><br>${escapeText(source.condition || '조건 미지정')}<br>실제 설계에는 동일 조건의 측정값을 사용하세요.</div>`;
 }
 
 function scenarioOptions() {
@@ -605,6 +639,21 @@ function renderBehavior(resource) {
   </div>`;
 }
 
+// 데이터시트 값이 있으면 그 값을 자리표시자로 두고, 보정한 축은 되돌릴 수 있게 한다.
+function renderLimitField(resource, axis) {
+  const catalog = axisCatalog[axis] || {};
+  const datasheet = resource.spec?.limits?.[axis];
+  const corrected = resource.overrides && Object.hasOwn(resource.overrides, axis);
+  const hint = resource.spec
+    ? (datasheet == null ? '이 조건에서는 미확인' : `데이터시트 ${formatCompact(datasheet, catalog.unit)}`)
+    : '';
+  return `<label class="limit-field${corrected ? ' corrected' : ''}">
+    <span>${escapeText(catalog.label || axis)}${corrected ? ' <b>보정</b>' : ''}</span>
+    <input name="${axis}" type="number" min="0" step="any" placeholder="${escapeAttribute(datasheet == null ? '미확인' : String(datasheet))}" value="${resource.limits[axis] ?? ''}">
+    ${hint ? `<small>${escapeText(hint)}${corrected ? ` <button type="button" data-reset-axis="${escapeAttribute(axis)}">되돌리기</button>` : ''}</small>` : ''}
+  </label>`;
+}
+
 function renderDeviceEditor(resource) {
   const fields = Object.keys(resource.limits);
   return `<form class="inspector-editor" data-resource-form="device" data-resource-id="${resource.id}">
@@ -613,7 +662,7 @@ function renderDeviceEditor(resource) {
     <label>영역<input name="zone" maxlength="80" required value="${escapeAttribute(resource.zone)}" placeholder="FABRIC / RACK 04"></label>
     <label>제조사<input name="vendor" maxlength="24" value="${escapeAttribute(resource.vendor || '')}" placeholder="약칭"></label>
     <label>모델<input name="model" maxlength="40" value="${escapeAttribute(resource.model || '')}"></label>
-    ${fields.map((axis) => `<label>${axisCatalog[axis]?.label || axis}<input name="${axis}" type="number" min="0" step="any" placeholder="미확인" value="${resource.limits[axis] ?? ''}"></label>`).join('')}
+    ${fields.map((axis) => renderLimitField(resource, axis)).join('')}
     <div class="inspector-editor-actions"><button type="submit">적용</button><button type="button" data-delete-resource="device">장비 삭제</button></div><p class="editor-error"></p>
   </form>`;
 }
@@ -991,16 +1040,55 @@ element('editor-panel-content').addEventListener('click', (event) => {
   try { removeDemand(topology, button.dataset.deleteDemand); commitTopology('Traffic demand를 삭제했습니다.'); openDemandManager(); } catch (error) { showToast(error.message); }
 });
 element('inspector-content').addEventListener('change', (event) => {
+  const spec = event.target.dataset.specField;
+  if (spec) {
+    try {
+      const id = state.selectedId;
+      if (spec === 'catalog' && !event.target.value) {
+        applySpec(topology, id, null);
+        commitTopology('데이터시트 값을 떼고 직접 입력으로 돌렸습니다.');
+        return;
+      }
+      const device = deviceById(id);
+      const entryId = spec === 'catalog' ? event.target.value : device.spec.catalogId;
+      const entry = catalogEntry(entryId);
+      const profile = catalogProfile(entryId, spec === 'profile' ? event.target.value : device.spec?.profileId);
+      applySpec(topology, id, { catalogId: entry.id, profileId: profile.id, profileLabel: profile.label,
+        limits: profile.limits, note: profile.note, vendor: entry.vendor, model: entry.model, source: entry.source });
+      commitTopology(`${entry.vendor} ${entry.model} · ${profile.label} 값을 적용했습니다.`);
+    } catch (error) { showToast(error.message); }
+    return;
+  }
   if (event.target.name !== 'behavior-mode') return;
   try {
     const device = updateDevice(topology, state.selectedId, { behavior: { ...deviceById(state.selectedId)?.behavior, mode: event.target.value } });
     commitTopology(`${device.name}을 ${behaviorCatalog[device.kind].options[event.target.value].label}로 바꿨습니다.`);
   } catch (error) { showToast(error.message); }
 });
+element('inspector-content').addEventListener('click', (event) => {
+  const axis = event.target.closest('[data-reset-axis]')?.dataset.resetAxis;
+  if (!axis) return;
+  try {
+    setLimitOverride(topology, state.selectedId, axis, null);
+    commitTopology(`${axisCatalog[axis]?.label || axis}을 데이터시트 값으로 되돌렸습니다.`);
+  } catch (error) { showToast(error.message); }
+});
 element('inspector-content').addEventListener('submit', (event) => {
   event.preventDefault(); const form = event.target; const data = new FormData(form);
   try {
-    if (form.dataset.resourceForm === 'device') { const limits = Object.fromEntries([...data.entries()].filter(([key]) => axisCatalog[key])); updateDevice(topology, form.dataset.resourceId, { name: data.get('name'), zone: data.get('zone'), vendor: data.get('vendor'), model: data.get('model'), limits }); }
+    if (form.dataset.resourceForm === 'device') {
+      const id = form.dataset.resourceId;
+      const limits = Object.fromEntries([...data.entries()].filter(([key]) => axisCatalog[key]));
+      const device = topology.devices.find((item) => item.id === id);
+      updateDevice(topology, id, { name: data.get('name'), zone: data.get('zone'), vendor: data.get('vendor'), model: data.get('model'), ...(device?.spec ? {} : { limits }) });
+      // 데이터시트를 붙인 장비에서는 한계값 입력이 보정이다. 원본과 같은 값은 보정으로 남기지 않는다.
+      if (device?.spec) {
+        for (const [axis, raw] of Object.entries(limits)) {
+          const value = raw === '' ? null : Number(raw);
+          setLimitOverride(topology, id, axis, value !== null && value === device.spec.limits[axis] ? null : value);
+        }
+      }
+    }
     else updateLink(topology, form.dataset.resourceId, { capacityBps: data.get('capacityBps') });
     commitTopology('한계값을 적용했습니다.');
   } catch (error) { formError(form, error.message); }

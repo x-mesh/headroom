@@ -54,6 +54,15 @@ export function validateProject(input) {
     if (device.vendorLogo != null && (typeof device.vendorLogo !== 'string' || device.vendorLogo.length > 24 * 1024 || !device.vendorLogo.startsWith('data:image/'))) {
       throw new Error('Device vendor logo must be an image data URI under 24KB');
     }
+    if (device.spec != null) {
+      boundedText(device.spec.catalogId, 'Device spec catalog'); boundedText(device.spec.profileId, 'Device spec profile');
+      if (!plainObject(device.spec.limits)) throw new Error('Device spec requires the datasheet limits it came from');
+    }
+    // 보정은 원본과 나란히 실려 온다. 원본이 없으면 무엇을 보정한 것인지 말할 수 없다.
+    if (device.overrides != null) {
+      if (!plainObject(device.overrides)) throw new Error('Device overrides must be an object');
+      if (!device.spec) throw new Error('Device overrides need the datasheet values they correct');
+    }
   }
   for (const link of topology.links) { validId(link.id, 'Link'); validId(link.source, 'Link source'); validId(link.target, 'Link target'); }
   for (const demand of topology.demands) { validId(demand.id, 'Demand'); boundedText(demand.name, 'Demand name'); if (demand.source) validId(demand.source, 'Demand source'); if (demand.target) validId(demand.target, 'Demand target'); }

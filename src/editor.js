@@ -112,6 +112,57 @@ export function moveDevice(topology, id, position) {
   return updateDevice(topology, id, { position });
 }
 
+// 데이터시트 값과 사용자 보정을 둘 다 남긴다(PRD P1-13). spec.limits 가 원본,
+// overrides 가 보정, limits 가 계산에 쓰이는 실효값이다. 원본을 잃으면 되돌릴 수 없다.
+function applyEffectiveLimits(device) {
+  const base = device.spec?.limits || {};
+  const overrides = device.overrides || {};
+  const axes = new Set([...Object.keys(base), ...Object.keys(device.limits || {})]);
+  const limits = {};
+  for (const axis of axes) {
+    limits[axis] = Object.hasOwn(overrides, axis) ? overrides[axis] : (base[axis] ?? null);
+  }
+  device.limits = limits;
+  return device;
+}
+
+/** 카탈로그 프로필을 장비에 붙인다. 보정은 유지되며, 프로필에 없는 축의 보정은 버려진다. */
+export function applySpec(topology, id, spec) {
+  const device = topology.devices.find((item) => item.id === id);
+  if (!device) throw new Error(`Device ${id} does not exist`);
+  if (!spec) { delete device.spec; delete device.overrides; return device; }
+  const limits = normalizeLimits(spec.limits || {});
+  device.spec = {
+    catalogId: String(spec.catalogId), profileId: String(spec.profileId),
+    profileLabel: String(spec.profileLabel || spec.profileId), limits,
+    ...(spec.note ? { note: String(spec.note).slice(0, 400) } : {}),
+  };
+  if (spec.vendor) device.vendor = String(spec.vendor).trim().slice(0, 24);
+  if (spec.model) device.model = String(spec.model).trim().slice(0, 40);
+  if (spec.source) device.source = structuredClone(spec.source);
+  if (device.overrides) {
+    for (const axis of Object.keys(device.overrides)) {
+      if (!Object.hasOwn(limits, axis)) delete device.overrides[axis];
+    }
+    if (!Object.keys(device.overrides).length) delete device.overrides;
+  }
+  return applyEffectiveLimits(device);
+}
+
+/** 축 하나를 보정한다. null 이나 빈 값이면 데이터시트 값으로 되돌린다. */
+export function setLimitOverride(topology, id, axis, value) {
+  const device = topology.devices.find((item) => item.id === id);
+  if (!device) throw new Error(`Device ${id} does not exist`);
+  if (!device.spec) throw new Error(`Device ${id} has no datasheet value to override`);
+  if (!Object.hasOwn(device.spec.limits, axis)) throw new Error(`${axis} is not part of this profile`);
+  if (value === null || value === '') {
+    if (device.overrides) { delete device.overrides[axis]; if (!Object.keys(device.overrides).length) delete device.overrides; }
+  } else {
+    device.overrides = { ...device.overrides, [axis]: finite(value, axis, { min: Number.EPSILON }) };
+  }
+  return applyEffectiveLimits(device);
+}
+
 export function removeDevice(topology, id) {
   if (!deviceIds(topology).has(id)) throw new Error(`Device ${id} does not exist`);
   const removedLinks = new Set(topology.links.filter((link) => link.source === id || link.target === id).map(({ id: linkId }) => linkId));

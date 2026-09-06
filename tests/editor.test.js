@@ -65,3 +65,36 @@ test('a device carries its manufacturer and model, and rejects a logo that is no
   assert.throws(() => updateDevice(topology, 'fw', { vendorLogo: 'https://example.com/logo.png' }), /data URI/);
   assert.throws(() => updateDevice(topology, 'fw', { vendorLogo: `data:image/png;base64,${'A'.repeat(30000)}` }), /24KB/);
 });
+
+test('a datasheet profile and a user correction both survive on the device', async () => {
+  const { applySpec, setLimitOverride } = await import('../src/editor.js');
+  const { catalogEntry, catalogProfile } = await import('../src/devices/firewalls.js');
+  const entry = catalogEntry('fortinet-fortigate-100f');
+  const profile = catalogProfile(entry.id, 'fw-1518');
+  const topology = createEmptyTopology();
+  addDevice(topology, { id: 'fw', kind: 'firewall', limits: { forwarding_bps: null } });
+  applySpec(topology, 'fw', { catalogId: entry.id, profileId: profile.id, profileLabel: profile.label,
+    limits: profile.limits, vendor: entry.vendor, model: entry.model, source: entry.source });
+  const device = topology.devices[0];
+  assert.deepEqual([device.vendor, device.model], ['Fortinet', 'FortiGate 100F']);
+  assert.equal(device.limits.new_sessions_per_sec, 56e3);
+  assert.equal(device.source.type, 'datasheet');
+
+  // 실측이 데이터시트보다 낮게 나오는 것이 흔하다. 그 보정이 계산에 들어가되 원본은 남는다.
+  setLimitOverride(topology, 'fw', 'new_sessions_per_sec', 40e3);
+  assert.equal(device.limits.new_sessions_per_sec, 40e3);
+  assert.equal(device.spec.limits.new_sessions_per_sec, 56e3, 'the datasheet value is never lost');
+  assert.equal(device.overrides.new_sessions_per_sec, 40e3);
+
+  // 프로필을 바꿔도 보정은 유지된다.
+  const threat = catalogProfile(entry.id, 'threat');
+  applySpec(topology, 'fw', { catalogId: entry.id, profileId: threat.id, profileLabel: threat.label, limits: threat.limits });
+  assert.equal(device.limits.forwarding_bps, 1e9, 'threat protection collapses 20 Gbps to 1 Gbps');
+  assert.equal(device.limits.new_sessions_per_sec, 40e3, 'the correction still applies');
+  assert.equal(device.spec.limits.new_sessions_per_sec, null, 'but the datasheet says nothing here');
+
+  setLimitOverride(topology, 'fw', 'new_sessions_per_sec', null);
+  assert.equal(device.limits.new_sessions_per_sec, null, 'clearing a correction returns to unknown, not to zero');
+  assert.equal(device.overrides, undefined);
+  assert.throws(() => setLimitOverride(topology, 'fw', 'nic_bps', 1e9), /not part of this profile/);
+});

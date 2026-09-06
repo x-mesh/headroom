@@ -127,6 +127,36 @@ async function verify(viewport, screenshot, interact = false) {
     await page.locator('[data-failure-type="link"][data-failure-id="spine-a-leaf-a"]').click();
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
     assert.match(await page.locator('#comparison-grid').textContent(), /CHANGED/);
+
+    // 데이터시트 프로필과 사용자 보정
+    await page.locator('[data-device-id="fw-b"]').click();
+    await page.selectOption('[data-spec-field="catalog"]', 'fortinet-fortigate-100f');
+    await page.waitForFunction(() => document.querySelector('.source-note')?.textContent.includes('데이터시트'));
+    assert.match(await page.locator('.limit-field small').first().textContent(), /데이터시트 20 Gbps/);
+    await page.selectOption('[data-spec-field="profile"]', 'threat');
+    await page.waitForFunction(() => document.querySelector('#inspector-content')?.textContent.includes('위협 방어'));
+    const threatAxes = await page.locator('[data-device-id="fw-b"] .node-axis').evaluateAll((rows) =>
+      rows.map((row) => `${row.querySelector('b').textContent}:${row.dataset.axisState}`));
+    assert.ok(threatAxes.includes('BPS:overloaded'), 'threat protection drops 20 Gbps to 1 Gbps');
+    assert.ok(threatAxes.includes('CPS:unknown'), 'the datasheet says nothing about sessions under inspection, so it stays unknown');
+
+    await page.selectOption('[data-spec-field="profile"]', 'fw-1518');
+    await page.waitForFunction(() => document.querySelector('input[name="new_sessions_per_sec"]')?.value === '56000');
+    await page.locator('input[name="new_sessions_per_sec"]').fill('40000');
+    await page.locator('[data-resource-form="device"] button[type="submit"]').click();
+    await page.waitForFunction(() => document.querySelector('.limit-field.corrected'));
+    assert.match(await page.locator('.source-note b').textContent(), /보정한 축이 1개/);
+    assert.match(await page.locator('.limit-field.corrected small').textContent(), /데이터시트 56 Kcps/,
+      'the datasheet value stays visible next to the correction');
+    await page.locator('[data-reset-axis="new_sessions_per_sec"]').click();
+    await page.waitForFunction(() => document.querySelector('input[name="new_sessions_per_sec"]')?.value === '56000');
+    assert.equal(await page.locator('.limit-field.corrected').count(), 0);
+    await page.selectOption('[data-spec-field="catalog"]', '');
+    await page.waitForFunction(() => !document.querySelector('[data-spec-field="profile"]'));
+    // 스펙을 바꾸면 토폴로지가 커밋되고 시나리오가 초기화된다. 장애 흐름을 이어가려면 다시 주입한다.
+    await failure.click();
+    await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
+
     await failure.click();
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '00');
     const severs = page.locator('.failure-switch').filter({ has: page.locator('.failure-forecast[data-verdict="severs"]') }).first();
