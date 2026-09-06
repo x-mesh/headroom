@@ -32,7 +32,8 @@ Users start from a topology preset or an imported project. They adjust workload 
 
 - Phase 1 covers one data center and steady-state constraints.
 - The browser performs all calculations without a server.
-- The engine uses deterministic path allocation.
+- The engine uses deterministic path allocation. Shares split at each hop branch, not evenly across enumerated paths.
+- A load balancer fans out to every same-class device behind it, so attaching a backend divides the load without editing demand.
 - Missing or incompatible capacity data remains `unknown`.
 - Phase 1 does not simulate packets, control-plane convergence, queues, server compute, or storage performance.
 - The product name is Rack Mesh. Repositories, packages, and CLI identifiers use `rack-mesh`.

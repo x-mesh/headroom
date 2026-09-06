@@ -1097,7 +1097,7 @@ function renderDeviceLimitFields(form) {
 
 function openDemandForm() {
   if (topology.devices.length < 2) { showToast('Traffic demand에는 장비가 두 개 이상 필요합니다.'); return; }
-  openEditorPanel('Traffic demand 추가', `<p class="editor-hint">source와 target 사이의 모든 최단 ECMP 경로를 자동 계산합니다.</p><form class="editor-form" data-editor-form="demand">
+  openEditorPanel('Traffic demand 추가', `<p class="editor-hint">source와 target 사이의 모든 최단 ECMP 경로를 자동 계산합니다. target이 로드밸런서 뒤에 있으면 같은 클래스 서버를 한 백엔드 풀로 묶어 나눠 보냅니다.</p><form class="editor-form" data-editor-form="demand">
     <label>이름<input name="name" maxlength="80" required></label><label>Source<select name="source">${deviceOptions()}</select></label><label>Target<select name="target">${deviceOptions(topology.devices[1]?.id)}</select></label>
     <label>Traffic (bps)<input name="forwarding_bps" type="number" min="0" step="any" value="1000000000" required></label><label>Packets (pps)<input name="forwarding_pps" type="number" min="0" step="any" value="100000"></label>
     <label>신규 세션 (CPS)<input name="new_sessions_per_sec" type="number" min="0" step="any" value="0"></label><label>동시 세션<input name="concurrent_sessions" type="number" min="0" step="any" value="0"></label>
