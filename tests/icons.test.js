@@ -72,3 +72,27 @@ test('vendor marks resolve from a manufacturer string and stay optional', async 
   assert.match(VENDOR_LOGO_SOURCE.note, /trademarks of their owners/);
 });
 
+
+test('hand-drawn symbols meet the generated symbols on every rule', async () => {
+  const { GLYPHS, GLYPH_KINDS, GLYPH_SPRITE } = await import('../src/glyphs.js');
+  assert.ok(GLYPH_KINDS.length >= 1);
+  for (const kind of GLYPH_KINDS) {
+    const glyph = GLYPHS[kind];
+    // 손으로 그린 심볼은 스텐실이 구별해 주지 못하는 클래스만 덮는다. 그 클래스는 스텐실에도 있어야
+    // 대체 경로(kind 부분 일치)가 같은 이름으로 떨어진다.
+    assert.ok(ICONS[kind], `${kind}: 스텐실에 없는 클래스입니다.`);
+    assert.notEqual(glyph.id, ICONS[kind].id, `${kind}: 심볼 id가 생성물과 겹칩니다.`);
+    const [minX, minY, width, height] = glyph.viewBox.split(' ').map(Number);
+    assert.ok(minX < 0 && minY < 0, `${kind}: 스트로크 패딩이 없습니다.`);
+    assert.ok(width >= glyph.width && height >= glyph.height, `${kind}: viewBox가 선언 박스보다 작습니다.`);
+    for (const pattern of [/<script/i, /href=/i, /xlink:/i, /url\(/i, /on[a-z]+=/i]) {
+      assert.doesNotMatch(glyph.body, pattern, `${kind}: ${pattern}가 들어 있습니다.`);
+    }
+    assert.equal((glyph.body.match(/<g[\s>]/g) || []).length, (glyph.body.match(/<\/g>/g) || []).length, `${kind}: <g> 짝이 맞지 않습니다.`);
+    // 리터럴 색은 var() 폴백 자리에만 허용한다. 그래야 상태 색과 비활성 처리가 스텐실과 같이 반응한다.
+    assert.doesNotMatch(glyph.body.replace(/var\(--icon-[a-z]+,[^)]*\)/g, ''), /#[0-9a-f]{3,8}\b/i, `${kind}: 토큰 밖 색상이 있습니다.`);
+    assert.match(glyph.body, /stroke:var\(--icon-line,currentColor\)/, `${kind}: 선 색이 토큰이 아닙니다.`);
+  }
+  assert.equal((GLYPH_SPRITE.match(/<symbol /g) || []).length, GLYPH_KINDS.length);
+  assert.match(GLYPH_SPRITE, /preserveAspectRatio="xMidYMid meet"/);
+});

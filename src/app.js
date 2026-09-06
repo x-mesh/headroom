@@ -3,6 +3,7 @@ import { calculateScenario, compareScenarios, createExport, sweepSingleFaults } 
 import { addDemand, addDevice, addLink, applySpec, moveDevice, normalizeId, removeDemand, removeDevice, removeLink, setLimitOverride, updateDemand, updateDevice, updateLink } from './editor.js';
 import { importDeviceDefinition } from './device-import.js';
 import { parseProject, serializeProject } from './project.js';
+import { GLYPHS, GLYPH_SPRITE } from './glyphs.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
 import { vendorLogoFor } from './logos.js';
 import { buildTemplate, templates } from './templates.js';
@@ -304,8 +305,9 @@ function symbolId(kind) {
   const key = String(kind ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   // 목록에 정확히 있는 kind 는 별칭보다 앞선다. 그러지 않으면 vm 이 server 심볼로 그려진다.
   const exact = ICONS[key] ? key : (KIND_ALIAS[key] || key);
-  if (ICONS[exact]) return ICONS[exact].id;
-  return ICONS[ICON_KINDS.find((name) => key.includes(name)) || ICON_FALLBACK].id;
+  const name = ICONS[exact] ? exact : (ICON_KINDS.find((candidate) => key.includes(candidate)) || ICON_FALLBACK);
+  // 스텐실이 클래스를 구별해 주지 못해 손으로 그린 심볼이 있으면 그것이 스텐실보다 앞선다.
+  return (GLYPHS[name] || ICONS[name]).id;
 }
 
 function behaviorToken(device) {
@@ -1459,7 +1461,7 @@ document.addEventListener('lostpointercapture', () => { if (paletteDrag) endPale
 reducedMotion.addEventListener('change', startTelemetry);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) updateTelemetry(); });
 
-element('icon-sprite').innerHTML = ICON_SPRITE;
+element('icon-sprite').innerHTML = ICON_SPRITE + GLYPH_SPRITE;
 element('topology-stage').style.setProperty('--zoom', String(state.zoom));
 renderPalette();
 setLeftPanel(state.leftPanel);
