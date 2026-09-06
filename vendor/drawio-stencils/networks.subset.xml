@@ -2329,237 +2329,64 @@
         <fill/>
     </foreground>
 </shape>
-<shape aspect="variable" h="106.11" name="Server Storage" strokewidth="2" w="103">
+<shape aspect="variable" h="100" name="External Storage" strokewidth="2" w="87">
     <connections>
         <constraint name="N" perimeter="0" x="0.5" y="0"/>
-        <constraint name="S" perimeter="0" x="0.5" y="0.94"/>
+        <constraint name="S" perimeter="0" x="0.5" y="1"/>
         <constraint name="W" perimeter="0" x="0" y="0.5"/>
-        <constraint name="E" perimeter="0" x="0.88" y="0.5"/>
-        <constraint name="NW" perimeter="0" x="0" y="0.14"/>
-        <constraint name="SW" perimeter="0" x="0" y="0.93"/>
-        <constraint name="NE" perimeter="0" x="0.87" y="0.14"/>
-        <constraint name="SE" perimeter="0" x="1" y="0.97"/>
+        <constraint name="E" perimeter="0" x="1" y="0.5"/>
+        <constraint name="NW" perimeter="0" x="0" y="0.25"/>
+        <constraint name="SW" perimeter="0" x="0.02" y="0.98"/>
+        <constraint name="NE" perimeter="0" x="0.95" y="0.02"/>
     </connections>
     <foreground>
         <save/>
-        <roundrect arcsize="13.33" h="15" w="90" x="0" y="85"/>
+        <roundrect arcsize="8.33" h="80" w="60" x="0" y="20"/>
         <fillstroke/>
-        <roundrect arcsize="13.33" h="15" w="90" x="0" y="67.5"/>
-        <fillstroke/>
-        <roundrect arcsize="13.33" h="15" w="90" x="0" y="50"/>
-        <fillstroke/>
-        <roundrect arcsize="13.33" h="15" w="90" x="0" y="32.5"/>
-        <fillstroke/>
-        <roundrect arcsize="13.33" h="15" w="90" x="0" y="15"/>
-        <fillstroke/>
-        <path>
-            <move x="4" y="13"/>
-            <line x="25" y="0"/>
-            <line x="65" y="0"/>
-            <line x="86" y="13"/>
-            <close/>
-        </path>
+        <rect h="7" w="8" x="78" y="54"/>
         <fillstroke/>
         <fillcolor color="#ffffff"/>
-        <ellipse h="8" w="8" x="78" y="88.5"/>
+        <rect h="3" w="1" x="80" y="55"/>
         <fill/>
-        <ellipse h="8" w="8" x="77.67" y="71"/>
+        <rect h="3" w="1" x="83" y="55"/>
         <fill/>
-        <ellipse h="8" w="8" x="78" y="53.5"/>
-        <fill/>
-        <ellipse h="8" w="8" x="78" y="36"/>
-        <fill/>
-        <ellipse h="8" w="8" x="78" y="18.5"/>
-        <fill/>
-        <path>
-            <move x="5" y="98"/>
-            <line x="10" y="87"/>
-            <line x="15" y="87"/>
-            <line x="10" y="98"/>
-            <close/>
-            <move x="15" y="98"/>
-            <line x="20" y="87"/>
-            <line x="25" y="87"/>
-            <line x="20" y="98"/>
-            <close/>
-            <move x="25" y="98"/>
-            <line x="30" y="87"/>
-            <line x="35" y="87"/>
-            <line x="30" y="98"/>
-            <close/>
-            <move x="35" y="98"/>
-            <line x="40" y="87"/>
-            <line x="45" y="87"/>
-            <line x="40" y="98"/>
-            <close/>
-            <move x="45" y="98"/>
-            <line x="50" y="87"/>
-            <line x="55" y="87"/>
-            <line x="50" y="98"/>
-            <close/>
-            <move x="55" y="98"/>
-            <line x="60" y="87"/>
-            <line x="65" y="87"/>
-            <line x="60" y="98"/>
-            <close/>
-            <move x="5" y="80.5"/>
-            <line x="10" y="69.5"/>
-            <line x="15" y="69.5"/>
-            <line x="10" y="80.5"/>
-            <close/>
-            <move x="15" y="80.5"/>
-            <line x="20" y="69.5"/>
-            <line x="25" y="69.5"/>
-            <line x="20" y="80.5"/>
-            <close/>
-            <move x="25" y="80.5"/>
-            <line x="30" y="69.5"/>
-            <line x="35" y="69.5"/>
-            <line x="30" y="80.5"/>
-            <close/>
-            <move x="35" y="80.5"/>
-            <line x="40" y="69.5"/>
-            <line x="45" y="69.5"/>
-            <line x="40" y="80.5"/>
-            <close/>
-            <move x="45" y="80.5"/>
-            <line x="50" y="69.5"/>
-            <line x="55" y="69.5"/>
-            <line x="50" y="80.5"/>
-            <close/>
-            <move x="55" y="80.5"/>
-            <line x="60" y="69.5"/>
-            <line x="65" y="69.5"/>
-            <line x="60" y="80.5"/>
-            <close/>
-            <move x="5" y="63"/>
-            <line x="10" y="52"/>
-            <line x="15" y="52"/>
-            <line x="10" y="63"/>
-            <close/>
-            <move x="15" y="63"/>
-            <line x="20" y="52"/>
-            <line x="25" y="52"/>
-            <line x="20" y="63"/>
-            <close/>
-            <move x="25" y="63"/>
-            <line x="29.5" y="52"/>
-            <line x="34.5" y="52"/>
-            <line x="29.5" y="63"/>
-            <close/>
-            <move x="35" y="63"/>
-            <line x="40" y="52"/>
-            <line x="45" y="52"/>
-            <line x="40" y="63"/>
-            <close/>
-            <move x="45" y="63"/>
-            <line x="50" y="52"/>
-            <line x="55" y="52"/>
-            <line x="50" y="63"/>
-            <close/>
-            <move x="55" y="63"/>
-            <line x="60" y="52"/>
-            <line x="65" y="52"/>
-            <line x="60" y="63"/>
-            <close/>
-            <move x="5" y="45.5"/>
-            <line x="10" y="34.5"/>
-            <line x="15" y="34.5"/>
-            <line x="10" y="45.5"/>
-            <close/>
-            <move x="15" y="45.5"/>
-            <line x="20" y="34.5"/>
-            <line x="25" y="34.5"/>
-            <line x="20" y="45.5"/>
-            <close/>
-            <move x="25" y="45.5"/>
-            <line x="30" y="34.5"/>
-            <line x="35" y="34.5"/>
-            <line x="30" y="45.5"/>
-            <close/>
-            <move x="35" y="45.5"/>
-            <line x="40" y="34.5"/>
-            <line x="45" y="34.5"/>
-            <line x="40" y="45.5"/>
-            <close/>
-            <move x="45" y="45.5"/>
-            <line x="50" y="34.5"/>
-            <line x="55" y="34.5"/>
-            <line x="50" y="45.5"/>
-            <close/>
-            <move x="55" y="45.5"/>
-            <line x="60" y="34.5"/>
-            <line x="65" y="34.5"/>
-            <line x="60" y="45.5"/>
-            <close/>
-            <move x="5" y="28"/>
-            <line x="10" y="17"/>
-            <line x="15" y="17"/>
-            <line x="10" y="28"/>
-            <close/>
-            <move x="15" y="28"/>
-            <line x="20" y="17"/>
-            <line x="25" y="17"/>
-            <line x="20" y="28"/>
-            <close/>
-            <move x="25" y="28"/>
-            <line x="30" y="17"/>
-            <line x="35" y="17"/>
-            <line x="30" y="28"/>
-            <close/>
-            <move x="35" y="28"/>
-            <line x="40" y="17"/>
-            <line x="45" y="17"/>
-            <line x="40" y="28"/>
-            <close/>
-            <move x="45" y="28"/>
-            <line x="50" y="17"/>
-            <line x="55" y="17"/>
-            <line x="50" y="28"/>
-            <close/>
-            <move x="55" y="28"/>
-            <line x="60" y="17"/>
-            <line x="65" y="17"/>
-            <line x="60" y="28"/>
-            <close/>
-        </path>
+        <roundrect arcsize="50" h="4" w="20" x="35" y="92"/>
         <fill/>
         <restore/>
         <rect/>
         <stroke/>
         <path>
-            <move x="66" y="94.5"/>
-            <arc large-arc-flag="0" rx="13.5" ry="3" sweep-flag="1" x="103" x-axis-rotation="0" y="94.5"/>
-            <line x="103" y="102"/>
-            <arc large-arc-flag="1" rx="13.5" ry="3" sweep-flag="1" x="66" x-axis-rotation="0" y="102"/>
+            <move x="35" y="19"/>
+            <line x="35" y="14"/>
+            <line x="34" y="14"/>
+            <line x="33" y="11"/>
+            <line x="32" y="11"/>
+            <line x="32" y="6"/>
+            <arc large-arc-flag="0" rx="2" ry="2" sweep-flag="1" x="34" x-axis-rotation="0" y="4"/>
+            <line x="78" y="4"/>
+            <arc large-arc-flag="0" rx="2" ry="2" sweep-flag="1" x="80" x-axis-rotation="0" y="6"/>
+            <line x="80" y="44"/>
+            <line x="79" y="44"/>
+            <line x="78" y="46"/>
+            <line x="77" y="46"/>
+            <line x="77" y="53"/>
+            <line x="87" y="53"/>
+            <line x="87" y="46"/>
+            <line x="86" y="46"/>
+            <line x="85" y="44"/>
+            <line x="84" y="44"/>
+            <line x="84" y="6"/>
+            <arc large-arc-flag="0" rx="6" ry="6" sweep-flag="0" x="78" x-axis-rotation="0" y="0"/>
+            <line x="34" y="0"/>
+            <arc large-arc-flag="0" rx="6" ry="6" sweep-flag="0" x="28" x-axis-rotation="0" y="6"/>
+            <line x="28" y="11"/>
+            <line x="27" y="11"/>
+            <line x="26" y="14"/>
+            <line x="25" y="14"/>
+            <line x="25" y="19"/>
             <close/>
         </path>
         <fillstroke/>
-        <path>
-            <move x="66" y="85"/>
-            <arc large-arc-flag="0" rx="13.5" ry="3" sweep-flag="1" x="103" x-axis-rotation="0" y="85"/>
-            <line x="103" y="92.5"/>
-            <arc large-arc-flag="1" rx="13.5" ry="3" sweep-flag="1" x="66" x-axis-rotation="0" y="92.5"/>
-            <close/>
-        </path>
-        <fillstroke/>
-        <path>
-            <move x="66" y="76"/>
-            <arc large-arc-flag="0" rx="13.5" ry="3" sweep-flag="1" x="103" x-axis-rotation="0" y="76"/>
-            <line x="103" y="83"/>
-            <arc large-arc-flag="1" rx="13.5" ry="3" sweep-flag="1" x="66" x-axis-rotation="0" y="83"/>
-            <close/>
-        </path>
-        <fillstroke/>
-        <path>
-            <move x="66" y="94.5"/>
-            <arc large-arc-flag="1" rx="13.5" ry="3" sweep-flag="0" x="103" x-axis-rotation="0" y="94.5"/>
-            <move x="66" y="85"/>
-            <arc large-arc-flag="1" rx="13.5" ry="3" sweep-flag="0" x="103" x-axis-rotation="0" y="85"/>
-            <move x="66" y="76"/>
-            <arc large-arc-flag="1" rx="13.5" ry="3" sweep-flag="0" x="103" x-axis-rotation="0" y="76"/>
-        </path>
-        <stroke/>
     </foreground>
 </shape>
 <shape aspect="variable" h="100" name="Tape Storage" strokewidth="2" w="103">

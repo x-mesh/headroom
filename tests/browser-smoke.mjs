@@ -200,7 +200,7 @@ async function verify(viewport, screenshot, interact = false) {
     assert.match(await page.locator('[data-link-id="edge-a-fw-a"] .link-hit').getAttribute('aria-label'), /끊김/);
     const cross = await page.locator('[data-device-id="fw-a"] .node-symbol')
       .evaluate((node) => getComputedStyle(node, '::before').width);
-    assert.equal(cross, '30px', 'a dead device must carry a cross over its symbol, not colour alone');
+    assert.equal(cross, '40px', 'a dead device must carry a cross over its symbol, not colour alone');
     await page.locator('[data-failure-type="link"][data-failure-id="spine-a-leaf-a"]').click();
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
     assert.match(await page.locator('#comparison-grid').textContent(), /CHANGED/);

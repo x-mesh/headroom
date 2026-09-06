@@ -436,9 +436,10 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 ### Topology Node and Link
 
 - **Pointer Layers:** The node layer covers the whole canvas, so it must pass pointer events through and let only the nodes take them. Otherwise the links underneath cannot be clicked at all.
-- **Node:** Stack a 92 by 30 device symbol over a label block in a 104px column. Use no card border, no card surface, and no shadow. Keep the node small: a topology holds dozens of them, and the axis rows carry the reading.
+- **Node:** Stack a 92 by 42 device symbol over a label block in a 104px column. Use no card border, no card surface, and no shadow. Keep the node small: a topology holds dozens of them, and the axis rows carry the reading.
 - **Anchor:** Keep the device position at the center of the symbol box. Offset the node by half the symbol height, never by half the node height.
 - **Symbol:** Draw one inline sprite symbol for each device. Map the device class to a symbol and fall back to the rack symbol. Paint the symbol with text color, never with state color. Shape carries the class. Color and token carry the state.
+- **Symbol Choice:** The stencil set draws the server variants as one stack plus a small mark. At node size that mark disappears. If the set holds a shape with a different outline, map the class to that shape. Draw the database class as the cylinder.
 - **Symbol Fill:** Fill the symbol with the canvas color. Links stop at the shape edge.
 - **State Rail:** Put a three-pixel state rail under the symbol. Hatch it for overload. Dash it for unknown and offline.
 - **Axis Rows:** Show one monospace row for each configured axis: state token, four-character axis name, compact load, and utilization. Show at most four rows and count the rest in the meta line.

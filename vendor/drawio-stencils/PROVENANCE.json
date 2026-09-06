@@ -3,10 +3,10 @@
   "path": "src/main/webapp/stencils/networks.xml",
   "commit": "48b181339578e11da7052ebf5b1fba8499418b77",
   "commitDate": "2026-01-17T18:42:19Z",
-  "fetchedAt": "2026-09-05",
+  "fetchedAt": "2026-09-06",
   "upstreamBytes": 191647,
   "upstreamSha256": "2921086e1eec8cddcde937feec78caff85fa6b2b82670f29ded51e69b21e3711",
-  "subsetSha256": "ea6a0818fda77cb2e25548571dd88ef75a005cddd430f70d0cca44b7db69bae9",
+  "subsetSha256": "89f6deee96256daf13748a5e51c51d4c5da3d678e114aadbf3b160b590315010",
   "shapes": [
     "Switch",
     "Router",
@@ -28,7 +28,7 @@
     "Wireless Hub",
     "Modem",
     "Mail Server",
-    "Server Storage",
+    "External Storage",
     "Tape Storage",
     "Users"
   ],

@@ -64,7 +64,7 @@ function threeTier() {
     ['web-a', 'WEB 01', 'web', 'WEB TIER', 500, 170, { nic_bps: 25e9, nic_pps: null, new_sessions_per_sec: 45e3 }],
     ['web-b', 'WEB 02', 'web', 'WEB TIER', 500, 410, { nic_bps: 25e9, nic_pps: null, new_sessions_per_sec: 45e3 }],
     ['app', 'APP', 'vm', 'APP TIER', 700, 290, { nic_bps: 12e9, nic_pps: 2e6 }],
-    ['db', 'DB', 'storage', 'DATA TIER', 870, 290, { nic_bps: 8e9, nic_pps: null }],
+    ['db', 'DB', 'db', 'DATA TIER', 870, 290, { nic_bps: 8e9, nic_pps: null }],
   ]);
   connect(topology, [['internet', 'lb', 40e9], ['lb', 'web-a', 25e9], ['lb', 'web-b', 25e9],
     ['web-a', 'app', 25e9], ['web-b', 'app', 25e9], ['app', 'db', 12e9]]);
@@ -174,7 +174,7 @@ function backupNetwork() {
     ['app-b', 'APP 02', 'server', 'RACK 01', 160, 400, { nic_bps: 25e9, nic_pps: null }],
     ['core', 'CORE SW', 'switch', 'FABRIC', 430, 290, { forwarding_bps: 40e9, forwarding_pps: 5e6 }],
     ['nas', 'NAS', 'nas', 'STORAGE', 680, 200, { nic_bps: 10e9, nic_pps: null }],
-    ['vault', 'TAPE VAULT', 'storage', 'STORAGE', 680, 420, { nic_bps: 8e9, nic_pps: null }],
+    ['vault', 'TAPE VAULT', 'backup', 'STORAGE', 680, 420, { nic_bps: 8e9, nic_pps: null }],
   ]);
   connect(topology, [['app-a', 'core', 25e9], ['app-b', 'core', 25e9], ['core', 'nas', 10e9], ['core', 'vault', 8e9]]);
   addDemand(topology, { id: 'nightly', name: '야간 백업', source: 'app-a', target: 'nas',
@@ -212,7 +212,7 @@ function paymentGateway() {
     ['waf', 'WAF', 'waf', 'DMZ', 340, 290, { forwarding_bps: 15e9, new_sessions_per_sec: 60e3, concurrent_sessions: 900e3, tls_full_handshakes_per_sec: 12e3 }],
     ['app-a', 'PAY 01', 'web', 'SECURE', 590, 180, { nic_bps: 25e9, nic_pps: null, new_sessions_per_sec: 40e3 }],
     ['app-b', 'PAY 02', 'web', 'SECURE', 590, 400, { nic_bps: 25e9, nic_pps: null, new_sessions_per_sec: 40e3 }],
-    ['ledger', 'LEDGER', 'storage', 'SECURE', 840, 290, { nic_bps: 12e9, nic_pps: null }],
+    ['ledger', 'LEDGER', 'db', 'SECURE', 840, 290, { nic_bps: 12e9, nic_pps: null }],
   ]);
   connect(topology, [['internet', 'waf', 40e9], ['waf', 'app-a', 25e9], ['waf', 'app-b', 25e9],
     ['app-a', 'ledger', 12e9], ['app-b', 'ledger', 12e9]]);
@@ -264,9 +264,9 @@ function disasterRecovery() {
   place(topology, [
     ['app-p', 'APP PRI', 'vm', 'SITE A', 160, 200, { nic_bps: 25e9, nic_pps: 4e6 }],
     ['sw-p', 'SW A', 'switch', 'SITE A', 380, 200, { forwarding_bps: 40e9, forwarding_pps: 5e6 }],
-    ['db-p', 'DB PRI', 'storage', 'SITE A', 160, 430, { nic_bps: 20e9, nic_pps: null }],
+    ['db-p', 'DB PRI', 'db', 'SITE A', 160, 430, { nic_bps: 20e9, nic_pps: null }],
     ['sw-s', 'SW B', 'switch', 'SITE B', 660, 200, { forwarding_bps: 40e9, forwarding_pps: 5e6 }],
-    ['db-s', 'DB SEC', 'storage', 'SITE B', 880, 200, { nic_bps: 20e9, nic_pps: null }],
+    ['db-s', 'DB SEC', 'db', 'SITE B', 880, 200, { nic_bps: 20e9, nic_pps: null }],
     ['app-s', 'APP SEC', 'vm', 'SITE B', 880, 430, { nic_bps: 25e9, nic_pps: 4e6 }],
   ]);
   // 사이트 간 회선만 좁다. 복제가 그 구간을 다 쓴다.

@@ -15,13 +15,16 @@ const provenanceFile = resolve(root, 'vendor/drawio-stencils/PROVENANCE.json');
 const outputFile = resolve(root, 'src/icons.js');
 
 // 프로젝트의 kind 문자열 → drawio 도형명. rack/cloud 는 kind 가 아니라 폴백용이다.
+// 이 스텐실 계열은 서버 변종을 "같은 스택 + 작은 표식"으로 그린다. 우리 심볼 칸에서는 그
+// 표식이 10px 아래로 줄어 구별되지 않으므로, 외곽선 자체가 다른 도형이 있으면 그쪽을 고른다.
+// db 는 원기둥(Storage)이 데이터베이스 관습이고, 그 자리를 내준 storage 는 External Storage 다.
 const STENCILS = {
   switch: 'Switch', router: 'Router', hub: 'Hub', wireless: 'Wireless Hub', modem: 'Modem',
   firewall: 'Firewall', lb: 'Load Balancer', waf: 'Proxy Server',
   vpn: 'Comm Link', sslvpn: 'Secured', ips: 'Security Camera',
   server: 'Server', web: 'Web Server', vm: 'Virtual Server', mainframe: 'Mainframe',
-  mail: 'Mail Server', db: 'Server Storage',
-  storage: 'Storage', nas: 'NAS Filer', backup: 'Tape Storage',
+  mail: 'Mail Server', db: 'Storage',
+  storage: 'External Storage', nas: 'NAS Filer', backup: 'Tape Storage',
   client: 'Users',
   rack: 'Rack', cloud: 'Cloud',
 };
