@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile as readTextFile } from 'node:fs/promises';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { server } from '../scripts/serve.mjs';
@@ -330,6 +330,18 @@ async function verify(viewport, screenshot, interact = false) {
     assert.match(await page.locator('.source-correction').textContent(), /보정한 축이 1개/);
     assert.match(await page.locator('.limit-field.corrected small').textContent(), /데이터시트 56 Kcps/,
       'the datasheet value stays visible next to the correction');
+
+    // 내보낸 그림은 화면과 같은 심볼·축·판정을 담는다. 이름표 상자가 아니다.
+    const [svgDownload] = await Promise.all([
+      page.waitForEvent('download'),
+      page.locator('[data-editor-action="export-svg"]').click(),
+    ]);
+    const exported = await readTextFile(await svgDownload.path(), 'utf8');
+    assert.match(exported, /엔진 \d+\.\d+\.\d+/, 'the exported frame must say which engine computed it');
+    assert.match(exported, /<g transform="translate\([-\d.]+ [-\d.]+\) scale\(/, 'the exported frame must carry the device symbols, not name boxes');
+    assert.match(exported, />—</, 'an unknown axis must reach the file as an em dash, not a number');
+    assert.match(exported, /장애 fw-a/, 'the exported frame must name the fault it was computed under');
+    assert.doesNotMatch(exported, /<script|<image|foreignObject/);
     await page.locator('[data-reset-axis="new_sessions_per_sec"]').click();
     await page.waitForFunction(() => document.querySelector('input[name="new_sessions_per_sec"]')?.value === '56000');
     assert.equal(await page.locator('.limit-field.corrected').count(), 0);

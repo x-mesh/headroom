@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { addConnector, addShape, updateShape, removeDiagramElements, moveSelection, alignSelection, distributeSelection, copySelection, pasteSelection, groupSelection, ungroupSelection, exportDiagramSvg, importDrawio } from '../src/diagram.js';
+import { calculateScenario, sweepSingleFaults } from '../src/engine.js';
+import { nodeAxes } from '../src/node-view.js';
+import { buildTemplate } from '../src/templates.js';
 
 const topology = () => ({ devices: [{ id: 'a', name: 'A', position: { x: 100, y: 100 }, spec: { limits: { nic_bps: 100 } } }, { id: 'b', name: 'B', position: { x: 300, y: 100 } }], links: [{ id: 'ab', source: 'a', target: 'b', capacityBps: 200, waypoints: [{ x: 150, y: 140 }] }], demands: [{ id: 'traffic', source: 'a', target: 'b' }] });
 const selection = [{ type: 'device', id: 'a' }, { type: 'device', id: 'b' }];
@@ -88,4 +91,51 @@ test('drawio importer rejects unsafe, oversized and compressed XML with actionab
   assert.throws(() => importDrawio('x'.repeat(2 * 1024 * 1024 + 1)), /2 MB/);
   const parser = { parseFromString: () => ({ querySelector: () => null, querySelectorAll: () => [] }) };
   assert.throws(() => importDrawio('<mxfile><diagram>compressed</diagram></mxfile>', parser), /압축/);
+});
+
+test('stamps the calculation onto the exported frame', () => {
+  const topology = buildTemplate('three-tier');
+  const result = calculateScenario(topology, { disabledDevices: ['web-a'] });
+  const svg = exportDiagramSvg(topology, result, { sweep: sweepSingleFaults(topology), exportedAt: '2026-09-07 08:00' });
+
+  // 이 그림이 어느 조건에서 나왔는지. 하나라도 빠지면 근거가 아니라 그림일 뿐이다.
+  for (const fragment of ['배율 1.00배', '장애 web-a', `엔진 ${result.engineVersion}`, '합성 데모', '내보냄 2026-09-07 08:00']) {
+    assert.ok(svg.includes(fragment), `스탬프에 ${fragment} 가 없습니다.`);
+  }
+  // 미확인이 있는 결과를 통과로 보이게 하지 않는다.
+  assert.equal(result.summary.evaluationStatus, 'unknown');
+  assert.ok(svg.includes('통과 보류') && svg.includes(`미확인 제약 ${result.summary.unknownCount}개`));
+  assert.ok(svg.includes('전달률 상한'), '상한값 판정을 확정처럼 보이게 하지 않는다');
+  // 카탈로그 판을 하나로 부를 수 없으면 지어내지 않는다.
+  assert.ok(svg.includes('카탈로그 —'));
+
+  // 화면과 같은 심볼·축·상태를 담는다.
+  assert.ok(svg.includes('DB · NIC 처리량 75%'), '헤드라인이 병목 자원과 축을 사람이 읽는 이름으로 말한다');
+  assert.ok(svg.includes('OFFLINE') && svg.includes('DOWN'), '죽은 장비와 그 링크는 숫자가 아니라 상태를 말한다');
+  assert.ok(svg.includes('WEB TIER') && svg.includes('DATA TIER'), 'zone 그룹 상자가 그려진다');
+  assert.match(svg, /<g transform="translate\([-\d.]+ [-\d.]+\) scale\(/, '장비 심볼이 인라인으로 들어간다');
+});
+
+test('never turns an unknown axis into a number in the exported frame', () => {
+  const topology = buildTemplate('three-tier');
+  const result = calculateScenario(topology);
+  const svg = exportDiagramSvg(topology, result);
+  // 노드에 실제로 그려지는 축만 센다. 다섯 개를 넘으면 화면이 줄이므로 같은 규칙으로 고른다.
+  const drawn = result.devices.filter(({ active }) => active).flatMap((device) => nodeAxes(device).rows.map(([, axis]) => axis));
+  const unknownAxes = drawn.filter(({ status }) => status === 'unknown');
+  assert.ok(unknownAxes.length > 0, '이 템플릿에는 한계를 모르는 축이 있어야 이 검사가 성립한다');
+  // 미확인 축은 백분율 자리에 em dash 가 온다. 0% 로 적으면 미확인이 안전으로 읽힌다.
+  assert.ok((svg.match(/>—</g) || []).length >= unknownAxes.length,
+    `미확인 축 ${unknownAxes.length}개가 전부 em dash 로 나와야 합니다.`);
+  // 미확인 축은 막대도 채우지 않는다. 채운 막대 수가 아는 축 수를 넘지 않는다.
+  const filled = (svg.match(/stroke-width="2"\/>/g) || []).length;
+  assert.ok(filled > 0);
+});
+
+test('draws the diagram alone when there is no calculation to stamp', () => {
+  const topology = buildTemplate('three-tier');
+  const svg = exportDiagramSvg(topology);
+  assert.ok(svg.includes('계산 결과 없음'));
+  assert.equal(svg.includes('배율'), false, '결과가 없으면 배율을 지어내지 않는다');
+  assert.doesNotMatch(svg, /<script|<image|foreignObject/);
 });

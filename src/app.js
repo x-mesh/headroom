@@ -4,6 +4,7 @@ import { acceptEvidence, addDemand, addDevice, addLink, applySpec, clearEvidence
 import { importDeviceDefinition } from './device-import.js';
 import { parseProject, serializeProject } from './project.js';
 import { GLYPHS, GLYPH_SPRITE } from './glyphs.js';
+import { behaviorToken, formatNodeValue, groupBoxes, GROUP_PAD, kindInitial, nodeAxes, nodeAxisLabel, NODE_REACH, nodeView, STATE_TOKEN, symbolFor, zonePath } from './node-view.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
 import { vendorLogoFor } from './logos.js';
 import { buildTemplate, templates } from './templates.js';
@@ -362,10 +363,6 @@ function renderFailures() {
   });
 }
 
-const STATE_TOKEN = { healthy: '.', warning: '!', overloaded: '>', unknown: '?', invalid: 'x', disabled: 'x' };
-const NODE_AXIS_LIMIT = 4;
-const AXIS_RANK = { overloaded: 0, invalid: 1, warning: 2, healthy: 3, unknown: 4 };
-const SI_STEPS = [[1e12, 'T'], [1e9, 'G'], [1e6, 'M'], [1e3, 'K']];
 // 심볼은 스텐실, 클래스는 meta 줄로 확정했다. 배지만 취향이 갈려 토글로 남긴다.
 const classView = { badge: 'off' };
 try {
@@ -374,52 +371,6 @@ try {
 } catch { /* 저장된 선택이 없으면 기본값을 쓴다 */ }
 
 // 이니셜은 앞 세 글자를 자르면 SWI·ROU 가 되어 읽히지 않는다. 손으로 정한다.
-const KIND_INITIAL = {
-  switch: 'SW', router: 'RT', hub: 'HB', modem: 'MD', wireless: 'WL',
-  firewall: 'FW', ips: 'IPS', waf: 'WAF', lb: 'LB', vpn: 'VPN', sslvpn: 'SSL',
-  server: 'SRV', web: 'WEB', vm: 'VM', db: 'DB', mail: 'ML', mainframe: 'MF',
-  storage: 'ST', nas: 'NAS', backup: 'BK', client: 'CL', cloud: 'EXT', rack: 'RK',
-};
-const kindInitial = (kind) => KIND_INITIAL[String(kind).toLowerCase()] || String(kind).slice(0, 3).toUpperCase();
-
-const KIND_ALIAS = { 'load-balancer': 'lb', loadbalancer: 'lb', balancer: 'lb', host: 'server', compute: 'server', vm: 'server', nas: 'storage', san: 'storage' };
-
-// 노드 폭 안에 들어가도록 단위를 떼고 5자 이내로 줄인다. 단위는 축 이름 열이 지시한다.
-function formatNodeValue(value) {
-  if (value == null || !Number.isFinite(value)) return '\u2014';
-  if (value === 0) return '0';
-  const [factor, suffix] = SI_STEPS.find(([step]) => Math.abs(value) >= step) || [1, ''];
-  const scaled = value / factor;
-  return `${scaled >= 100 ? Math.round(scaled) : scaled.toFixed(scaled >= 10 ? 1 : 2)}${suffix}`;
-}
-
-// kind는 임의 문자열이라 목록 밖 값이 들어온다. 화이트리스트를 통과한 값만 href에 넣는다.
-function symbolId(kind) {
-  const key = String(kind ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  // 목록에 정확히 있는 kind 는 별칭보다 앞선다. 그러지 않으면 vm 이 server 심볼로 그려진다.
-  const exact = ICONS[key] ? key : (KIND_ALIAS[key] || key);
-  const name = ICONS[exact] ? exact : (ICON_KINDS.find((candidate) => key.includes(candidate)) || ICON_FALLBACK);
-  // 스텐실이 클래스를 구별해 주지 못해 손으로 그린 심볼이 있으면 그것이 스텐실보다 앞선다.
-  return (GLYPHS[name] || ICONS[name]).id;
-}
-
-function behaviorToken(device) {
-  const catalog = behaviorCatalog[device.kind];
-  if (!catalog) return '';
-  return catalog.options[device.behavior?.mode ?? catalog.default]?.token || '';
-}
-
-const nodeAxisLabel = (key) => axisCatalog[key]?.nodeLabel || key.replace(/[^a-z0-9]/gi, '').slice(0, 4).toUpperCase();
-
-// 선별은 심각도 순으로, 렌더는 limits 삽입 순서로. 문제 축은 반드시 노출하면서 행 순서는 흔들리지 않는다.
-function nodeAxes(device) {
-  const entries = Object.entries(device.axes);
-  if (entries.length <= NODE_AXIS_LIMIT) return { rows: entries, hidden: 0 };
-  const keep = new Set([...entries]
-    .sort((a, b) => (AXIS_RANK[a[1].status] ?? 9) - (AXIS_RANK[b[1].status] ?? 9) || (b[1].utilization ?? -1) - (a[1].utilization ?? -1) || a[0].localeCompare(b[0]))
-    .slice(0, NODE_AXIS_LIMIT).map(([key]) => key));
-  return { rows: entries.filter(([key]) => keep.has(key)), hidden: entries.length - keep.size };
-}
 
 // 제조사 표시 순서: 프로젝트가 직접 실은 로고 → 카탈로그 마크 → 약칭 텍스트.
 // 마크는 식별용이고 제휴를 뜻하지 않는다(vendor/brand-logos/NOTICE.md).
@@ -521,7 +472,7 @@ function renderPalette() {
     // 2열 격자에서 홀수 그룹의 마지막 칸은 빈 자리로 남는다. 그 항목을 한 줄로 늘려 메운다.
     const wide = counts.get(item.group) % 2 === 1 && index === counts.get(item.group) - 1 ? ' data-wide=""' : '';
     return `${heading}<button type="button" class="palette-item"${wide} data-palette-kind="${item.kind}" aria-label="${escapeAttribute(item.label)} 추가">
-    <span class="palette-glyph"><svg aria-hidden="true" focusable="false"><use href="#${symbolId(item.kind)}"></use></svg></span><span class="palette-label">${escapeText(item.label)}</span><span class="palette-kind">${item.kind.toUpperCase()}</span>
+    <span class="palette-glyph"><svg aria-hidden="true" focusable="false"><use href="#${symbolFor(item.kind).id}"></use></svg></span><span class="palette-label">${escapeText(item.label)}</span><span class="palette-kind">${item.kind.toUpperCase()}</span>
   </button>`;
   }).join('');
 }
@@ -548,42 +499,11 @@ const ZOOM_RANGE = { min: ZOOM_STEPS[0], max: ZOOM_STEPS.at(-1) };
 const ZOOM_WHEEL_SENSITIVITY = 0.0005;
 const WHEEL_LINE_HEIGHT = 16;
 // 노드는 심볼 중심이 기준이고 라벨이 아래로 흐르므로 방향별 여백이 다르다.
-const NODE_REACH = { left: 54, right: 54, top: 18, bottom: 122 };
 let viewport = { minX: 0, minY: 0, width: CANVAS_MIN.width, height: CANVAS_MIN.height };
 
 
 // zone 은 슬래시로 계층을 적는다. 'FABRIC / RACK 04' 는 FABRIC 안의 RACK 04 다.
 // 계층을 쓰지 않은 설계는 한 층짜리 그룹이 되고, 그리는 방식은 같다.
-const GROUP_PAD = { base: 14, step: 8, label: 17 };
-const zonePath = (zone) => String(zone || '').split('/').map((part) => part.trim()).filter(Boolean);
-
-function groupBoxes(devices) {
-  const byPath = new Map();
-  for (const device of devices) {
-    const path = zonePath(device.zone);
-    for (let depth = 1; depth <= path.length; depth += 1) {
-      const key = path.slice(0, depth).join(' / ');
-      const entry = byPath.get(key) || { key, label: path[depth - 1], depth, box: null };
-      const box = entry.box || { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
-      entry.box = {
-        minX: Math.min(box.minX, device.position.x - NODE_REACH.left),
-        minY: Math.min(box.minY, device.position.y - NODE_REACH.top),
-        maxX: Math.max(box.maxX, device.position.x + NODE_REACH.right),
-        maxY: Math.max(box.maxY, device.position.y + NODE_REACH.bottom),
-      };
-      byPath.set(key, entry);
-    }
-  }
-  const deepest = Math.max(0, ...[...byPath.values()].map(({ depth }) => depth));
-  // 얕은 그룹일수록 여백을 크게 줘야 자식 상자를 감싼 것으로 읽힌다.
-  return [...byPath.values()]
-    .sort((a, b) => a.depth - b.depth || a.key.localeCompare(b.key))
-    .map((entry) => {
-      const pad = GROUP_PAD.base + (deepest - entry.depth) * GROUP_PAD.step;
-      return { ...entry, x: entry.box.minX - pad, y: entry.box.minY - pad - GROUP_PAD.label,
-        width: entry.box.maxX - entry.box.minX + pad * 2, height: entry.box.maxY - entry.box.minY + pad * 2 + GROUP_PAD.label };
-    });
-}
 
 function canvasViewport(devices) {
   const shapeBounds = (topology.diagram?.shapes || []).reduce((box, shape) => ({
@@ -768,7 +688,7 @@ function renderTopology() {
       ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis)).join('')
       : '<span class="node-axis" data-axis-state="disabled"><i>x</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>';
     return `<button type="button" class="mesh-node ${status} ${state.selectedId === device.id ? 'selected' : ''} ${selectionHas('device', device.id) ? 'multi-selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x - viewport.minX}px;top:${device.position.y - viewport.minY}px" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
-      <span class="node-symbol">${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}${classView.badge === 'on' ? `<span class="node-class-badge">${escapeText(kindInitial(device.kind))}</span>` : ''}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolId(device.kind)}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}${pool || idle ? `<span class="node-pool"${idle ? ' data-warn=""' : ''}>${escapeText(pool || idle)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
+      <span class="node-symbol">${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}${classView.badge === 'on' ? `<span class="node-class-badge">${escapeText(kindInitial(device.kind))}</span>` : ''}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolFor(device.kind).id}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}${pool || idle ? `<span class="node-pool"${idle ? ' data-warn=""' : ''}>${escapeText(pool || idle)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
     </button>`;
   }).join('');
 }
@@ -1259,8 +1179,13 @@ function downloadText(filename, text, type = 'application/json') {
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+// 내보낸 그림은 화면과 같은 축을 골라 같은 값을 말해야 한다. 그래서 결과와 훑기를 함께 넘긴다.
+function diagramSvg() {
+  return exportDiagramSvg(topology, current, { sweep: sweepStale() ? null : sweep, exportedAt: new Date().toISOString().slice(0, 16).replace('T', ' ') });
+}
+
 async function exportPng() {
-  const svg = exportDiagramSvg(topology);
+  const svg = diagramSvg();
   const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
   try {
     const image = new Image(); image.src = url; await image.decode();
@@ -1297,7 +1222,7 @@ function handleEditorAction(action) {
   if (action === 'open') element('project-file-input').click();
   if (action === 'import-device') element('device-file-input').click();
   if (action === 'import-drawio') element('drawio-file-input').click();
-  if (action === 'export-svg') { downloadText('rack-mesh-diagram.svg', exportDiagramSvg(topology), 'image/svg+xml'); showToast('편집 가능한 설계를 SVG로 내보냈습니다.'); }
+  if (action === 'export-svg') { downloadText('rack-mesh-diagram.svg', diagramSvg(), 'image/svg+xml'); showToast('계산 결과와 판정을 찍은 SVG로 내보냈습니다.'); }
   if (action === 'export-png') exportPng().catch((error) => showToast(error.message));
   if (action === 'new') openTemplatePicker();
   if (action.startsWith('shape-')) {
@@ -1973,7 +1898,7 @@ element('component-palette').addEventListener('pointermove', (event) => {
     if (Math.hypot(event.clientX - paletteDrag.startX, event.clientY - paletteDrag.startY) <= PALETTE_DRAG_THRESHOLD) return;
     paletteDrag.ghost = document.createElement('div');
     paletteDrag.ghost.className = 'palette-ghost';
-    paletteDrag.ghost.innerHTML = `<svg aria-hidden="true" focusable="false"><use href="#${symbolId(paletteDrag.kind)}"></use></svg>`;
+    paletteDrag.ghost.innerHTML = `<svg aria-hidden="true" focusable="false"><use href="#${symbolFor(paletteDrag.kind).id}"></use></svg>`;
     document.body.append(paletteDrag.ghost);
     paletteDrag.item.classList.add('dragging');
   }
