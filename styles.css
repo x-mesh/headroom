@@ -19,8 +19,8 @@
   --muted: #526e64;
   --signal: #b8e737;
   --signal-deep: #587d00;
-  --amber: #b66b00;
-  --danger: #c9473f;
+  --amber: #9a5a00;
+  --danger: #b83c34;
   --unknown: #697286;
   --cyan: #087d70;
   --font-ui: "Avenir Next", Avenir, "Segoe UI", sans-serif;
@@ -82,6 +82,10 @@ button { color: inherit; }
 .summary-strip > div:last-child { border-right: 0; }
 .summary-strip span { color: var(--muted); font-size: 11px; }
 .summary-strip strong { grid-row: 1 / span 2; color: var(--signal-deep); font: 600 30px/.95 var(--font-data); font-variant-numeric: tabular-nums; }
+/* headroom 은 엔진의 판정 기준과 같은 색을 쓴다. 임계값을 넘었는데 초록이면 숫자가 거짓말이 된다. */
+#summary-headroom[data-tone="danger"] { color: var(--danger); }
+#summary-headroom[data-tone="amber"] { color: var(--amber); }
+#summary-headroom[data-tone="unknown"] { color: var(--unknown); }
 .summary-strip small { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 10px/1 var(--font-data); }
 .metric-sparkline { grid-column: 1 / -1; width: 100%; height: 28px; overflow: visible; }
 .metric-sparkline path { fill: none; stroke: var(--cyan); stroke-width: 1.7; vector-effect: non-scaling-stroke; }
@@ -180,7 +184,7 @@ button { color: inherit; }
 .failure-forecast[data-verdict="severs"] { color: var(--danger); }
 .failure-forecast[data-verdict="overloads"] { color: var(--amber); }
 .failure-forecast[data-verdict="absorbs"] { color: var(--signal-deep); }
-.failure-grade { margin: 0; padding: 2px 18px 12px; color: var(--muted); font: 600 9px/1.4 var(--font-data); letter-spacing: .04em; }
+.failure-grade { margin: 0; padding: 2px 18px 12px; color: var(--muted); font: 600 12px/1.4 var(--font-data); letter-spacing: .02em; }
 .failure-grade[data-grade="single-point"] { color: var(--danger); }
 .failure-grade[data-grade="partial"] { color: var(--amber); }
 .failure-switch .switch-state { color: var(--muted); font: 500 9px/1 var(--font-data); }
@@ -188,6 +192,11 @@ button { color: inherit; }
 
 .topology-panel { min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--surface-tint); }
 .topology-heading { align-items: center; padding-inline: 22px; }
+/* 캔버스 제목은 답이다. 상태에 따라 색이 바뀌고, 그 아래 한 줄이 수치와 성장 여력을 말한다. */
+#topology-heading[data-tone="danger"] { color: var(--danger); }
+#topology-heading[data-tone="amber"] { color: var(--amber); }
+#topology-heading[data-tone="unknown"] { color: var(--unknown); }
+.headline-detail { margin: 5px 0 0; color: var(--muted); font: 500 12px/1.3 var(--font-data); }
 .topology-live-status { display: grid; justify-items: end; gap: 9px; }
 .topology-controls { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; justify-content: flex-end; }
 .zoom-control { display: flex; align-items: stretch; border: 1px solid var(--line); }
@@ -257,7 +266,6 @@ button { color: inherit; }
 .layout-axis button:hover { border-color: var(--line); color: var(--text); }
 .layout-axis button[aria-pressed="true"] { border-color: var(--signal-deep); background: var(--surface-raised); color: var(--signal-deep); }
 
-.node-class { display: block; color: var(--text); font: 700 9px/1.4 var(--font-data); letter-spacing: .14em; }
 .node-class-badge { position: absolute; top: 0; right: 0; z-index: 1; padding: 0 4px; border: 1px solid var(--line-soft); background: var(--surface-raised); color: var(--text); font: 700 8px/17px var(--font-data); letter-spacing: .04em; }
 
 /* 제조사 배지는 심볼 좌상단에 얹는다. 로고가 있으면 로고를, 없으면 약칭 텍스트를 쓴다. */

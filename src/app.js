@@ -4,7 +4,6 @@ import { addDemand, addDevice, addLink, applySpec, moveDevice, normalizeId, remo
 import { importDeviceDefinition } from './device-import.js';
 import { parseProject, serializeProject } from './project.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
-import { GLYPHS, GLYPH_SPRITE } from './glyphs.js';
 import { vendorLogoFor } from './logos.js';
 import { buildTemplate, templates } from './templates.js';
 import { catalogEntry, catalogFor, catalogProfile } from './devices/catalog.js';
@@ -127,15 +126,56 @@ function renderBottleneck() {
   }
   parts.push(redundancySentence());
   element('bottleneck-note').textContent = parts.filter(Boolean).join(' ');
+  renderHeadline(binding);
+}
+
+// 캔버스 제목은 질문이 아니라 답이어야 한다. 병목 자원과 축, 사용률을 크게 말하고
+// 자세한 문장은 캔버스 아래에 그대로 둔다.
+function renderHeadline(binding) {
+  const heading = element('topology-heading');
+  const detail = element('headline-detail');
+  if (!binding) {
+    heading.textContent = '한계를 아는 축이 없습니다';
+    heading.dataset.tone = 'unknown';
+    detail.textContent = '장비를 눌러 한계값을 넣으면 어디가 먼저 차는지 계산합니다.';
+    return;
+  }
+  const axisKey = current.summary.bindingAxis;
+  const axis = binding.axes[axisKey];
+  const catalog = axisCatalog[axisKey] || { label: axisKey, unit: '' };
+  const direction = binding.bindingDirection ? `${binding.bindingDirection === 'forward' ? '정방향 ' : '역방향 '}` : '';
+  heading.textContent = `${resourceName(binding)} · ${direction}${catalog.label} ${formatPercent(axis.utilization)}`;
+  heading.dataset.tone = axis.status === 'overloaded' ? 'danger' : axis.status === 'warning' ? 'amber' : 'signal-deep';
+  const suffix = AXIS_UNIT_SUFFIX[catalog.unit] || '';
+  const growth = growthLimit();
+  detail.textContent = [
+    `${formatCompact(axis.load, catalog.unit)} / ${formatCompact(axis.limit, catalog.unit)}${suffix}`,
+    growth,
+  ].filter(Boolean).join(' · ');
+}
+
+// 발견 6 · 이 설계가 몇 배까지 견디는지는 엔진이 이미 계산할 수 있는데 어디에도 없었다.
+// 현재 배율에서 위로 훑어 첫 초과가 나는 지점을 찾는다. 스무 번이면 0.05 단위로 좁혀진다.
+function growthLimit() {
+  const options = { disabledDevices: [...state.disabledDevices], disabledLinks: [...state.disabledLinks] };
+  const overloadedAt = (scale) => calculateScenario(topology, { ...options, scale }).summary.overloadedCount > 0;
+  if (overloadedAt(state.scale)) return '';
+  let low = state.scale;
+  let high = state.scale;
+  for (let step = 0; step < 6 && !overloadedAt(high); step += 1) high = high === 0 ? 0.25 : high * 2;
+  if (!overloadedAt(high)) return '';
+  for (let step = 0; step < 12 && high - low > 0.01; step += 1) {
+    const mid = (low + high) / 2;
+    if (overloadedAt(mid)) high = mid; else low = mid;
+  }
+  return `${high.toFixed(2)}배에서 첫 초과`;
 }
 
 function renderClassControl() {
-  const titles = { glyph: '심볼', label: '클래스', badge: '배지' };
-  element('class-control').innerHTML = Object.entries(CLASS_OPTIONS).map(([axis, options]) => `
-    <div class="layout-axis" role="group" aria-label="${titles[axis]} 표현">
-      <span>${titles[axis]}</span>
-      ${options.map(([value, label]) => `<button type="button" data-class-axis="${axis}" data-class-value="${value}" aria-pressed="${classView[axis] === value}">${escapeText(label)}</button>`).join('')}
-    </div>`).join('');
+  element('class-control').innerHTML = `<div class="layout-axis" role="group" aria-label="클래스 배지">
+      <span>배지</span>
+      ${[['off', '끔'], ['on', '켬']].map(([value, label]) => `<button type="button" data-class-badge="${value}" aria-pressed="${classView.badge === value}">${escapeText(label)}</button>`).join('')}
+    </div>`;
 }
 
 function render() {
@@ -147,7 +187,6 @@ function render() {
   renderBottleneck();
   renderEditorMode();
   renderClassControl();
-  element('topology-canvas').dataset.classLabel = classView.label;
 }
 
 function renderSummary() {
@@ -163,9 +202,18 @@ function renderSummary() {
   element('summary-unreachable-load').textContent = `${formatCompact(summary.unreachableLoadBps, 'bps')} 미전달`;
   element('summary-faults').textContent = String(summary.activeFaults).padStart(2, '0');
   element('summary-delta').textContent = `headroom ${formatPercent(comparison.minHeadroomDelta, true)}`;
-  const hasIssue = summary.overloadedCount > 0 || summary.unreachableCount > 0;
-  element('run-state').textContent = summary.unreachableCount ? 'TRAFFIC UNREACHABLE' : summary.overloadedCount ? 'CAPACITY EXCEEDED' : summary.activeFaults ? 'FAILURE CONTAINED' : 'BASELINE STABLE';
-  element('run-state').parentElement.style.color = hasIssue ? 'var(--danger)' : summary.activeFaults ? 'var(--amber)' : 'var(--signal)';
+  // 엔진은 0.8 을 넘으면 warning 으로 판정하고 그 수를 summary.warningCount 에 담는데,
+  // 상단 상태가 그 값을 보지 않아 주의 자원이 있어도 'BASELINE STABLE' 이라고 말했다.
+  const runState = summary.unreachableCount ? { text: 'TRAFFIC UNREACHABLE', tone: 'danger' }
+    : summary.overloadedCount ? { text: 'CAPACITY EXCEEDED', tone: 'danger' }
+    : summary.warningCount ? { text: `CAPACITY WARNING · ${summary.warningCount}`, tone: 'amber' }
+    : summary.activeFaults ? { text: 'FAILURE CONTAINED', tone: 'amber' }
+    : { text: 'BASELINE STABLE', tone: 'signal' };
+  element('run-state').textContent = runState.text;
+  element('run-state').parentElement.style.color = `var(--${runState.tone})`;
+  // headroom 은 엔진이 쓰는 임계값과 같은 기준으로 칠한다. 13% 가 초록이면 숫자가 거짓말을 한다.
+  element('summary-headroom').dataset.tone = summary.minHeadroom == null ? 'unknown'
+    : summary.minHeadroom <= 0 ? 'danger' : summary.minHeadroom < 0.2 ? 'amber' : 'signal-deep';
   element('scale-output').textContent = `${state.scale.toFixed(2)}×`;
   const activePathCount = current.demands.reduce((sum, demand) => sum + demand.paths.length, 0);
   element('path-readout').textContent = `${current.demands.length} DEMANDS · ${activePathCount} ACTIVE PATHS`;
@@ -224,18 +272,11 @@ const STATE_TOKEN = { healthy: '.', warning: '!', overloaded: '>', unknown: '?',
 const NODE_AXIS_LIMIT = 4;
 const AXIS_RANK = { overloaded: 0, invalid: 1, warning: 2, healthy: 3, unknown: 4 };
 const SI_STEPS = [[1e12, 'T'], [1e9, 'G'], [1e6, 'M'], [1e3, 'K']];
-// 클래스를 어떻게 보일지 겨루는 후보 셋. 서로 배타적이지 않으므로 각각 켜고 끈다.
-const CLASS_OPTIONS = {
-  glyph: [['stencil', '스텐실'], ['silhouette', '실루엣']],
-  label: [['meta', 'meta'], ['strong', '강조']],
-  badge: [['off', '끔'], ['on', '켬']],
-};
-const classView = { glyph: 'stencil', label: 'meta', badge: 'off' };
+// 심볼은 스텐실, 클래스는 meta 줄로 확정했다. 배지만 취향이 갈려 토글로 남긴다.
+const classView = { badge: 'off' };
 try {
-  const saved = JSON.parse(localStorage.getItem('rack-mesh-class-view') || '{}');
-  for (const axis of Object.keys(classView)) {
-    if (CLASS_OPTIONS[axis].some(([value]) => value === saved[axis])) classView[axis] = saved[axis];
-  }
+  const saved = localStorage.getItem('rack-mesh-class-badge');
+  if (saved === 'on' || saved === 'off') classView.badge = saved;
 } catch { /* 저장된 선택이 없으면 기본값을 쓴다 */ }
 
 // 이니셜은 앞 세 글자를 자르면 SWI·ROU 가 되어 읽히지 않는다. 손으로 정한다.
@@ -261,7 +302,6 @@ function formatNodeValue(value) {
 // kind는 임의 문자열이라 목록 밖 값이 들어온다. 화이트리스트를 통과한 값만 href에 넣는다.
 function symbolId(kind) {
   const key = String(kind ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  if (classView.glyph === 'silhouette' && GLYPHS[key]) return GLYPHS[key].id;
   // 목록에 정확히 있는 kind 는 별칭보다 앞선다. 그러지 않으면 vm 이 server 심볼로 그려진다.
   const exact = ICONS[key] ? key : (KIND_ALIAS[key] || key);
   if (ICONS[exact]) return ICONS[exact].id;
@@ -575,14 +615,13 @@ function renderTopology() {
     const verdict = sweep.resources.find(({ id }) => id === device.id);
     // 이미 죽은 장비에 "이게 죽으면 끊긴다"와 숨긴 축 개수를 붙이는 것은 소음이다.
     const spof = device.active && verdict?.verdict === 'severs' && !verdict.endpoint;
-    const strongClass = classView.label === 'strong';
-    const meta = [strongClass ? '' : device.kind.toUpperCase(), behaviorToken(device), zonePath(device.zone).at(-1) || device.zone,
+    const meta = [device.kind.toUpperCase(), behaviorToken(device), zonePath(device.zone).at(-1) || device.zone,
       spof ? 'SPOF' : '', device.active && hidden ? `+${hidden}` : ''].filter(Boolean).join(' \u00b7 ');
     const axes = device.active
       ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis)).join('')
       : '<span class="node-axis" data-axis-state="disabled"><i>x</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>';
     return `<button type="button" class="mesh-node ${status} ${state.selectedId === device.id ? 'selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x - viewport.minX}px;top:${device.position.y - viewport.minY}px" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
-      <span class="node-symbol">${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}${classView.badge === 'on' ? `<span class="node-class-badge">${escapeText(kindInitial(device.kind))}</span>` : ''}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolId(device.kind)}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${strongClass ? `<span class="node-class">${escapeText(device.kind.toUpperCase())}</span>` : ''}${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
+      <span class="node-symbol">${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}${classView.badge === 'on' ? `<span class="node-class-badge">${escapeText(kindInitial(device.kind))}</span>` : ''}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolId(device.kind)}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
     </button>`;
   }).join('');
 }
@@ -777,8 +816,10 @@ function updateTelemetry() {
   });
   const jitter = telemetryWave('summary', 0.012) * motionScale;
   const liveHeadroom = current.summary.minHeadroom == null ? null : current.summary.minHeadroom - (1 - current.summary.minHeadroom) * jitter;
+  // 헤드라인 숫자는 흔들지 않는다. 화면에서 가장 큰 값이 1초마다 14%/15% 를 오가면
+  // 비교 패널의 고정 표기와 어긋나 보이고, 읽는 사람이 어느 쪽을 믿을지 알 수 없다.
+  // 합성 진동은 스파크라인에만 남긴다.
   element('summary-headroom').dataset.liveValue = liveHeadroom == null ? '' : liveHeadroom.toFixed(6);
-  element('summary-headroom').textContent = formatPercent(liveHeadroom);
   const seriesValues = {
     headroom: liveHeadroom ?? 0,
     utilization: (1 - (current.summary.minHeadroom ?? 1)) * (1 + jitter),
@@ -1097,11 +1138,10 @@ element('failure-list').addEventListener('click', (event) => {
   if (button) toggleFailure(button.dataset.failureType, button.dataset.failureId);
 });
 element('class-control').addEventListener('click', (event) => {
-  const button = event.target.closest('[data-class-axis]');
-  if (!button) return;
-  classView[button.dataset.classAxis] = button.dataset.classValue;
-  try { localStorage.setItem('rack-mesh-class-view', JSON.stringify(classView)); } catch { /* 저장이 막혀도 이번 세션은 바뀐다 */ }
-  renderPalette();
+  const value = event.target.closest('[data-class-badge]')?.dataset.classBadge;
+  if (!value) return;
+  classView.badge = value;
+  try { localStorage.setItem('rack-mesh-class-badge', value); } catch { /* 저장이 막혀도 이번 세션은 바뀐다 */ }
   render();
 });
 document.querySelector('.mobile-fault-tray').addEventListener('click', (event) => {
@@ -1419,7 +1459,7 @@ document.addEventListener('lostpointercapture', () => { if (paletteDrag) endPale
 reducedMotion.addEventListener('change', startTelemetry);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) updateTelemetry(); });
 
-element('icon-sprite').innerHTML = ICON_SPRITE + GLYPH_SPRITE;
+element('icon-sprite').innerHTML = ICON_SPRITE;
 element('topology-stage').style.setProperty('--zoom', String(state.zoom));
 renderPalette();
 setLeftPanel(state.leftPanel);

@@ -90,7 +90,11 @@ async function verify(viewport, screenshot, interact = false) {
   const restingNote = await page.locator('#bottleneck-note').textContent();
   assert.match(restingNote, /가장 빠듯합니다/);
   assert.match(restingNote, /LEAF B → API 02/, 'a link must read by its endpoints, not its id');
-  assert.equal(await page.locator('#run-state').textContent(), 'BASELINE STABLE');
+  // 엔진이 주의로 판정한 자원이 있으면 상단도 그렇게 말해야 한다. 데모는 3개로 시작한다.
+  assert.match(await page.locator('#run-state').textContent(), /^CAPACITY WARNING · \d+$/,
+    'a design with warning-tier resources must not read as stable');
+  assert.match(await page.locator('#topology-heading').textContent(), /\d+%$/, 'the canvas headline states the answer, not the question');
+  assert.equal(await page.locator('#summary-headroom').getAttribute('data-tone'), 'amber', 'headroom is coloured by the engine threshold');
   assert.ok(await page.locator('.packet-dot').count() > 0, 'active links must render packet dots');
   const packet = page.locator('.packet-dot').first();
   const packetBefore = await packet.boundingBox();
@@ -145,22 +149,12 @@ async function verify(viewport, screenshot, interact = false) {
   assert.ok(await page.locator('.topology-group[data-depth="2"]').count() > 0, 'a slash in a zone nests one box inside another');
   assert.ok(await page.locator('.node-axis[style*="--util"]').count() > 0, 'a judged axis carries the meter value');
 
-  // 클래스 표현 후보. 고른 조합이 정해지면 이 블록과 전환기를 함께 지운다.
-  assert.equal(await page.locator('[data-class-axis]').count(), 6, 'all three class candidates must be switchable');
-  const symbolIds = () => page.locator('.mesh-node use').evaluateAll((nodes) => nodes.map((node) => node.getAttribute('href')));
-  await page.locator('[data-class-axis="glyph"][data-class-value="silhouette"]').click();
-  await page.waitForFunction(() => [...document.querySelectorAll('.mesh-node use')].some((u) => u.getAttribute('href').startsWith('#glyph-')));
-  assert.ok((await symbolIds()).some((id) => id.startsWith('#glyph-')), 'the silhouette set replaces the stencil where it has a symbol');
-  await page.locator('[data-class-axis="label"][data-class-value="strong"]').click();
-  await page.locator('[data-class-axis="badge"][data-class-value="on"]').click();
+  // 심볼과 클래스 표기는 확정됐다. 배지만 취향이라 토글로 남아 있다.
+  assert.equal(await page.locator('[data-class-badge]').count(), 2);
+  await page.locator('[data-class-badge="on"]').click();
   await page.waitForFunction(() => document.querySelectorAll('.node-class-badge').length > 0);
-  assert.equal(await page.locator('.node-class').count(), await page.locator('.mesh-node').count(), 'every node states its class on its own line');
   assert.equal(await page.locator('[data-device-id="fw-a"] .node-class-badge').textContent(), 'FW');
-  assert.doesNotMatch(await page.locator('[data-device-id="fw-a"] .node-meta').textContent(), /FIREWALL/,
-    'the class moves out of the meta line rather than being said twice');
-  await page.locator('[data-class-axis="glyph"][data-class-value="stencil"]').click();
-  await page.locator('[data-class-axis="label"][data-class-value="meta"]').click();
-  await page.locator('[data-class-axis="badge"][data-class-value="off"]').click();
+  await page.locator('[data-class-badge="off"]').click();
   await page.waitForFunction(() => document.querySelectorAll('.node-class-badge').length === 0);
   assert.ok(await page.locator('.mesh-node .node-vendor-mark').count() > 0, 'a known manufacturer draws its mark');
   assert.ok(await page.locator('.mesh-node .node-vendor').count() > 0, 'a manufacturer with no mark falls back to a text badge');

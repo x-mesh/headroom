@@ -47,8 +47,8 @@
         <div class="scenario-legend" aria-label="용량 상태 범례">
           <span data-state="healthy"><i>.</i> 정상</span>
           <span data-state="warning"><i>!</i> 주의</span>
-          <span data-state="overloaded"><i>&gt;</i> 초과</span>
-          <span data-state="unknown"><i>?</i> 미확인</span>
+          <span data-state="overloaded"><i>&gt;</i> 용량 초과</span>
+          <span data-state="unknown"><i>?</i> 한계 미확인</span>
           <span data-state="disabled"><i>x</i> 비활성</span>
         </div>
       </section>
@@ -115,7 +115,8 @@
           <header class="panel-heading topology-heading">
             <div>
               <span class="section-code">LIVE TOPOLOGY</span>
-              <h1 id="topology-heading">어느 축이 먼저 한계에 닿는가</h1>
+              <h1 id="topology-heading">계산 중</h1>
+              <p class="headline-detail" id="headline-detail">한계값을 읽는 중입니다.</p>
             </div>
             <div class="topology-controls">
               <div class="zoom-control" role="group" aria-label="캔버스 확대 배율">
