@@ -76,20 +76,11 @@ async function verify(viewport, screenshot, interact = false) {
   assert.doesNotMatch(unknownAxis, /\d%/, 'an unknown limit must never read as a percentage');
   assert.equal(await page.locator('#tab-palette').getAttribute('aria-selected'), 'true', 'the component tab opens first');
   await page.locator('#tab-failure').click();
-  // 레이아웃 후보 전환기. 고른 안이 정해지면 이 블록과 컨트롤을 함께 지운다.
-  assert.equal(await page.locator('[data-layout-axis]').count(), 8, 'both layout axes must offer their candidates');
-  await page.locator('[data-layout-axis="group"][data-layout-value="wash"]').click();
-  await page.locator('[data-layout-axis="node"][data-layout-value="meter"]').click();
-  await page.waitForTimeout(80);
-  assert.equal(await page.locator('#topology-canvas').getAttribute('data-group-layout'), 'wash');
-  assert.ok(await page.locator('.topology-group').count() > 0, 'a grouped layout must draw the zone boxes');
-  assert.ok(await page.locator('.topology-group[data-depth="2"]').count() > 0, 'a slash in a zone must nest one box inside another');
-  await page.locator('[data-layout-axis="group"][data-layout-value="plain"]').click();
-  await page.waitForTimeout(80);
-  assert.equal(await page.locator('.topology-group').count(), 0, 'the plain candidate draws no boxes');
-  await page.locator('[data-layout-axis="group"][data-layout-value="frame"]').click();
-  await page.locator('[data-layout-axis="node"][data-layout-value="standard"]').click();
-  await page.waitForTimeout(80);
+  assert.ok(await page.locator('.topology-group').count() > 0, 'zones must draw as group boxes');
+  assert.ok(await page.locator('.topology-group[data-depth="2"]').count() > 0, 'a slash in a zone nests one box inside another');
+  assert.ok(await page.locator('.node-axis[style*="--util"]').count() > 0, 'a judged axis carries the meter value');
+  assert.equal(await page.locator('[data-device-id="api-a"] .node-axis[data-axis-state="unknown"][style*="--util"]').count(), 0,
+    'an unknown limit must draw no meter, so it never reads as spare capacity');
 
   assert.equal(await page.locator('.failure-switch').count(), 20, 'every device and link must be failable, not two classes');
   assert.match(await page.locator('#failure-grade').textContent(), /단일 장애점 \d+개/, 'the panel must grade the design before anything is turned off');
@@ -129,7 +120,7 @@ async function verify(viewport, screenshot, interact = false) {
     assert.match(await page.locator('[data-link-id="edge-a-fw-a"] .link-hit').getAttribute('aria-label'), /끊김/);
     const cross = await page.locator('[data-device-id="fw-a"] .node-symbol')
       .evaluate((node) => getComputedStyle(node, '::before').width);
-    assert.equal(cross, '38px', 'a dead device must carry a cross over its symbol, not colour alone');
+    assert.equal(cross, '30px', 'a dead device must carry a cross over its symbol, not colour alone');
     await page.locator('[data-failure-type="link"][data-failure-id="spine-a-leaf-a"]').click();
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
     assert.match(await page.locator('#comparison-grid').textContent(), /CHANGED/);
@@ -394,7 +385,7 @@ async function verify(viewport, screenshot, interact = false) {
       };
     });
     const atRest = await zoomState();
-    assert.deepEqual([atRest.label, atRest.zoom, atRest.nodeWidth], ['100%', 1, 126]);
+    assert.deepEqual([atRest.label, atRest.zoom, atRest.nodeWidth], ['100%', 1, 104]);
     assert.ok(atRest.pad > 0, 'the stage must pad the canvas so there is always empty space to grab');
     assert.equal(atRest.stageWidth, atRest.canvasWidth + atRest.pad * 2);
 
@@ -403,7 +394,7 @@ async function verify(viewport, screenshot, interact = false) {
     assert.ok(zoomed.zoom > 1 && zoomed.label === `${Math.round(zoomed.zoom * 100)}%`);
     assert.equal(zoomed.stageWidth, Math.round(atRest.canvasWidth * zoomed.zoom) + zoomed.pad * 2,
       'the stage must carry the scaled canvas plus its padding so the area can scroll');
-    assert.equal(zoomed.nodeWidth, Math.round(126 * zoomed.zoom), 'nodes scale with the canvas');
+    assert.equal(zoomed.nodeWidth, Math.round(104 * zoomed.zoom), 'nodes scale with the canvas');
 
     // 확대한 상태에서 화면상 이동 거리는 캔버스 좌표에서 배율만큼 작아야 한다.
     const dragTarget = page.locator('[data-device-id="source-a"]');

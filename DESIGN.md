@@ -48,6 +48,12 @@ typography:
     fontSize: "10px"
     fontWeight: 600
     lineHeight: 1
+  micro:
+    fontFamily: "SFMono-Regular, Menlo, Consolas, monospace"
+    fontSize: "8px"
+    fontWeight: 500
+    lineHeight: 1.2
+    letterSpacing: "0.08em"
   label:
     fontFamily: "SFMono-Regular, Menlo, Consolas, monospace"
     fontSize: "9px"
@@ -391,12 +397,13 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 
 ### Topology Node and Link
 
-- **Node:** Stack a 112 by 44 device symbol over a label block in a 126px column. Use no card border, no card surface, and no shadow.
+- **Node:** Stack a 92 by 30 device symbol over a label block in a 104px column. Use no card border, no card surface, and no shadow. Keep the node small: a topology holds dozens of them, and the axis rows carry the reading.
 - **Anchor:** Keep the device position at the center of the symbol box. Offset the node by half the symbol height, never by half the node height.
 - **Symbol:** Draw one inline sprite symbol for each device. Map the device class to a symbol and fall back to the rack symbol. Paint the symbol with text color, never with state color. Shape carries the class. Color and token carry the state.
 - **Symbol Fill:** Fill the symbol with the canvas color. Links stop at the shape edge.
 - **State Rail:** Put a three-pixel state rail under the symbol. Hatch it for overload. Dash it for unknown and offline.
 - **Axis Rows:** Show one monospace row for each configured axis: state token, four-character axis name, compact load, and utilization. Show at most four rows and count the rest in the meta line.
+- **Axis Meter Bar:** Draw a two-pixel bar under each axis row, filled to its utilization in the axis color. The bar answers "how close" before the number is read. An axis with no known limit gets a track and no fill, so an unknown limit never reads as spare capacity.
 - **State Token:** Pair each state color with its token. Use a period for healthy, an exclamation mark for warning, a greater-than sign for overload, a question mark for unknown, and the letter x for invalid and for disabled. The axis name and value separate those two: an invalid axis keeps its own name and reads ERR, a disabled node reads OFFLINE and DOWN.
 - **Compact Load:** Drop the unit from the node value. The axis name carries the unit. Keep the unit in the inspector.
 - **Unknown Axis:** Print the measured load and an em dash. Never print zero percent for an unknown limit.
@@ -416,6 +423,16 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Disabled Link:** Use a red dashed stroke, hide packet dots, and show DOWN. Treat a link whose endpoint device is off the same way — traffic cannot cross it either.
 - **Severed Path:** When a demand has no route left, draw the links it used to take with a fine red dotted stroke at low opacity. The break must read from end to end, not stop at the dead device. Keep it out of the capacity legend — it reports a lost route, not a capacity state, and the bottleneck note already counts the cut demands.
 - **Dead Label:** Give a severed link no live telemetry hook. Its utilization is a true zero, and a live hook turns DOWN into 0% one tick later.
+
+### Zone Group
+
+- **Source:** Read the group tree from the device zone. A slash makes a level: `FABRIC / RACK 04` puts a rack box inside the fabric box.
+- **Shape:** Fill the box with a tint of the canvas and outline it with a fine dashed line. The tint separates areas; the line marks the edge.
+- **Nesting:** Give a deeper box a lighter fill so it reads as inside its parent, not beside it.
+- **Label:** Put the group name at the top-left inside the box. Show the innermost level only, never the full path.
+- **Padding:** Give a shallower group more padding, so a parent box always contains its children.
+- **Bounds:** Include the group boxes in the canvas bounds. A box that runs past the canvas edge gets clipped.
+- **Node Meta:** Show the innermost zone on the node, not the whole path. The inspector carries the full one.
 
 ### Axis Meter
 

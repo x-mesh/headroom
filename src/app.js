@@ -126,14 +126,6 @@ function renderBottleneck() {
   element('bottleneck-note').textContent = parts.filter(Boolean).join(' ');
 }
 
-function renderLayoutControl() {
-  element('layout-control').innerHTML = Object.entries(LAYOUT_OPTIONS).map(([axis, options]) => `
-    <div class="layout-axis" role="group" aria-label="${axis === 'group' ? '그룹 표현' : '노드 표현'}">
-      <span>${axis === 'group' ? '그룹' : '노드'}</span>
-      ${options.map(([value, label]) => `<button type="button" data-layout-axis="${axis}" data-layout-value="${value}" aria-pressed="${layout[axis] === value}">${escapeText(label)}</button>`).join('')}
-    </div>`).join('');
-}
-
 function render() {
   renderSummary();
   renderFailures();
@@ -142,9 +134,6 @@ function render() {
   renderComparison();
   renderBottleneck();
   renderEditorMode();
-  renderLayoutControl();
-  element('topology-canvas').dataset.groupLayout = layout.group;
-  element('topology-canvas').dataset.nodeLayout = layout.node;
 }
 
 function renderSummary() {
@@ -343,28 +332,9 @@ const ZOOM_RANGE = { min: ZOOM_STEPS[0], max: ZOOM_STEPS.at(-1) };
 const ZOOM_WHEEL_SENSITIVITY = 0.0005;
 const WHEEL_LINE_HEIGHT = 16;
 // 노드는 심볼 중심이 기준이고 라벨이 아래로 흐르므로 방향별 여백이 다르다.
-// 후보마다 노드 치수가 다르므로 그룹 상자와 캔버스가 그 치수를 따라간다.
-const NODE_REACH_BY_LAYOUT = {
-  standard: { left: 70, right: 70, top: 30, bottom: 150 },
-  compact: { left: 58, right: 58, top: 22, bottom: 116 },
-  wide: { left: 90, right: 90, top: 36, bottom: 168 },
-  meter: { left: 70, right: 70, top: 30, bottom: 172 },
-};
-const nodeReach = () => NODE_REACH_BY_LAYOUT[layout.node] || NODE_REACH_BY_LAYOUT.standard;
+const NODE_REACH = { left: 54, right: 54, top: 18, bottom: 122 };
 let viewport = { minX: 0, minY: 0, width: CANVAS_MIN.width, height: CANVAS_MIN.height };
 
-// 레이아웃 후보. 실제 토폴로지와 계산 결과로 견주어 고르기 위한 임시 전환기다.
-const LAYOUT_OPTIONS = {
-  group: [['plain', '없음'], ['frame', '박스'], ['wash', '톤'], ['band', '밴드']],
-  node: [['standard', '기본'], ['compact', '압축'], ['wide', '넓게'], ['meter', '막대']],
-};
-const layout = { group: 'frame', node: 'standard' };
-try {
-  const saved = JSON.parse(localStorage.getItem('rack-mesh-layout') || '{}');
-  for (const axis of Object.keys(layout)) {
-    if (LAYOUT_OPTIONS[axis].some(([value]) => value === saved[axis])) layout[axis] = saved[axis];
-  }
-} catch { /* 저장된 선택이 없으면 기본값을 쓴다 */ }
 
 // zone 은 슬래시로 계층을 적는다. 'FABRIC / RACK 04' 는 FABRIC 안의 RACK 04 다.
 // 계층을 쓰지 않은 설계는 한 층짜리 그룹이 되고, 그리는 방식은 같다.
@@ -372,7 +342,6 @@ const GROUP_PAD = { base: 14, step: 8, label: 17 };
 const zonePath = (zone) => String(zone || '').split('/').map((part) => part.trim()).filter(Boolean);
 
 function groupBoxes(devices) {
-  const NODE_REACH = nodeReach();
   const byPath = new Map();
   for (const device of devices) {
     const path = zonePath(device.zone);
@@ -401,8 +370,7 @@ function groupBoxes(devices) {
 }
 
 function canvasViewport(devices) {
-  const NODE_REACH = nodeReach();
-  const bounds = (layout.group === 'plain' ? [] : groupBoxes(devices)).reduce((box, group) => ({
+  const bounds = groupBoxes(devices).reduce((box, group) => ({
     minX: Math.min(box.minX, group.x), minY: Math.min(box.minY, group.y),
     maxX: Math.max(box.maxX, group.x + group.width), maxY: Math.max(box.maxY, group.y + group.height),
   }), devices.reduce((box, { position }) => ({
@@ -522,7 +490,7 @@ function renderTopology() {
   const devices = new Map(current.devices.map((item) => [item.id, item]));
   // 끊긴 demand 가 무장애였다면 지났을 링크. 살아 있지만 이 트래픽은 지나지 못한다.
   const severedPathLinks = new Set(current.demands.flatMap(({ severedPaths }) => (severedPaths || []).flatMap(({ links }) => links)));
-  const groupMarkup = layout.group === 'plain' ? '' : groupBoxes(current.devices).map((group) => `<g class="topology-group" data-depth="${group.depth}">
+  const groupMarkup = groupBoxes(current.devices).map((group) => `<g class="topology-group" data-depth="${group.depth}">
       <rect class="group-frame" x="${group.x}" y="${group.y}" width="${group.width}" height="${group.height}"></rect>
       <text class="group-label" x="${group.x + 11}" y="${group.y + 13}">${escapeText(group.label)}</text>
     </g>`).join('');
@@ -938,13 +906,6 @@ element('scale-input').addEventListener('input', (event) => { state.scale = Numb
 element('failure-list').addEventListener('click', (event) => {
   const button = event.target.closest('[data-failure-id]');
   if (button) toggleFailure(button.dataset.failureType, button.dataset.failureId);
-});
-element('layout-control').addEventListener('click', (event) => {
-  const button = event.target.closest('[data-layout-axis]');
-  if (!button) return;
-  layout[button.dataset.layoutAxis] = button.dataset.layoutValue;
-  try { localStorage.setItem('rack-mesh-layout', JSON.stringify(layout)); } catch { /* 저장이 막혀도 이번 세션은 바뀐다 */ }
-  render();
 });
 document.querySelector('.mobile-fault-tray').addEventListener('click', (event) => {
   const button = event.target.closest('[data-quick-failure]');
