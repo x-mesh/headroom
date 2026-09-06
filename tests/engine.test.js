@@ -450,7 +450,7 @@ test('an unreachable demand keeps the path it would have taken', () => {
 test('every catalog profile states axes the engine knows and numbers a datasheet could print', async () => {
   const { catalogFor, deviceCatalog } = await import('../src/devices/catalog.js');
   const { axisCatalog } = await import('../src/data.js');
-  assert.ok(deviceCatalog.length >= 23, 'the catalog covers more than one manufacturer and more than one class');
+  assert.ok(deviceCatalog.length >= 26, 'the catalog covers more than one manufacturer and more than one class');
   for (const kind of ['firewall', 'switch', 'router', 'lb', 'waf', 'server', 'nas', 'storage']) {
     assert.ok(catalogFor(kind).length > 0, `${kind} needs at least one catalog entry`);
   }
