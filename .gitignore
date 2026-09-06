@@ -27,6 +27,8 @@ service-account*.json
 .DS_Store
 Thumbs.db
 
+.impeccable/hook.cache.json
+
 # Compiled artifacts
 __pycache__/
 *.pyc
