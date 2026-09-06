@@ -249,6 +249,17 @@ button { color: inherit; }
 .mesh-node.link-target { outline: 2px solid var(--signal-deep); outline-offset: 2px; }
 .link-draft { stroke: var(--signal-deep); stroke-width: 2; stroke-dasharray: 5 4; fill: none; vector-effect: non-scaling-stroke; pointer-events: none; }
 
+/* 클래스 표현 후보 — 결정 뒤 고른 것만 남기고 나머지 규칙을 지운다. */
+.layout-control { display: grid; gap: 4px; margin-top: 7px; }
+.layout-axis { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; }
+.layout-axis > span { min-width: 26px; color: var(--muted); font: 600 8px/1 var(--font-data); letter-spacing: .1em; }
+.layout-axis button { min-height: 22px; padding: 0 8px; border: 1px solid var(--line-soft); background: var(--surface); color: var(--muted); font: 600 8px/1 var(--font-data); letter-spacing: .06em; cursor: pointer; }
+.layout-axis button:hover { border-color: var(--line); color: var(--text); }
+.layout-axis button[aria-pressed="true"] { border-color: var(--signal-deep); background: var(--surface-raised); color: var(--signal-deep); }
+
+.node-class { display: block; color: var(--text); font: 700 9px/1.4 var(--font-data); letter-spacing: .14em; }
+.node-class-badge { position: absolute; top: 0; right: 0; z-index: 1; padding: 0 4px; border: 1px solid var(--line-soft); background: var(--surface-raised); color: var(--text); font: 700 8px/17px var(--font-data); letter-spacing: .04em; }
+
 /* 제조사 배지는 심볼 좌상단에 얹는다. 로고가 있으면 로고를, 없으면 약칭 텍스트를 쓴다. */
 .node-symbol { position: relative; }
 .node-vendor, .node-vendor-logo, .node-vendor-mark { position: absolute; top: 0; left: 0; z-index: 1; }
