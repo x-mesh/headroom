@@ -391,8 +391,8 @@ async function verify(viewport, screenshot, interact = false) {
     assert.equal(await page.locator('.palette-group').count(), 4, 'the palette groups its classes so a long list stays findable');
     assert.ok(await page.evaluate(() => [...document.querySelectorAll('.palette-item use')]
       .every((use) => document.querySelector(use.getAttribute('href')) && use.getBBox().width > 0)), 'every palette symbol must resolve');
-    // 스텐실이 mail 과 waf 를 같은 그림으로 그리므로 이 둘만 손으로 그린 심볼이 앞선다.
-    for (const [kind, id] of [['mail', '#glyph-mail'], ['waf', '#glyph-waf'], ['server', '#icon-server'], ['db', '#icon-db']]) {
+    // 스텐실이 클래스를 구별해 주지 못하는 자리에서는 손으로 그린 심볼이 앞선다.
+    for (const [kind, id] of [['mail', '#glyph-mail'], ['waf', '#glyph-waf'], ['ips', '#glyph-ips'], ['vpn', '#glyph-vpn'], ['server', '#icon-server'], ['db', '#icon-db']]) {
       assert.equal(await page.locator(`[data-palette-kind="${kind}"] use`).getAttribute('href'), id,
         `${kind} must draw the symbol that tells its class apart`);
     }
