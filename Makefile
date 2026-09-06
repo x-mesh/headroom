@@ -16,6 +16,9 @@ icons:
 	npm run icons
 
 # 네트워크를 쓰는 유일한 타겟. 업스트림 스텐실을 다시 가져올 때만 실행한다.
+logos-vendor:
+	npm run logos:vendor
+
 icons-vendor:
 	npm run icons:vendor
 

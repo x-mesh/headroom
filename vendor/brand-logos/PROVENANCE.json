@@ -1,0 +1,82 @@
+{
+  "upstream": "https://github.com/simple-icons/simple-icons",
+  "version": "16.29.0",
+  "license": "CC0-1.0",
+  "fetchedAt": "2026-09-06",
+  "vendors": [
+    {
+      "slug": "cisco",
+      "title": "Cisco"
+    },
+    {
+      "slug": "junipernetworks",
+      "title": "Juniper Networks"
+    },
+    {
+      "slug": "fortinet",
+      "title": "Fortinet"
+    },
+    {
+      "slug": "paloaltonetworks",
+      "title": "Palo Alto Networks"
+    },
+    {
+      "slug": "f5",
+      "title": "F5"
+    },
+    {
+      "slug": "huawei",
+      "title": "Huawei"
+    },
+    {
+      "slug": "dell",
+      "title": "Dell"
+    },
+    {
+      "slug": "nvidia",
+      "title": "NVIDIA"
+    },
+    {
+      "slug": "broadcom",
+      "title": "Broadcom"
+    },
+    {
+      "slug": "mikrotik",
+      "title": "MikroTik"
+    },
+    {
+      "slug": "ubiquiti",
+      "title": "Ubiquiti"
+    },
+    {
+      "slug": "netgear",
+      "title": "NETGEAR"
+    },
+    {
+      "slug": "tplink",
+      "title": "TP-Link"
+    },
+    {
+      "slug": "citrix",
+      "title": "Citrix"
+    },
+    {
+      "slug": "vmware",
+      "title": "VMware"
+    },
+    {
+      "slug": "nginx",
+      "title": "NGINX"
+    },
+    {
+      "slug": "cloudflare",
+      "title": "Cloudflare"
+    },
+    {
+      "slug": "akamai",
+      "title": "Akamai"
+    }
+  ],
+  "subsetSha256": "f1570cc180a4c749be8c8e963502b1653acbc3f32f018a48acbee05237bf8976",
+  "note": "Marks remain trademarks of their owners. Used for identification only."
+}
