@@ -20,6 +20,9 @@ let current = baseline;
 let sweep = sweepSingleFaults(topology);
 // 훑기가 어느 배율에서 나온 값인지. 슬라이더를 끄는 동안 예보가 뒤처지면 화면이 그렇게 말한다.
 let sweepScale = 1;
+// 훑기가 지금 배율에서 나온 값인지. 슬라이더를 끄는 동안은 뒤처지므로, 그 값을 읽는
+// 화면은 판정을 지금 판정처럼 말하지 않는다.
+const sweepStale = () => Math.abs(sweepScale - state.scale) > 1e-9;
 let documentHistory = createHistory(topology);
 let clipboard = null;
 let persistenceWarningShown = false;
@@ -122,7 +125,8 @@ const AXIS_UNIT_SUFFIX = { sessions: ' 세션', tps: ' tps', tunnels: ' 터널' 
 // 어느 것을 봐야 하는지는 적어 주어야 읽힌다.
 // 설계 자체의 성질을 한 문장으로 말한다. 지금 주입한 장애와는 별개다.
 function redundancySentence() {
-  if (!sweep.resources.length) return '';
+  // 뒤처진 훑기로 "단일 장애점이 없습니다"를 말하지 않는다. 배율이 바뀌면 뒤집히는 판정이다.
+  if (sweepStale() || !sweep.resources.length) return '';
   if (sweep.severs > 0) {
     const first = sweep.resources.find(({ verdict, endpoint }) => verdict === 'severs' && !endpoint);
     const name = resourceName(resourceById(first.id) || first);
@@ -200,20 +204,30 @@ function renderHeadline(binding) {
 }
 
 // 이 설계가 몇 배까지 견디는지. 엔진이 축마다 한계를 넘는 배율을 이미 계산해 두었으므로
-// 여기서는 현재 배율 다음 칸을 읽기만 한다. 예전에는 이 자리에서 시나리오를 최대 스무 번 다시
+// 여기서는 사다리 첫 칸을 읽기만 한다. 예전에는 이 자리에서 시나리오를 최대 스무 번 다시
 // 계산했다. 이미 초과한 설계에는 아무 말도 하지 않는다 — 다음 초과는 답이 아니다.
+//
+// 첫 칸을 "현재 배율보다 큰 것"으로 찾으면 안 된다. 사용률이 정확히 1 인 축은 엔진이
+// 초과로 세지 않아(EPSILON 여유) 이 함수가 억제되지 않는데, 그 칸을 건너뛰면 여유가 0 인
+// 설계를 몇 배 더 견딘다고 말하게 된다. 초과가 없는 구간에서는 첫 칸이 곧 답이다.
 function growthNote() {
   if (current.summary.overloadedCount > 0) return '';
   const ladder = current.summary.growthLadder;
-  const next = ladder?.rungs.find(({ breachScale }) => breachScale > current.scale + 1e-9);
+  if (ladder?.indeterminate) return '배율 0에서는 성장 한계를 계산할 수 없습니다';
+  const next = ladder?.rungs[0];
   if (!next) return '';
   const unresolved = ladder.unresolved.length ? ` · 순서 미확정 ${ladder.unresolved.length}개` : '';
-  // 제목이 이미 그 자원의 그 축을 말하고 있으면 이름을 되풀이하지 않는다.
-  const sameAsHeading = next.resourceId === current.summary.bindingResourceId && next.axis === current.summary.bindingAxis;
-  if (sameAsHeading) return `${next.breachScale.toFixed(2)}배에서 초과${unresolved}`;
+  if (next.breachScale <= current.scale * (1 + 1e-9)) return `지금 배율이 한계입니다${unresolved}`;
+  // 같은 배율에서 함께 차는 자원이 있으면 하나만 지목하지 않는다.
+  const tied = ladder.rungs.filter(({ breachScale }) => breachScale <= next.breachScale * (1 + 1e-9));
+  const at = `${next.breachScale.toFixed(2)}배에서`;
+  const named = new Set(tied.map(({ resourceId }) => resourceId));
+  if (named.size > 1) return `${at} ${named.size}개 자원 동시 초과${unresolved}`;
+  // 제목이 이미 그 자원을 말하고 있으면 이름을 되풀이하지 않는다.
+  if (next.resourceId === current.summary.bindingResourceId) return `${at} 초과${unresolved}`;
   const axis = axisCatalog[next.axis]?.label || next.axis;
   const where = resourceName(resourceById(next.resourceId)) || next.resourceId;
-  return `${next.breachScale.toFixed(2)}배에서 ${where} ${axis} 초과${unresolved}`;
+  return `${at} ${where} ${axis} 초과${unresolved}`;
 }
 
 function renderClassControl() {
@@ -321,12 +335,14 @@ function renderFailures() {
     { title: '장애 도메인', items: topology.failureDomains || [], set: state.disabledDomains, type: 'domain' },
   ];
   element('failure-count').textContent = `${state.disabledDevices.size + state.disabledLinks.size + state.disabledDomains.size} ACTIVE`;
-  const stale = Math.abs(sweepScale - state.scale) > 1e-9;
+  const stale = sweepStale() && sweep.resources.length > 0;
   element('failure-grade').textContent = sweep.resources.length
     ? `단일 장애점 ${sweep.severs}개 · 용량 부족 ${sweep.overloads}개 · 여유 ${sweep.absorbs}개${stale ? ` · ${sweepScale.toFixed(2)}배 기준` : ''}`
     : '끌 자원이 아직 없습니다.';
   element('failure-grade').dataset.grade = sweep.grade;
   element('failure-grade').toggleAttribute('data-stale', stale);
+  // 등급 한 줄만 표시하면 자원별 예보는 옛 배율 값을 지금 값처럼 말한다. 목록 전체에 건다.
+  element('failure-list').toggleAttribute('data-stale', stale);
   element('failure-list').innerHTML = groups.map((group) => `
     <section class="failure-group">
       <h3>${group.title}</h3>
@@ -745,7 +761,7 @@ function renderTopology() {
     const { rows, hidden } = nodeAxes(device);
     const verdict = sweep.resources.find(({ id }) => id === device.id);
     // 이미 죽은 장비에 "이게 죽으면 끊긴다"와 숨긴 축 개수를 붙이는 것은 소음이다.
-    const spof = device.active && verdict?.verdict === 'severs' && !verdict.endpoint;
+    const spof = device.active && !sweepStale() && verdict?.verdict === 'severs' && !verdict.endpoint;
     const meta = [device.kind.toUpperCase(), behaviorToken(device), zonePath(device.zone).at(-1) || device.zone,
       spof ? 'SPOF' : '', device.active && hidden ? `+${hidden}` : ''].filter(Boolean).join(' \u00b7 ');
     const axes = device.active
@@ -967,12 +983,19 @@ function updateTelemetry() {
   document.querySelectorAll('.metric-sparkline').forEach((svg) => {
     const value = seriesValues[svg.dataset.series];
     svg.toggleAttribute('data-unknown', value == null);
-    if (value != null) { renderSparkline(svg, pushTelemetry(svg.dataset.series, value)); return; }
+    if (value != null) {
+      const history = pushTelemetry(svg.dataset.series, value);
+      // 표본이 하나뿐이면 선을 그릴 수 없다. 빈 칸에 이유가 없으면 미확인과 구별되지 않는다.
+      svg.toggleAttribute('data-unknown', history.length < 2);
+      renderSparkline(svg, history);
+      return;
+    }
     // 그려 둔 선을 지우고 이력도 버린다. 남겨 두면 미확인 구간을 건너뛴 선이 이어져,
     // 없던 추세를 그린 그림이 된다.
     telemetryHistory.delete(svg.dataset.series);
     svg.querySelector('path').removeAttribute('d');
     svg.querySelector('circle').removeAttribute('cx');
+    svg.querySelector('circle').removeAttribute('cy');
   });
 }
 

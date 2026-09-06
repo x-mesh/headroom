@@ -339,16 +339,16 @@ test('treats a declared zero as a known zero and a bypassed device as no transfe
 test('orders the axes a growing workload breaks, without re-running the scenario', () => {
   // 이분 탐색을 지우고 닫힌 계산으로 바꾼 근거다. 부하가 배율에 선형이므로 축이 한계를 넘는
   // 배율은 scale ÷ 사용률이고, 그 값이 예전 탐색과 같은 답을 낸다.
-  const overloadedAt = (topology, scale) => calculateScenario(topology, { scale }).summary.overloadedCount > 0;
-  const bisect = (topology, scale) => {
-    if (overloadedAt(topology, scale)) return null;
+  const overloadedAt = (topology, fault, scale) => calculateScenario(topology, { ...fault, scale }).summary.overloadedCount > 0;
+  const bisect = (topology, fault, scale) => {
+    if (overloadedAt(topology, fault, scale)) return null;
     let low = scale;
     let high = scale;
-    for (let step = 0; step < 6 && !overloadedAt(topology, high); step += 1) high = high === 0 ? 0.25 : high * 2;
-    if (!overloadedAt(topology, high)) return null;
-    for (let step = 0; step < 12 && high - low > 0.01; step += 1) {
+    for (let step = 0; step < 6 && !overloadedAt(topology, fault, high); step += 1) high = high === 0 ? 0.25 : high * 2;
+    if (!overloadedAt(topology, fault, high)) return null;
+    for (let step = 0; step < 24 && high - low > 1e-6; step += 1) {
       const mid = (low + high) / 2;
-      if (overloadedAt(topology, mid)) high = mid; else low = mid;
+      if (overloadedAt(topology, fault, mid)) high = mid; else low = mid;
     }
     return high;
   };
@@ -356,12 +356,15 @@ test('orders the axes a growing workload breaks, without re-running the scenario
   for (const template of templates) {
     const topology = buildTemplate(template.id);
     if (!topology.devices.length) continue;
-    for (const scale of [0.7, 1, 1.4]) {
-      const result = calculateScenario(topology, { scale });
+    // 장애가 없는 설계만 돌리면 사용률이 정확히 1 이 되는 조합이 나오지 않는다.
+    const faults = [{}, ...topology.devices.slice(0, 2).map(({ id }) => ({ disabledDevices: [id] })),
+      ...topology.links.slice(0, 2).map(({ id }) => ({ disabledLinks: [id] }))];
+    for (const fault of faults) for (const scale of [0.7, 1, 1.4]) {
+      const result = calculateScenario(topology, { ...fault, scale });
       const ladder = result.summary.growthLadder;
       assert.equal(ladder.model, 'linear-offered-load');
       // 배율 k 를 곱하면 아는 축의 사용률이 정확히 k 배가 된다. 사다리는 그 성질만 쓴다.
-      const doubled = calculateScenario(topology, { scale: scale * 2 });
+      const doubled = calculateScenario(topology, { ...fault, scale: scale * 2 });
       for (const device of result.devices.filter(({ active }) => active)) {
         const after = doubled.devices.find(({ id }) => id === device.id);
         for (const [axis, value] of Object.entries(device.axes)) {
@@ -372,15 +375,49 @@ test('orders the axes a growing workload breaks, without re-running the scenario
       }
       // 한계를 모르는 축은 순서를 지어내지 않는다.
       assert.equal(ladder.rungs.some(({ breachScale }) => !Number.isFinite(breachScale)), false);
-      const next = ladder.rungs.find(({ breachScale }) => breachScale > scale + 1e-9);
-      const closed = result.summary.overloadedCount > 0 ? null : next?.breachScale ?? null;
-      const searched = bisect(topology, scale);
+      // 화면이 읽는 값은 사다리 첫 칸이다. 초과가 없는 구간에서 그 칸보다 앞서는 칸이 있으면
+      // 여유가 0 인 설계를 몇 배 더 견딘다고 말하게 된다.
+      const closed = result.summary.overloadedCount > 0 ? null : ladder.rungs[0]?.breachScale ?? null;
+      if (closed != null) assert.ok(closed >= scale * (1 - 1e-9), `${template.id} @ ${scale}: 첫 칸 ${closed} 이 현재 배율보다 앞섭니다.`);
+      const searched = bisect(topology, fault, scale);
       if (searched == null) assert.equal(closed, null, `${template.id} @ ${scale}`);
       else assert.ok(closed != null && Math.abs(closed - searched) <= 0.011, `${template.id} @ ${scale}: ${closed} vs ${searched}`);
       compared += 1;
     }
   }
-  assert.ok(compared >= 40, `템플릿 비교가 ${compared}건뿐입니다.`);
+  assert.ok(compared >= 200, `템플릿 비교가 ${compared}건뿐입니다.`);
+});
+
+test('does not skip a rung that is already sitting on its limit', () => {
+  // inline-lb 의 실습 버튼이 만드는 상태다. web-b 의 신규 세션이 정확히 한계에 닿지만
+  // 엔진은 EPSILON 여유 때문에 초과로 세지 않는다. 그 칸을 건너뛰면 화면이 여유를 지어낸다.
+  const topology = buildTemplate('inline-lb');
+  const result = calculateScenario(topology, { disabledDevices: ['web-a'], scale: 1 });
+  assert.equal(result.devices.find(({ id }) => id === 'web-b').axes.new_sessions_per_sec.utilization, 1);
+  assert.equal(result.summary.overloadedCount, 0);
+  assert.equal(result.summary.growthLadder.rungs[0].breachScale, 1);
+  assert.equal(result.summary.growthLadder.rungs[0].resourceId, 'web-b');
+});
+
+test('says the surge reason the same way whatever order the faults were switched on', () => {
+  const topology = cloneTopology();
+  delete topology.haGroups.find(({ id }) => id === 'fw-pair').reestablishWindowSec;
+  const reasons = (order) => {
+    const result = calculateScenario(topology, { disabledDevices: new Set(order), sessionSync: 'none' });
+    return JSON.stringify({
+      axes: result.devices.map(({ id, axes }) => [id, axes.new_sessions_per_sec?.unknownReason ?? null]),
+      transfers: result.failover.transfers.map(({ demandId, failedId, reason }) => [demandId, failedId, reason ?? null]),
+    });
+  };
+  assert.equal(reasons(['spine-a', 'fw-a']), reasons(['fw-a', 'spine-a']),
+    '같은 장애 집합은 켠 순서와 무관하게 같은 결과를 내야 합니다.');
+});
+
+test('says it cannot extrapolate at a zero workload instead of showing an empty ladder', () => {
+  const ladder = calculateScenario(cloneTopology(), { scale: 0 }).summary.growthLadder;
+  assert.equal(ladder.indeterminate, true);
+  assert.equal(ladder.rungs.length, 0);
+  assert.equal(calculateScenario(cloneTopology(), { scale: 1 }).summary.growthLadder.indeterminate, false);
 });
 
 test('leaves a healthy scenario untouched whatever the sync policy says', () => {

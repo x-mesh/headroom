@@ -326,7 +326,9 @@ function growthLadder(activeResources, scale, warningThreshold) {
   rungs.sort((a, b) => a.breachScale - b.breachScale
     || a.resourceId.localeCompare(b.resourceId) || a.axis.localeCompare(b.axis) || String(a.direction).localeCompare(String(b.direction)));
   unresolved.sort((a, b) => a.resourceId.localeCompare(b.resourceId) || a.axis.localeCompare(b.axis));
-  return { model: 'linear-offered-load', warningThreshold, rungs, unresolved };
+  // 배율 0 이면 모든 부하가 0 이라 어느 축도 사다리에 오르지 못한다. 그 빈 목록은
+  // "아무것도 넘지 않는다"와 형태가 같으므로 계산할 수 없다고 밝힌다.
+  return { model: 'linear-offered-load', warningThreshold, indeterminate: !(scale > 0), rungs, unresolved };
 }
 
 function summarizeAxes(axes) {
@@ -657,13 +659,21 @@ function failoverSurge(topology, options, disabledDevices, disabledLinks, scale,
   };
   const surge = {};
   // 사유별로 담는다. Set 이면 화면이 모든 미확인을 '창 미지정'으로 잘못 말한다.
+  // 한 장비에 두 사유가 겹치면 순위가 낮은 쪽을 남긴다. 먼저 온 것이 이기게 두면
+  // 사용자가 장애를 켠 순서가 출력을 바꿔, 같은 입력이 다른 결과를 낸다.
+  const REASON_RANK = { 'failover-surge-sessions-missing': 0, 'failover-surge-window-missing': 1 };
   const unknownSurge = new Map();
   const markUnknown = (paths, reason) => {
-    for (const path of paths) for (const deviceId of new Set(path.devices)) if (!unknownSurge.has(deviceId)) unknownSurge.set(deviceId, reason);
+    for (const path of paths) for (const deviceId of new Set(path.devices)) {
+      const held = unknownSurge.get(deviceId);
+      if (held === undefined || REASON_RANK[reason] < REASON_RANK[held]) unknownSurge.set(deviceId, reason);
+    }
   };
   if (!disabledDevices.size) return { surge, unknownSurge, report };
 
-  for (const failedId of disabledDevices) {
+  // 정렬해서 돈다. disabledDevices 는 화면이 클릭 순서대로 담은 Set 이라 그대로 쓰면
+  // transfers 순서까지 사용자의 조작 순서를 따라간다.
+  for (const failedId of [...disabledDevices].sort()) {
     const group = groups.find(({ members }) => members?.includes(failedId));
     const sessionSync = override || group?.sessionSync || SESSION_SYNC_DEFAULT;
     if (sessionSync !== 'none') continue;
