@@ -448,17 +448,17 @@ test('an unreachable demand keeps the path it would have taken', () => {
 });
 
 test('every catalog profile states axes the engine knows and numbers a datasheet could print', async () => {
-  const { deviceCatalog } = await import('../src/devices/catalog.js');
+  const { catalogFor, deviceCatalog } = await import('../src/devices/catalog.js');
   const { axisCatalog } = await import('../src/data.js');
-  assert.ok(deviceCatalog.length >= 11, 'the catalog covers more than one manufacturer and more than one class');
-  for (const kind of ['firewall', 'switch', 'router']) {
-    assert.ok(deviceCatalog.some((entry) => entry.kind === kind), `${kind} needs at least one catalog entry`);
+  assert.ok(deviceCatalog.length >= 16, 'the catalog covers more than one manufacturer and more than one class');
+  for (const kind of ['firewall', 'switch', 'router', 'server', 'nas', 'storage']) {
+    assert.ok(catalogFor(kind).length > 0, `${kind} needs at least one catalog entry`);
   }
   const ids = new Set();
   for (const entry of deviceCatalog) {
     assert.equal(ids.has(entry.id), false, `${entry.id} is listed twice`);
     ids.add(entry.id);
-    assert.ok(entry.vendor && entry.model && entry.kind, `${entry.id} needs a vendor, model and class`);
+    assert.ok(entry.vendor && entry.model && (entry.kind || entry.kinds?.length), `${entry.id} needs a vendor, model and class`);
     // 출처 없는 값은 등록하지 않는다(PRD 8절). 어느 문서의 어느 표인지까지 남긴다.
     for (const field of ['type', 'label', 'url', 'locator', 'retrievedAt', 'note']) {
       assert.ok(entry.source[field], `${entry.id} source is missing ${field}`);
@@ -503,4 +503,29 @@ test('a router datasheet turns features and packet size together', async () => {
   assert.ok(plain > loaded * 3, 'encryption, inspection and a smaller packet size together cost more than a third of the throughput');
   // 이 표는 pps 를 적지 않는다. 없는 것을 지어내지 않는다.
   assert.ok(entry.profiles.every(({ limits }) => limits.forwarding_pps === null));
+});
+
+test('an adapter derives its packet rate from line rate and says so', async () => {
+  const { catalogEntry, catalogFor } = await import('../src/devices/catalog.js');
+  // 서버 스펙 시트는 NIC 처리량을 적지 않는다. 한계를 정하는 것은 꽂은 카드다.
+  assert.ok(catalogFor('server').length > 0 && catalogFor('vm').length > 0, 'an adapter fits every endpoint class');
+  const nic = catalogEntry('intel-e810-cqda2');
+  const one = nic.profiles.find(({ id }) => id === 'single').limits;
+  assert.equal(one.nic_bps, 100e9);
+  // PRD 9절: 10 Gbps 에 64바이트 프레임이면 약 14.88 Mpps. 100 Gbps 는 그 열 배다.
+  assert.ok(Math.abs(one.nic_pps - 148_809_524) < 2000, `line rate at 64 bytes, got ${one.nic_pps}`);
+  assert.match(nic.profiles[0].note, /라인레이트에서 파생/, 'a derived number must say it is derived');
+  assert.match(nic.source.note, /파생/);
+});
+
+test('a storage appliance carries its port count, not its IOPS', async () => {
+  const { catalogEntry } = await import('../src/devices/catalog.js');
+  const nas = catalogEntry('synology-fs6400');
+  const onboard = nas.profiles.find(({ id }) => id === 'onboard').limits;
+  // 데이터시트의 외부 포트는 10GbE 2개와 1GbE 2개다.
+  assert.equal(onboard.nic_bps, 22e9);
+  const withCard = nas.profiles.find(({ id }) => id === 'plus-25gbe').limits;
+  assert.equal(withCard.nic_bps, 72e9, 'the optional 25GbE card adds 50 Gbps to the onboard 22');
+  // IOPS 를 대역폭으로 바꾸려면 블록 크기와 큐 깊이를 지어내야 한다. 그 축은 여기 없다.
+  assert.ok(nas.profiles.every(({ limits }) => Object.keys(limits).every((axis) => axis.startsWith('nic_'))));
 });
