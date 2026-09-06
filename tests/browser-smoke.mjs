@@ -322,6 +322,12 @@ async function verify(viewport, screenshot, interact = false) {
     assert.match(await page.locator('#inspector-content').textContent(), /신규 세션/);
     assert.match(await page.locator('#inspector-content').textContent(), /용량 초과/);
 
+    // 헤더와 계산 노트는 하드코딩이 아니라 지금 열린 설계와 엔진에서 온다.
+    assert.equal(await page.locator('#calculation-note').textContent(), 'DETERMINISTIC · HOP-BRANCH WEIGHTED · ENGINE 3.0.0',
+      'the calculation note must name the split the engine actually uses, and the engine version');
+    assert.match(await page.locator('#scenario-subtitle').textContent(), /^합성 데모 · 장비 \d+ · 링크 \d+/,
+      'the header must say whether these values came from a synthetic template');
+
     // 새 설계는 템플릿 목록을 연다. 각 템플릿은 서로 다른 축이 먼저 차는 구성이다.
     const beforePanel = await page.evaluate(() => Math.round(document.querySelector('.main-grid').getBoundingClientRect().top));
     await page.locator('[data-editor-action="new"]').click();
@@ -357,6 +363,15 @@ async function verify(viewport, screenshot, interact = false) {
 
     await page.locator('[data-editor-action="new"]').click();
     await page.locator('[data-template="blank"]').click();
+    await page.waitForFunction(() => document.querySelector('#scenario-subtitle')?.textContent.startsWith('사용자 설계'));
+    assert.equal(await page.locator('#scenario-title').textContent(), '빈 설계', 'the header must name the design that is open');
+    // 한계를 모르면 스파크라인이 선을 그리지 않는다. 0 은 위험, 0% 는 안전으로 읽혀 둘 다 거짓말이다.
+    for (const series of ['headroom', 'utilization']) {
+      assert.equal(await page.locator(`.metric-sparkline[data-series="${series}"]`).getAttribute('data-unknown'), '',
+        `the ${series} sparkline must show unknown instead of inventing a value`);
+      assert.equal(await page.locator(`.metric-sparkline[data-series="${series}"] path`).getAttribute('d'), null,
+        `the ${series} sparkline must not have drawn a line`);
+    }
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 0);
     // 되돌리기가 실제로 되돌려야 한다.
     await page.locator('#toast [data-toast-undo]').click();

@@ -1,5 +1,5 @@
 import { axisCatalog, behaviorCatalog, cloneTopology } from './data.js';
-import { calculateScenario, compareScenarios, createExport, sweepSingleFaults } from './engine.js';
+import { calculateScenario, compareScenarios, createExport, ENGINE_VERSION, sweepSingleFaults } from './engine.js';
 import { addDemand, addDevice, addLink, applySpec, moveDevice, normalizeId, removeDemand, removeDevice, removeLink, setLimitOverride, updateDemand, updateDevice, updateLink } from './editor.js';
 import { importDeviceDefinition } from './device-import.js';
 import { parseProject, serializeProject } from './project.js';
@@ -18,6 +18,8 @@ let baselineSnapshot = { topology: structuredClone(topology), scenario: { scale:
 let baseline = calculateScenario(baselineSnapshot.topology, baselineSnapshot.scenario);
 let current = baseline;
 let sweep = sweepSingleFaults(topology);
+// 훑기가 어느 배율에서 나온 값인지. 슬라이더를 끄는 동안 예보가 뒤처지면 화면이 그렇게 말한다.
+let sweepScale = 1;
 let documentHistory = createHistory(topology);
 let clipboard = null;
 let persistenceWarningShown = false;
@@ -46,12 +48,14 @@ function linkById(id) { return current.links.find((item) => item.id === id); }
 function resourceById(id) { return deviceById(id) || linkById(id); }
 function stateLabel(status) { return ({ healthy: '정상', warning: '주의', overloaded: '용량 초과', unknown: '한계 미확인', invalid: '입력 오류' })[status] || status; }
 
-function recalculate() {
+// light 는 배율 슬라이더를 끄는 동안만 쓴다. 자원 하나씩 끄는 훑기와 자동 저장을 건너뛰므로
+// 장애 예보가 한 배율 뒤처진다. 그 사실을 화면에 표시하고, 슬라이더에서 손을 떼면 전체 경로가 돈다.
+function recalculate({ light = false } = {}) {
   current = calculateScenario(topology, { scale: state.scale, disabledDevices: state.disabledDevices, disabledLinks: state.disabledLinks, disabledDomains: state.disabledDomains });
-  sweep = sweepSingleFaults(topology, { scale: state.scale });
+  if (!light) { sweep = sweepSingleFaults(topology, { scale: state.scale }); sweepScale = state.scale; }
   render();
   updateTelemetry();
-  persistWorkingCopy();
+  if (!light) persistWorkingCopy();
 }
 
 function resetScenario() {
@@ -189,28 +193,27 @@ function renderHeadline(binding) {
   heading.textContent = `${resourceName(binding)} · ${direction}${catalog.label} ${formatPercent(axis.utilization)}`;
   heading.dataset.tone = axis.status === 'overloaded' ? 'danger' : axis.status === 'warning' ? 'amber' : 'signal-deep';
   const suffix = AXIS_UNIT_SUFFIX[catalog.unit] || '';
-  const growth = growthLimit();
   detail.textContent = [
     `${formatCompact(axis.load, catalog.unit)} / ${formatCompact(axis.limit, catalog.unit)}${suffix}`,
-    growth,
+    growthNote(),
   ].filter(Boolean).join(' · ');
 }
 
-// 발견 6 · 이 설계가 몇 배까지 견디는지는 엔진이 이미 계산할 수 있는데 어디에도 없었다.
-// 현재 배율에서 위로 훑어 첫 초과가 나는 지점을 찾는다. 스무 번이면 0.05 단위로 좁혀진다.
-function growthLimit() {
-  const options = { disabledDevices: [...state.disabledDevices], disabledLinks: [...state.disabledLinks] };
-  const overloadedAt = (scale) => calculateScenario(topology, { ...options, scale }).summary.overloadedCount > 0;
-  if (overloadedAt(state.scale)) return '';
-  let low = state.scale;
-  let high = state.scale;
-  for (let step = 0; step < 6 && !overloadedAt(high); step += 1) high = high === 0 ? 0.25 : high * 2;
-  if (!overloadedAt(high)) return '';
-  for (let step = 0; step < 12 && high - low > 0.01; step += 1) {
-    const mid = (low + high) / 2;
-    if (overloadedAt(mid)) high = mid; else low = mid;
-  }
-  return `${high.toFixed(2)}배에서 첫 초과`;
+// 이 설계가 몇 배까지 견디는지. 엔진이 축마다 한계를 넘는 배율을 이미 계산해 두었으므로
+// 여기서는 현재 배율 다음 칸을 읽기만 한다. 예전에는 이 자리에서 시나리오를 최대 스무 번 다시
+// 계산했다. 이미 초과한 설계에는 아무 말도 하지 않는다 — 다음 초과는 답이 아니다.
+function growthNote() {
+  if (current.summary.overloadedCount > 0) return '';
+  const ladder = current.summary.growthLadder;
+  const next = ladder?.rungs.find(({ breachScale }) => breachScale > current.scale + 1e-9);
+  if (!next) return '';
+  const unresolved = ladder.unresolved.length ? ` · 순서 미확정 ${ladder.unresolved.length}개` : '';
+  // 제목이 이미 그 자원의 그 축을 말하고 있으면 이름을 되풀이하지 않는다.
+  const sameAsHeading = next.resourceId === current.summary.bindingResourceId && next.axis === current.summary.bindingAxis;
+  if (sameAsHeading) return `${next.breachScale.toFixed(2)}배에서 초과${unresolved}`;
+  const axis = axisCatalog[next.axis]?.label || next.axis;
+  const where = resourceName(resourceById(next.resourceId)) || next.resourceId;
+  return `${next.breachScale.toFixed(2)}배에서 ${where} ${axis} 초과${unresolved}`;
 }
 
 function renderClassControl() {
@@ -230,7 +233,21 @@ function renderLearningPanel() {
     ${experiment ? `<div><span>${escapeText(experiment.prompt)}</span><br><button type="button" data-lesson-action="${escapeAttribute(experiment.action.type)}" data-lesson-id="${escapeAttribute(experiment.action.id || '')}" data-lesson-value="${escapeAttribute(experiment.action.value ?? '')}">${escapeText(experiment.action.label)}</button><output>${escapeText(experiment.observe)}</output></div>` : ''}`;
 }
 
+// 헤더는 지금 열려 있는 설계를 말해야 한다. 시작 복원과 undo/redo 는 loadTopology 를 거치지
+// 않으므로 불러오기가 아니라 렌더에서 갱신한다.
+function renderScenarioCopy() {
+  element('scenario-title').textContent = topology.template?.name || topology.name || '이름 없는 설계';
+  element('scenario-subtitle').textContent = [
+    topology.synthetic ? '합성 데모' : '사용자 설계',
+    `장비 ${topology.devices.length} · 링크 ${topology.links.length}`,
+    '정상 상태 계산',
+  ].join(' · ');
+  // 경로 몫은 경로 수로 1/N 이 아니라 홉마다의 갈래 수로 나눈다. 범례가 엔진과 같은 말을 해야 한다.
+  element('calculation-note').textContent = `DETERMINISTIC · HOP-BRANCH WEIGHTED · ENGINE ${ENGINE_VERSION}`;
+}
+
 function render() {
+  renderScenarioCopy();
   renderSummary();
   renderFailures();
   renderTopology();
@@ -304,10 +321,12 @@ function renderFailures() {
     { title: '장애 도메인', items: topology.failureDomains || [], set: state.disabledDomains, type: 'domain' },
   ];
   element('failure-count').textContent = `${state.disabledDevices.size + state.disabledLinks.size + state.disabledDomains.size} ACTIVE`;
+  const stale = Math.abs(sweepScale - state.scale) > 1e-9;
   element('failure-grade').textContent = sweep.resources.length
-    ? `단일 장애점 ${sweep.severs}개 · 용량 부족 ${sweep.overloads}개 · 여유 ${sweep.absorbs}개`
+    ? `단일 장애점 ${sweep.severs}개 · 용량 부족 ${sweep.overloads}개 · 여유 ${sweep.absorbs}개${stale ? ` · ${sweepScale.toFixed(2)}배 기준` : ''}`
     : '끌 자원이 아직 없습니다.';
   element('failure-grade').dataset.grade = sweep.grade;
+  element('failure-grade').toggleAttribute('data-stale', stale);
   element('failure-list').innerHTML = groups.map((group) => `
     <section class="failure-group">
       <h3>${group.title}</h3>
@@ -937,13 +956,24 @@ function updateTelemetry() {
   });
   const liveHeadroom = current.summary.minHeadroom;
   element('summary-headroom').dataset.liveValue = liveHeadroom == null ? '' : liveHeadroom.toFixed(6);
+  // 최소 headroom 을 모르면 표본을 만들지 않는다. 0 은 위험으로, 0% 는 안전으로 읽혀
+  // 두 계열이 반대 방향으로 없는 값을 지어낸다. 모르는 것은 선을 잇지 않고 그렇게 표시한다.
   const seriesValues = {
-    headroom: liveHeadroom ?? 0,
-    utilization: 1 - (current.summary.minHeadroom ?? 1),
+    headroom: liveHeadroom,
+    utilization: liveHeadroom == null ? null : 1 - liveHeadroom,
     delivery: Math.max(0, 1 - current.summary.unreachableCount / Math.max(current.demands.length, 1)),
     traffic: current.scale,
   };
-  document.querySelectorAll('.metric-sparkline').forEach((svg) => renderSparkline(svg, pushTelemetry(svg.dataset.series, seriesValues[svg.dataset.series])));
+  document.querySelectorAll('.metric-sparkline').forEach((svg) => {
+    const value = seriesValues[svg.dataset.series];
+    svg.toggleAttribute('data-unknown', value == null);
+    if (value != null) { renderSparkline(svg, pushTelemetry(svg.dataset.series, value)); return; }
+    // 그려 둔 선을 지우고 이력도 버린다. 남겨 두면 미확인 구간을 건너뛴 선이 이어져,
+    // 없던 추세를 그린 그림이 된다.
+    telemetryHistory.delete(svg.dataset.series);
+    svg.querySelector('path').removeAttribute('d');
+    svg.querySelector('circle').removeAttribute('cx');
+  });
 }
 
 function startTelemetry() {
@@ -1364,7 +1394,8 @@ function handleNodeSelection(id, additive = false) {
   selectElement('device', id, additive); renderTopology(); renderInspector();
 }
 
-element('scale-input').addEventListener('input', (event) => { state.scale = Number(event.target.value) / 100; recalculate(); });
+element('scale-input').addEventListener('input', (event) => { state.scale = Number(event.target.value) / 100; recalculate({ light: true }); });
+element('scale-input').addEventListener('change', (event) => { state.scale = Number(event.target.value) / 100; recalculate(); });
 element('failure-list').addEventListener('click', (event) => {
   const button = event.target.closest('[data-failure-id]');
   if (button) toggleFailure(button.dataset.failureType, button.dataset.failureId);
@@ -1875,7 +1906,7 @@ try {
     state.selectedId = project.scenario.selectedId; state.viewMode = project.scenario.viewMode || 'edit';
     state.selection = state.selectedId ? [{ type: topology.links.some(({ id }) => id === state.selectedId) ? 'link' : 'device', id: state.selectedId }] : [];
     baselineSnapshot = project.scenario.baseline || { topology: structuredClone(topology), scenario: scenarioOptions(true) };
-    baseline = calculateScenario(baselineSnapshot.topology, baselineSnapshot.scenario); current = calculateScenario(topology, scenarioOptions()); sweep = sweepSingleFaults(topology, { scale: state.scale });
+    baseline = calculateScenario(baselineSnapshot.topology, baselineSnapshot.scenario); current = calculateScenario(topology, scenarioOptions()); sweep = sweepSingleFaults(topology, { scale: state.scale }); sweepScale = state.scale;
     documentHistory.reset(topology); element('scale-input').value = String(state.scale * 100);
   }
 } catch { try { localStorage.removeItem('rack-mesh-working-copy'); } catch { /* 저장소 접근 자체가 막힌 환경 */ } }

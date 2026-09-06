@@ -300,6 +300,35 @@ function axisResult(load, limit, warningThreshold) {
   return { load, limit, utilization, headroom, status };
 }
 
+// 부하는 배율에 선형이다(tests/engine.test.js 가 고정한다). 그래서 축이 한계를 넘는 배율은
+// 시나리오를 다시 계산하지 않고 scale ÷ 사용률로 나온다. 화면이 이분 탐색으로 최대 스무 번을
+// 더 돌던 자리이며, 같은 비용으로 "첫 초과" 하나가 아니라 초과 순서 전체가 나온다.
+// 한계를 모르는 축은 사다리에 올리지 않는다. 순서를 지어내면 미확인이 안전으로 읽힌다.
+function growthLadder(activeResources, scale, warningThreshold) {
+  const rungs = [];
+  const unresolved = [];
+  for (const resource of activeResources) {
+    // 링크의 평면 axes 는 두 방향 중 바쁜 쪽이다. 방향이 있으면 방향만 센다.
+    const buckets = resource.directions
+      ? Object.entries(resource.directions).map(([direction, side]) => [direction, side.axes])
+      : [[null, resource.axes]];
+    for (const [direction, axes] of buckets) {
+      for (const [axis, value] of Object.entries(axes || {})) {
+        const at = direction ? { resourceId: resource.id, axis, direction } : { resourceId: resource.id, axis };
+        if (value.utilization == null || !(value.utilization > 0)) {
+          if (value.status === 'unknown') unresolved.push({ ...at, reason: value.unknownReason ?? null });
+          continue;
+        }
+        rungs.push({ ...at, breachScale: scale / value.utilization, warningScale: (scale * warningThreshold) / value.utilization, limit: value.limit });
+      }
+    }
+  }
+  rungs.sort((a, b) => a.breachScale - b.breachScale
+    || a.resourceId.localeCompare(b.resourceId) || a.axis.localeCompare(b.axis) || String(a.direction).localeCompare(String(b.direction)));
+  unresolved.sort((a, b) => a.resourceId.localeCompare(b.resourceId) || a.axis.localeCompare(b.axis));
+  return { model: 'linear-offered-load', warningThreshold, rungs, unresolved };
+}
+
 function summarizeAxes(axes) {
   const known = Object.entries(axes).filter(([, axis]) => axis.utilization != null);
   const binding = known.sort((a, b) => b[1].utilization - a[1].utilization)[0] || null;
@@ -427,7 +456,7 @@ export function calculateScenario(topology, options = {}) {
     }
     // 폭증량을 모르면 0 으로 치지 않는다. 모르는 것을 안전으로 바꾸면 안 된다.
     if (failover.unknownSurge.has(device.id) && axes.new_sessions_per_sec) {
-      axes.new_sessions_per_sec = { ...axes.new_sessions_per_sec, utilization: null, headroom: null, status: 'unknown', unknownReason: 'failover-surge-window-missing' };
+      axes.new_sessions_per_sec = { ...axes.new_sessions_per_sec, utilization: null, headroom: null, status: 'unknown', unknownReason: failover.unknownSurge.get(device.id) };
     }
     return { ...device, active: !disabledDevices.has(device.id), carriesDemand: demandTouched.has(device.id), load: deviceLoads[device.id], axes, ...summarizeAxes(axes) };
   });
@@ -578,6 +607,7 @@ export function calculateScenario(topology, options = {}) {
       overloadedCount: activeResources.filter(({ primaryStatus }) => primaryStatus === 'overloaded').length,
       warningCount: activeResources.filter(({ primaryStatus }) => primaryStatus === 'warning').length,
       activeFaults: disabledDevices.size + disabledLinks.size,
+      growthLadder: growthLadder(activeResources, scale, warningThreshold),
     },
     failover: failover.report,
   };
@@ -626,7 +656,11 @@ function failoverSurge(topology, options, disabledDevices, disabledLinks, scale,
     transfers: [],
   };
   const surge = {};
-  const unknownSurge = new Set();
+  // 사유별로 담는다. Set 이면 화면이 모든 미확인을 '창 미지정'으로 잘못 말한다.
+  const unknownSurge = new Map();
+  const markUnknown = (paths, reason) => {
+    for (const path of paths) for (const deviceId of new Set(path.devices)) if (!unknownSurge.has(deviceId)) unknownSurge.set(deviceId, reason);
+  };
   if (!disabledDevices.size) return { surge, unknownSurge, report };
 
   for (const failedId of disabledDevices) {
@@ -639,10 +673,19 @@ function failoverSurge(topology, options, disabledDevices, disabledLinks, scale,
       const after = currentPaths.get(demand.id).activePaths;
       if (!before.length || !after.length) continue;
       const lost = before.filter((path) => path.devices.includes(failedId)).reduce((sum, path) => sum + path.weight, 0);
-      const transferred = (demand.load.concurrent_sessions || 0) * scale * lost;
+      // 죽은 장비를 지나지 않던 demand 는 옮겨갈 세션이 실제로 없다. 이건 아는 0 이다.
+      if (!lost) continue;
+      // 동시 세션을 적지 않았으면 옮겨갈 양을 모른다. 0 으로 치면 모르는 것을 안전으로 바꾼다.
+      if (!Number.isFinite(demand.load.concurrent_sessions)) {
+        markUnknown(after, 'failover-surge-sessions-missing');
+        report.transfers.push({ demandId: demand.id, failedId, transferred: null, surge: null, status: 'unknown', reason: 'concurrent-sessions-missing' });
+        continue;
+      }
+      const transferred = demand.load.concurrent_sessions * scale * lost;
+      // 세션을 0 으로 적었다. 옮겨갈 것이 없다고 사용자가 말한 것이다.
       if (!transferred) continue;
       if (!Number.isFinite(windowSec) || windowSec <= 0) {
-        for (const path of after) for (const deviceId of new Set(path.devices)) unknownSurge.add(deviceId);
+        markUnknown(after, 'failover-surge-window-missing');
         report.transfers.push({ demandId: demand.id, failedId, transferred, surge: null, status: 'unknown', reason: 'reestablish-window-missing' });
         continue;
       }
@@ -742,6 +785,7 @@ export function createExport(topology, scenario, baseline) {
       linkCapacitySemantics: 'per-direction',
       deliveryModel: 'single-pass-offered-load',
       responseShareDefault: DEFAULT_RESPONSE_SHARE,
+      growthModel: 'linear-offered-load',
       haGroups: topology.haGroups ?? [],
     },
     scenario: { scale: scenario.scale, faults: scenario.faults, summary: scenario.summary, demands: scenario.demands, services: scenario.services, racks: scenario.racks, validationIssues: scenario.validationIssues, failover: scenario.failover },

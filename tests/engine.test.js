@@ -312,6 +312,77 @@ test('reports an unknown surge instead of assuming none', () => {
   assert.equal(axis.utilization, null);
 });
 
+test('reports an unknown surge when the demand never says how many sessions it holds', () => {
+  const topology = cloneTopology();
+  // 동시 세션을 적지 않은 demand. 예전에는 폭증량이 조용히 0 이 되어 생존 장비가 정상으로 보였다.
+  for (const demand of topology.demands) delete demand.load.concurrent_sessions;
+  const result = calculateScenario(topology, { disabledDevices: ['fw-a'], sessionSync: 'none' });
+  const axis = result.devices.find(({ id }) => id === 'fw-b').axes.new_sessions_per_sec;
+  assert.equal(axis.status, 'unknown');
+  assert.equal(axis.unknownReason, 'failover-surge-sessions-missing');
+  assert.equal(axis.utilization, null);
+  const transfer = result.failover.transfers.find(({ failedId }) => failedId === 'fw-a');
+  assert.equal(transfer.status, 'unknown');
+  assert.equal(transfer.reason, 'concurrent-sessions-missing');
+  assert.equal(transfer.transferred, null);
+});
+
+test('treats a declared zero as a known zero and a bypassed device as no transfer', () => {
+  const topology = cloneTopology();
+  for (const demand of topology.demands) demand.load.concurrent_sessions = 0;
+  const zero = calculateScenario(topology, { disabledDevices: ['fw-a'], sessionSync: 'none' });
+  // 0 이라고 적었으면 옮겨갈 것이 없다고 사용자가 말한 것이다. 미확인이 아니다.
+  assert.equal(zero.devices.find(({ id }) => id === 'fw-b').axes.new_sessions_per_sec.status !== 'unknown', true);
+  assert.equal(zero.failover.transfers.length, 0);
+});
+
+test('orders the axes a growing workload breaks, without re-running the scenario', () => {
+  // 이분 탐색을 지우고 닫힌 계산으로 바꾼 근거다. 부하가 배율에 선형이므로 축이 한계를 넘는
+  // 배율은 scale ÷ 사용률이고, 그 값이 예전 탐색과 같은 답을 낸다.
+  const overloadedAt = (topology, scale) => calculateScenario(topology, { scale }).summary.overloadedCount > 0;
+  const bisect = (topology, scale) => {
+    if (overloadedAt(topology, scale)) return null;
+    let low = scale;
+    let high = scale;
+    for (let step = 0; step < 6 && !overloadedAt(topology, high); step += 1) high = high === 0 ? 0.25 : high * 2;
+    if (!overloadedAt(topology, high)) return null;
+    for (let step = 0; step < 12 && high - low > 0.01; step += 1) {
+      const mid = (low + high) / 2;
+      if (overloadedAt(topology, mid)) high = mid; else low = mid;
+    }
+    return high;
+  };
+  let compared = 0;
+  for (const template of templates) {
+    const topology = buildTemplate(template.id);
+    if (!topology.devices.length) continue;
+    for (const scale of [0.7, 1, 1.4]) {
+      const result = calculateScenario(topology, { scale });
+      const ladder = result.summary.growthLadder;
+      assert.equal(ladder.model, 'linear-offered-load');
+      // 배율 k 를 곱하면 아는 축의 사용률이 정확히 k 배가 된다. 사다리는 그 성질만 쓴다.
+      const doubled = calculateScenario(topology, { scale: scale * 2 });
+      for (const device of result.devices.filter(({ active }) => active)) {
+        const after = doubled.devices.find(({ id }) => id === device.id);
+        for (const [axis, value] of Object.entries(device.axes)) {
+          if (value.utilization == null || value.utilization === 0) continue;
+          assert.ok(Math.abs(after.axes[axis].utilization / value.utilization - 2) < 1e-9,
+            `${template.id}/${device.id}/${axis} 는 배율에 선형이어야 합니다.`);
+        }
+      }
+      // 한계를 모르는 축은 순서를 지어내지 않는다.
+      assert.equal(ladder.rungs.some(({ breachScale }) => !Number.isFinite(breachScale)), false);
+      const next = ladder.rungs.find(({ breachScale }) => breachScale > scale + 1e-9);
+      const closed = result.summary.overloadedCount > 0 ? null : next?.breachScale ?? null;
+      const searched = bisect(topology, scale);
+      if (searched == null) assert.equal(closed, null, `${template.id} @ ${scale}`);
+      else assert.ok(closed != null && Math.abs(closed - searched) <= 0.011, `${template.id} @ ${scale}: ${closed} vs ${searched}`);
+      compared += 1;
+    }
+  }
+  assert.ok(compared >= 40, `템플릿 비교가 ${compared}건뿐입니다.`);
+});
+
 test('leaves a healthy scenario untouched whatever the sync policy says', () => {
   const declared = calculateScenario(cloneTopology());
   const cold = calculateScenario(cloneTopology(), { sessionSync: 'none' });

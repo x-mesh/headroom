@@ -36,8 +36,8 @@
         <div class="scenario-copy">
           <span class="section-code">SCENARIO / 01</span>
           <div>
-            <strong>Dual fabric API cluster</strong>
-            <span>합성 데모 · 단일 데이터센터 · 정상 상태 계산</span>
+            <strong id="scenario-title">계산 중</strong>
+            <span id="scenario-subtitle">계산 중</span>
           </div>
         </div>
         <label class="scale-control" for="scale-input">
@@ -91,7 +91,7 @@
       </section>
 
       <section class="summary-strip" aria-label="시나리오 요약">
-        <div class="summary-metric summary-metric-primary"><span>최소 headroom</span><strong id="summary-headroom">···</strong><small id="summary-binding">계산 중</small><svg class="metric-sparkline" data-series="headroom" viewBox="0 0 120 28" aria-label="최근 headroom 계측 추이"><path></path><circle r="2.5"></circle></svg></div>
+        <div class="summary-metric summary-metric-primary"><span>최소 headroom</span><strong id="summary-headroom">···</strong><small id="summary-binding">계산 중</small><svg class="metric-sparkline" data-series="headroom" viewBox="0 0 120 28" aria-label="최근 headroom 재계산 추이"><path></path><circle r="2.5"></circle></svg></div>
         <div class="summary-metric"><span>과부하 자원</span><strong id="summary-overloaded">···</strong><small id="summary-warning">계산 중</small><svg class="metric-sparkline" data-series="utilization" viewBox="0 0 120 28" aria-label="최근 최대 사용률 추이"><path></path><circle r="2.5"></circle></svg></div>
         <div class="summary-metric"><span>전달 실패</span><strong id="summary-unreachable">···</strong><small id="summary-unreachable-load">계산 중</small><svg class="metric-sparkline" data-series="delivery" viewBox="0 0 120 28" aria-label="최근 전달률 추이"><path></path><circle r="2.5"></circle></svg></div>
         <div class="summary-metric"><span>활성 장애</span><strong id="summary-faults">···</strong><small id="summary-delta">기준선 계산 중</small><svg class="metric-sparkline" data-series="traffic" viewBox="0 0 120 28" aria-label="최근 전체 트래픽 추이"><path></path><circle r="2.5"></circle></svg></div>
@@ -143,7 +143,7 @@
                 <button type="button" data-zoom="fit">맞춤</button>
               </div>
               <div class="topology-live-status"><span><i></i> DETERMINISTIC MODEL</span><div class="path-readout" id="path-readout">2 DEMANDS · 4 ACTIVE PATHS</div></div>
-              <div class="layout-control" id="class-control" aria-label="클래스 표현 후보"></div>
+              <div class="layout-control" id="class-control" aria-label="클래스 배지 표시"></div>
             </div>
           </header>
           <div class="topology-scroll">
@@ -159,7 +159,7 @@
           </div>
           <footer class="canvas-footer">
             <div><p class="bottleneck-note" id="bottleneck-note" aria-live="polite">계산 중</p><div class="learning-panel" id="learning-panel" hidden></div></div>
-            <span id="calculation-note">DETERMINISTIC · ECMP EQUAL SPLIT</span>
+            <span id="calculation-note">계산 중</span>
           </footer>
         </section>
 

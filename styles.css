@@ -91,6 +91,10 @@ button { color: inherit; }
 .metric-sparkline path { fill: none; stroke: var(--cyan); stroke-width: 1.7; vector-effect: non-scaling-stroke; }
 .summary-metric:nth-child(2) .metric-sparkline path { stroke: var(--amber); }.summary-metric:nth-child(3) .metric-sparkline path { stroke: var(--danger); }.summary-metric:nth-child(4) .metric-sparkline path { stroke: var(--signal-deep); }
 .metric-sparkline circle { fill: var(--surface-raised); stroke: currentColor; stroke-width: 1.5; }
+/* 값을 모르는 계열은 선을 그리지 않는다. 마지막으로 안 값의 잔상도 남기지 않는다. */
+.metric-sparkline[data-unknown] path, .metric-sparkline[data-unknown] circle { display: none; }
+.metric-sparkline[data-unknown] { background: repeating-linear-gradient(90deg, var(--line-soft) 0 5px, transparent 5px 10px) center / 100% 2px no-repeat; }
+#failure-grade[data-stale] { color: var(--unknown); }
 .mobile-fault-tray { display: none; }
 .visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0 0 0 0) !important; white-space: nowrap !important; border: 0 !important; }
 .editor-deck { position: relative; min-height: 54px; padding: 7px 22px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--line); background: var(--surface-raised); }
