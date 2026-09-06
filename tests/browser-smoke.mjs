@@ -111,6 +111,46 @@ async function verifyCanvasEditing() {
   await page.close();
 }
 
+// LB 뒤에 서버를 붙이면 손으로 demand 를 적지 않아도 트래픽이 간다. 그게 보이지 않으면
+// 사용자는 장비를 그려 놓고 왜 0 인지 알 수 없다 — 붙이기 전과 후를 한 페이지에서 본다.
+async function verifyBackendPool() {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } });
+  await page.addInitScript(() => localStorage.clear());
+  page.on('console', (message) => { if (message.type() === 'error') failures.push(`pool console: ${message.text()}`); });
+  page.on('pageerror', (error) => failures.push(`pool pageerror: ${error.message}`));
+  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+  await page.locator('[data-editor-action="new"]').click();
+  await page.locator('[data-template="dual-stack"]').click();
+
+  await page.locator('[data-editor-action="device"]').click();
+  await page.locator('[data-editor-form="device"] input[name="name"]').fill('WEB 02 복제');
+  await page.locator('[data-editor-form="device"] select[name="kind"]').selectOption('web');
+  // 클래스를 바꾸면 물어보는 축도 바뀐다. 서버에 forwarding_bps 를 받으면 NIC 가 unknown 으로 남는다.
+  await page.locator('[data-editor-form="device"] input[name="nic_bps"]').fill('8000000000');
+  await page.locator('[data-editor-form="device"] button[type="submit"]').click();
+  const replica = await page.locator('.mesh-node', { hasText: '복제' }).first().getAttribute('data-device-id');
+  await page.waitForFunction((id) => document.querySelector(`.mesh-node[data-device-id="${id}"] .node-pool[data-warn]`),
+    replica, { timeout: 8000 });
+
+  await page.locator('[data-editor-action="connect"]').click();
+  await page.locator('.mesh-node[data-device-id="lb-b"]').click();
+  await page.locator(`.mesh-node[data-device-id="${replica}"]`).click();
+  await page.waitForFunction((id) => document.querySelector(`.mesh-node[data-device-id="${id}"] .node-pool:not([data-warn])`),
+    replica, { timeout: 8000 });
+
+  const shares = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('.mesh-node')]
+    .map((node) => [node.querySelector('.node-name').textContent, node.querySelector('.node-pool')?.textContent])
+    .filter(([, pool]) => pool)));
+  // LB A 에서는 복제로 갈 길이 없다. 세 대 균등이 아니라 갈래대로 나뉜다.
+  assert.deepEqual(shares, { 'WEB 01': '풀 3대 · 42%', 'WEB 02': '풀 3대 · 42%', 'WEB 02 복제': '풀 3대 · 17%' });
+
+  await page.locator('[data-editor-action="demand"]').click();
+  await page.locator('.demand-editor-row input[name="single"]').first().check();
+  await page.locator('.demand-editor-row button[type="submit"]').first().click();
+  await page.waitForFunction(() => document.querySelector('.demand-pool span')?.textContent.includes('꺼짐'), null, { timeout: 8000 });
+  await page.close();
+}
+
 async function verify(viewport, screenshot, interact = false) {
   const page = await browser.newPage({ viewport });
   await page.addInitScript(() => localStorage.clear());
@@ -326,12 +366,13 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 0);
     assert.equal(await page.locator('.mesh-node').count(), 0);
     assert.match(await page.locator('#inspector-content').textContent(), /장비가 없습니다/);
-    for (const [name, kind] of [['Source A', 'switch'], ['Target A', 'server']]) {
+    // 폼이 물어보는 한계 축은 클래스를 따른다. 스위치는 처리량, 서버는 NIC 다.
+    for (const [name, kind, axis] of [['Source A', 'switch', 'forwarding_bps'], ['Target A', 'server', 'nic_bps']]) {
       await page.locator('[data-editor-action="device"]').click();
       const form = page.locator('[data-editor-form="device"]');
       await form.locator('[name="name"]').fill(name);
       await form.locator('[name="kind"]').selectOption(kind);
-      await form.locator('[name="forwarding_bps"]').fill('10000000000');
+      await form.locator(`[name="${axis}"]`).fill('10000000000');
       await form.locator('button[type="submit"]').click();
     }
     assert.equal(await page.locator('.mesh-node').count(), 2);
@@ -660,12 +701,13 @@ try {
   await verify({ width: 1440, height: 1000 }, '.impeccable/review/desktop.png', true);
   await verify({ width: 390, height: 844 }, '.impeccable/review/mobile.png');
   await verifyCanvasEditing();
+  await verifyBackendPool();
   const reducedPage = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
   await reducedPage.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   assert.equal(await reducedPage.locator('.packet-dot').first().evaluate((node) => getComputedStyle(node).display), 'none');
   await reducedPage.close();
   assert.deepEqual(failures, []);
-  console.log('Browser smoke passed: interaction, overflow, console, desktop and mobile captures');
+  console.log('Browser smoke passed: interaction, backend pool, overflow, console, desktop and mobile captures');
 } finally {
   await browser.close();
   server.close();

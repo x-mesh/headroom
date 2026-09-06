@@ -244,6 +244,16 @@ export function addDemand(topology, input) {
   return demand;
 }
 
+// 백엔드 풀은 기본이 자동이다. 'single' 은 이 장비 한 대만 쓰겠다는 뜻이고, 목록을 주면 그 목록이 풀이다.
+function normalizeBackendPool(pool, devices) {
+  if (pool == null || pool === 'auto') return null;
+  if (pool === 'single') return 'single';
+  if (!Array.isArray(pool?.memberIds)) throw new Error('Backend pool must be auto, single, or a member list');
+  const memberIds = [...new Set(pool.memberIds.map((member) => requireId(member, 'Backend pool member')))].sort();
+  for (const memberId of memberIds) if (!devices.has(memberId)) throw new Error(`Backend pool member ${memberId} must exist`);
+  return memberIds.length ? { memberIds } : null;
+}
+
 export function updateDemand(topology, id, patch) {
   const demand = topology.demands.find((item) => item.id === id);
   if (!demand) throw new Error(`Demand ${id} does not exist`);
@@ -255,7 +265,10 @@ export function updateDemand(topology, id, patch) {
     demand[endpoint] = value;
   }
   if (demand.source === demand.target) throw new Error('Demand source and target must differ');
-  if (endpointsChanged) { delete demand.paths; demand.pathMode = 'shortest'; }
+  // 끝점이 바뀌면 손으로 고른 백엔드 목록은 다른 설계의 것이 된다. 자동 판정으로 되돌린다.
+  if (endpointsChanged) { delete demand.paths; demand.pathMode = 'shortest'; if (Array.isArray(demand.backendPool?.memberIds)) delete demand.backendPool; }
+  if (patch.backendPool !== undefined) demand.backendPool = normalizeBackendPool(patch.backendPool, devices);
+  if (demand.backendPool == null) delete demand.backendPool;
   if (patch.name != null) demand.name = String(patch.name).trim().slice(0, 80) || demand.name;
   if (patch.load) for (const [axis, value] of Object.entries(patch.load)) demand.load[axis] = finite(value, axis);
   for (const [forwarding, nic] of [['forwarding_bps', 'nic_bps'], ['forwarding_pps', 'nic_pps']]) {

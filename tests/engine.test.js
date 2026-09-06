@@ -437,9 +437,11 @@ test('an unreachable demand keeps the path it would have taken', () => {
   const demand = result.demands.find(({ id }) => id === 'web-a-traffic');
   assert.equal(demand.status, 'unreachable');
   assert.equal(demand.paths.length, 0, 'nothing carries it now');
-  assert.equal(demand.severedPaths.length, 1, 'but the design has one path it used to take');
-  assert.ok(demand.severedPaths[0].devices.includes('fw'));
-  assert.ok(demand.severedPaths[0].links.length > 0, 'the canvas needs the links to draw the break');
+  // LB 가 두 웹 서버로 나눠 보내므로 무장애 경로는 백엔드마다 하나씩 두 개다. 둘 다 fw 를 지난다.
+  assert.equal(demand.severedPaths.length, 2, 'but the design has the paths it used to take');
+  assert.ok(demand.severedPaths.every(({ devices }) => devices.includes('fw')));
+  assert.deepEqual(demand.severedPaths.map(({ devices }) => devices.at(-1)).sort(), ['web-a', 'web-b']);
+  assert.ok(demand.severedPaths.every(({ links }) => links.length > 0), 'the canvas needs the links to draw the break');
 
   // 장애가 없으면 무장애 경로를 다시 풀지 않는다.
   assert.ok(calculateScenario(single).demands.every(({ severedPaths }) => severedPaths === undefined));
@@ -556,4 +558,89 @@ test('a balancer datasheet changes layer, and the profiles keep that straight', 
   assert.equal(only.forwarding_bps, 10e9);
   assert.ok([only.new_sessions_per_sec, only.concurrent_sessions, only.tls_full_handshakes_per_sec].every((v) => v === null),
     'the FortiWeb table prints throughput and latency only');
+});
+
+// LB 뒤 백엔드 풀 — demand 가 서버 한 대를 찍고 있어도 나눠 보내는 쪽은 LB 다.
+function dualStackWithReplica(links = ['lb-b']) {
+  const topology = buildTemplate('dual-stack');
+  addDevice(topology, { id: 'web-c', name: 'WEB 02 복제', kind: 'web', zone: 'RACK 02', position: { x: 800, y: 620 },
+    limits: { nic_bps: 8e9, nic_pps: 1.6e6, new_sessions_per_sec: 30e3 } });
+  for (const lb of links) addLink(topology, { source: lb, target: 'web-c', capacityBps: 10e9 });
+  return topology;
+}
+
+const nicLoad = (result, id) => result.devices.find((device) => device.id === id).axes.nic_bps.load;
+
+test('a server attached to a load balancer joins the backend pool and relieves its peers', () => {
+  const before = calculateScenario(buildTemplate('dual-stack'));
+  assert.equal(nicLoad(before, 'web-a'), 6e9);
+  assert.equal(nicLoad(before, 'web-b'), 6e9);
+
+  const after = calculateScenario(dualStackWithReplica(['lb-a', 'lb-b']));
+  // 총 12G 는 그대로고 세 대가 나눠 받는다. 장비를 그렸다고 부하가 늘지는 않는다.
+  for (const id of ['web-a', 'web-b', 'web-c']) assert.equal(Math.round(nicLoad(after, id)), 4e9);
+  assert.equal(after.demands.every(({ deliveredRatio }) => deliveredRatio === 1), true);
+});
+
+test('a backend wired to only one load balancer receives only what that path can carry', () => {
+  const result = calculateScenario(dualStackWithReplica(['lb-b']));
+  // LB A 로 들어온 트래픽은 복제로 갈 길이 없다. 세 대 균등(4G)이 아니라 6분의 1이다.
+  assert.equal(Math.round(nicLoad(result, 'web-c')), 2e9);
+  assert.equal(Math.round(nicLoad(result, 'web-a')), 5e9);
+  assert.equal(Math.round(nicLoad(result, 'web-b')), 5e9);
+  const shares = result.demands[0].backends.map(({ id, share }) => [id, Number(share.toFixed(4))]);
+  assert.deepEqual(shares, [['web-a', 0.4167], ['web-b', 0.4167], ['web-c', 0.1667]]);
+});
+
+test('backendPool single turns the pool off and pins the demand to its declared target', () => {
+  const topology = dualStackWithReplica(['lb-a', 'lb-b']);
+  for (const demand of topology.demands) demand.backendPool = 'single';
+  const result = calculateScenario(topology);
+  assert.equal(nicLoad(result, 'web-a'), 6e9);
+  assert.equal(nicLoad(result, 'web-b'), 6e9);
+  assert.equal(nicLoad(result, 'web-c'), 0);
+  assert.deepEqual(result.demands[0].backends, [{ id: 'web-a', share: 1 }]);
+});
+
+test('an explicit pool member list overrides the derived one and is validated', () => {
+  const topology = dualStackWithReplica(['lb-a', 'lb-b']);
+  topology.demands[0].backendPool = { memberIds: ['web-c'] };
+  const result = calculateScenario(topology);
+  // 첫 demand 는 web-a 와 web-c 로만, 둘째는 자동 판정대로 세 대로 나뉜다.
+  assert.deepEqual(result.demands[0].backends.map(({ id }) => id), ['web-a', 'web-c']);
+  assert.equal(result.demands[1].backends.length, 3);
+
+  const broken = dualStackWithReplica(['lb-b']);
+  broken.demands[0].backendPool = { memberIds: ['missing-device'] };
+  assert.ok(calculateScenario(broken).validationIssues.some(({ reason }) => reason === 'backend-pool-member-missing'));
+});
+
+test('losing one pool member spreads its share over the survivors instead of dropping traffic', () => {
+  const topology = dualStackWithReplica(['lb-a', 'lb-b']);
+  const result = calculateScenario(topology, { disabledDevices: ['web-c'] });
+  assert.equal(nicLoad(result, 'web-a'), 6e9);
+  assert.equal(nicLoad(result, 'web-b'), 6e9);
+  assert.equal(result.demands.every(({ status }) => status === 'delivered'), true);
+});
+
+test('a device no demand path touches is reported instead of quietly reading zero', () => {
+  const topology = buildTemplate('dual-stack');
+  addDevice(topology, { id: 'spare', name: 'SPARE', kind: 'web', zone: 'RACK 02', position: { x: 800, y: 620 }, limits: { nic_bps: 8e9 } });
+  const orphan = calculateScenario(topology);
+  assert.equal(orphan.devices.find(({ id }) => id === 'spare').carriesDemand, false);
+  assert.equal(orphan.devices.filter(({ carriesDemand }) => carriesDemand === false).length, 1, 'every other device is on a path');
+
+  addLink(topology, { source: 'lb-b', target: 'spare', capacityBps: 10e9 });
+  assert.equal(calculateScenario(topology).devices.every(({ carriesDemand }) => carriesDemand), true);
+});
+
+test('ECMP shares split per hop branch, not per enumerated path', () => {
+  // 복제를 LB B 에만 달면 목적지별 경로 수가 4:4:2 로 어긋난다. 경로 수로 1/N 을 매기면
+  // lb-b 가 6/10 을 지는데, 실제로는 방화벽이 두 LB 로 반씩 보내므로 절반이어야 한다.
+  const result = calculateScenario(dualStackWithReplica(['lb-b']));
+  const lbA = result.devices.find(({ id }) => id === 'lb-a');
+  const lbB = result.devices.find(({ id }) => id === 'lb-b');
+  assert.equal(Math.round(lbA.axes.forwarding_bps.load), 6e9);
+  assert.equal(Math.round(lbB.axes.forwarding_bps.load), 6e9);
+  assert.equal(result.demands[0].paths.reduce((sum, { share }) => sum + share, 0).toFixed(9), '1.000000000');
 });

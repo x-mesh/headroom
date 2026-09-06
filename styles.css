@@ -110,6 +110,7 @@ button { color: inherit; }
 .editor-form { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 12px; align-items: end; }
 .editor-form label { display: grid; gap: 6px; color: var(--muted); font: 600 9px/1 var(--font-data); }
 .editor-form input, .editor-form select { min-width: 0; height: 40px; padding: 0 10px; border: 1px solid var(--line); background: var(--surface-raised); color: var(--text); font: 500 11px/1 var(--font-data); }
+.device-limit-fields { display: contents; }
 .editor-form .form-actions { display: flex; gap: 7px; align-items: end; }
 .editor-form .form-actions button[type="submit"] { border-color: var(--signal-deep); background: var(--signal); color: var(--action-ink); }
 .verification-columns { display: grid; grid-template-columns: repeat(3, minmax(240px, 1fr)); gap: 18px; }
@@ -121,27 +122,34 @@ button { color: inherit; }
 .verification-columns fieldset input { width: auto; height: auto; }
 .editor-error { min-height: 18px; margin: 10px 0 0; color: var(--danger); font: 600 10px/1.4 var(--font-data); }
 .editor-hint { margin: 0 0 12px; color: var(--muted); font-size: 11px; line-height: 1.5; }
-.template-search { display: block; margin-bottom: 10px; }
+.template-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 12px; }
+.template-search { flex: 0 1 420px; display: block; }
 .template-search input { width: 100%; min-height: 38px; padding: 0 12px; border: 1px solid var(--line); background: var(--surface-raised); color: var(--text); font: 500 11px/1 var(--font-ui); }
 .template-search input:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
-.template-count { margin: 0 0 8px; color: var(--muted); font: 500 9px/1 var(--font-data); letter-spacing: .1em; }
-.template-list { display: grid; gap: 1px; padding: 1px; background: var(--line-soft); }
-.template-item[hidden] { display: none; }
-.template-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+.template-count { margin: 0; color: var(--muted); font: 500 9px/1 var(--font-data); letter-spacing: .1em; }
+/* 카드는 폭에 맞춰 열 수가 정해진다. 한 줄에 하나씩 늘어놓으면 설명이 폭의 3분의 1만 쓰고 나머지는 빈칸이 된다. */
+.template-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 10px; }
+/* .editor-panel button 이 nowrap·좁은 padding·모노 폰트를 걸어 둔다. 카드는 본문을 접어야 하니 특정도를 한 단계 올려 되돌린다. */
+.editor-panel .template-item[hidden] { display: none; }
+.template-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: auto; padding-top: 4px; }
 .template-tags i { padding: 2px 6px; background: var(--surface-tint); color: var(--muted); font: 500 9px/1.4 var(--font-data); font-style: normal; }
-.template-grade { justify-self: start; padding: 2px 7px; border: 1px solid currentColor; color: var(--muted); font: 600 8px/1.4 var(--font-data); letter-spacing: .06em; }
+.template-grade { align-self: start; padding: 2px 7px; border: 1px solid currentColor; color: var(--muted); font: 600 8px/1.4 var(--font-data); letter-spacing: .06em; }
 .template-grade[data-grade="single-point"] { color: var(--danger); }
 .template-grade[data-grade="partial"] { color: var(--amber); }
 .template-grade[data-grade="redundant"] { color: var(--signal-deep); }
-.template-item { display: grid; gap: 5px; padding: 13px 14px; border: 0; background: var(--surface); color: var(--text); cursor: pointer; text-align: left; }
-.template-item:hover { background: var(--surface-raised); }
-.template-item strong { font: 600 12px/1.2 var(--font-ui); }
+.editor-panel .template-item { display: flex; flex-direction: column; align-items: stretch; gap: 7px; padding: 13px 14px; border: 1px solid var(--line-soft); background: var(--surface); color: var(--text); cursor: pointer; text-align: left; white-space: normal; font: 400 11px/1.5 var(--font-ui); }
+.editor-panel .template-item:hover { border-color: var(--signal-deep); background: var(--surface-raised); box-shadow: 0 4px 12px color-mix(in srgb, var(--panel-deep) 12%, transparent); }
+.editor-panel .template-item:focus-visible { outline: 2px solid var(--signal); outline-offset: -1px; }
+.template-item strong { font: 600 13px/1.25 var(--font-ui); }
 .template-item span { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .template-item em { color: var(--signal-deep); font-style: normal; font-size: 10px; line-height: 1.5; }
 .demand-manager-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; }.demand-manager-head .editor-hint { margin: 0; }.demand-manager-head button { border-color: var(--signal-deep); background: var(--signal); }
 .demand-editor-list { display: grid; gap: 10px; margin-top: 14px; }
 .demand-editor-row { display: grid; grid-template-columns: 1.2fr repeat(6, minmax(100px, 1fr)) auto; gap: 8px; align-items: end; padding: 12px; border: 1px solid var(--line); background: var(--surface); }
 .demand-editor-row label { display: grid; gap: 5px; color: var(--muted); font: 600 9px/1 var(--font-data); }.demand-editor-row input, .demand-editor-row select { min-width: 0; height: 36px; padding: 0 8px; border: 1px solid var(--line); background: var(--surface-raised); color: var(--text); font: 500 10px/1 var(--font-data); }
+.demand-pool { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 2px 0 0; color: var(--muted); font: 500 10px/1.4 var(--font-data); }
+.demand-pool label { display: flex; align-items: center; gap: 5px; color: var(--text); font: 600 9px/1 var(--font-data); }
+.demand-pool input { width: auto; height: auto; }
 .demand-row-actions { display: flex; gap: 5px; }.demand-row-actions button:last-child { color: var(--danger); }.demand-editor-row .editor-error { grid-column: 1 / -1; margin: 0; }
 .editor-empty { min-height: 100px; display: grid; align-content: center; gap: 7px; text-align: center; color: var(--muted); }.editor-empty strong { color: var(--text); }
 
@@ -291,6 +299,9 @@ button { color: inherit; }
 .node-vendor { max-width: 58px; padding: 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--line-soft); background: var(--surface-raised); color: var(--muted); font: 700 8px/17px var(--font-data); letter-spacing: .04em; text-transform: uppercase; }
 .node-vendor-logo { width: auto; height: 19px; max-width: 58px; padding: 2px; border: 1px solid var(--line-soft); object-fit: contain; background: var(--surface-raised); }
 .node-model { display: block; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 500 8px/1.3 var(--font-data); letter-spacing: .02em; }
+/* 자동으로 묶인 백엔드 풀과, 어떤 수요도 지나지 않는 장비를 노드에서 바로 읽게 한다. */
+.node-pool { display: block; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--signal-deep); font: 600 8px/1.3 var(--font-data); letter-spacing: .02em; }
+.node-pool[data-warn] { color: var(--amber); }
 .node-name { display: block; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 10px/1.1 var(--font-data); letter-spacing: .02em; }
 .node-axes { display: grid; gap: 4px; margin: 4px 0; }
 .node-axis { --axis-color: var(--cyan); position: relative; display: grid; grid-template-columns: 6px 4ch auto auto; gap: 0 4px; padding-bottom: 3px; align-items: baseline; text-align: left; font: 500 8px/1.2 var(--font-data); }

@@ -83,6 +83,9 @@ function validateTopology(topology) {
     for (const [a, b] of [['forwarding_bps', 'nic_bps'], ['forwarding_pps', 'nic_pps']]) {
       if (Object.hasOwn(demand.load || {}, a) && Object.hasOwn(demand.load || {}, b) && demand.load[a] !== demand.load[b]) issue(demand.id, `conflicting-load:${a}:${b}`);
     }
+    const pool = demand.backendPool;
+    if (pool != null && pool !== 'single' && !Array.isArray(pool?.memberIds)) issue(demand.id, 'invalid-backend-pool');
+    if (Array.isArray(pool?.memberIds) && pool.memberIds.some((id) => !deviceIds.has(id))) issue(demand.id, 'backend-pool-member-missing');
     for (const path of demand.pathMode === 'shortest' ? [] : demand.paths || []) {
       if (!Array.isArray(path.devices) || path.devices.some((id) => !deviceIds.has(id))) issue(demand.id, 'path-missing-device');
       if (!Array.isArray(path.links) || path.links.some((id) => !linkIds.has(id))) issue(demand.id, 'path-missing-link');
@@ -106,7 +109,7 @@ function validateTopology(topology) {
 export function findShortestPaths(topology, source, target, options = {}) {
   const disabledDevices = new Set(options.disabledDevices || []);
   const disabledLinks = new Set(options.disabledLinks || []);
-  return enumerateShortestPaths(adjacencyFor(topology, disabledDevices, disabledLinks), source, target, options);
+  return enumerateShortestPaths(adjacencyFor(topology, disabledDevices, disabledLinks), source, [target], options);
 }
 
 function adjacencyFor(topology, disabledDevices, disabledLinks) {
@@ -120,9 +123,7 @@ function adjacencyFor(topology, disabledDevices, disabledLinks) {
   return adjacency;
 }
 
-function enumerateShortestPaths(adjacency, source, target, options) {
-  if (options.maxPaths != null && (!Number.isInteger(options.maxPaths) || options.maxPaths < 1)) throw new Error('maxPaths must be a positive integer');
-  if (!adjacency.has(source) || !adjacency.has(target)) return [];
+function shortestTree(adjacency, source) {
   const distance = new Map([[source, 0]]);
   const parents = new Map();
   const queue = [source];
@@ -134,20 +135,78 @@ function enumerateShortestPaths(adjacency, source, target, options) {
       else if (distance.get(edge.device) === nextDistance) parents.get(edge.device).push({ node, link: edge.link });
     }
   }
-  if (!distance.has(target)) return [];
+  return { distance, parents };
+}
+
+// ECMP 는 홉마다 갈라진다. 경로 수로 1/N 을 매기면 갈래가 적은 쪽에도 같은 몫이 실려,
+// 실제로는 길이 없는 곳으로 트래픽을 보낸 셈이 된다. 각 홉의 갈래 수를 곱해 몫을 정한다.
+// 목적지는 트래픽이 멎는 곳이므로 다른 목적지를 경유하는 경로는 세지 않는다.
+function enumerateShortestPaths(adjacency, source, targets, options = {}) {
+  if (options.maxPaths != null && (!Number.isInteger(options.maxPaths) || options.maxPaths < 1)) throw new Error('maxPaths must be a positive integer');
+  if (!adjacency.has(source)) return [];
+  const sinks = new Set([...new Set(targets)].filter((id) => id !== source && adjacency.has(id)));
+  if (!sinks.size) return [];
+  const { distance, parents } = shortestTree(adjacency, source);
+  const reachable = [...sinks].filter((id) => distance.has(id)).sort();
+  if (!reachable.length) return [];
+  const useful = new Set(reachable);
+  const branches = new Map();
+  const stack = [...reachable];
+  while (stack.length) {
+    const node = stack.pop();
+    for (const parent of parents.get(node) || []) {
+      if (sinks.has(parent.node)) continue;
+      if (!branches.has(parent.node)) branches.set(parent.node, new Set());
+      branches.get(parent.node).add(node);
+      if (useful.has(parent.node)) continue;
+      useful.add(parent.node);
+      stack.push(parent.node);
+    }
+  }
+  if (!useful.has(source)) return [];
   const paths = [];
-  const visit = (node, devices, links) => {
+  const visit = (node, target, devices, links, weight) => {
     if (paths.length >= (options.maxPaths ?? 64)) { paths.truncated = true; return; }
     if (node === source) {
-      const orderedDevices = [source, ...devices.slice().reverse()];
-      const orderedLinks = links.slice().reverse();
-      paths.push({ id: `${source}-${target}-${paths.length + 1}`, devices: orderedDevices, links: orderedLinks });
+      paths.push({ id: `${source}-${target}-${paths.length + 1}`, devices: [source, ...devices.slice().reverse()], links: links.slice().reverse(), weight });
       return;
     }
-    for (const parent of (parents.get(node) || []).slice().sort((a, b) => a.node.localeCompare(b.node))) visit(parent.node, [...devices, node], [...links, parent.link]);
+    for (const parent of (parents.get(node) || []).slice().sort((a, b) => a.node.localeCompare(b.node))) {
+      if (sinks.has(parent.node) || !useful.has(parent.node)) continue;
+      visit(parent.node, target, [...devices, node], [...links, parent.link], weight / branches.get(parent.node).size);
+    }
   };
-  visit(target, [], []);
+  for (const target of reachable) visit(target, target, [], [], 1);
   return paths;
+}
+
+// 로드밸런서 뒤에 같은 클래스 서버가 여럿 붙어 있으면 그건 한 풀이다. demand 가 한 대를
+// 찍고 있어도 실제로 나눠 보내는 쪽은 LB 다. 그래서 자동으로 묶는다. 풀은 설계의 성질이라
+// 장애가 주입된 그래프가 아니라 무장애 그래프에서 판정한다 — 백엔드 한 대가 죽었다고
+// 나머지가 풀에서 빠지지는 않는다.
+const BACKEND_FRONT_KINDS = new Set(['lb']);
+export function backendPoolFor(demand, adjacency, deviceIndex, treeFor) {
+  const declared = demand.backendPool;
+  if (declared === 'single') return [demand.target];
+  if (Array.isArray(declared?.memberIds)) {
+    return [...new Set([demand.target, ...declared.memberIds])].filter((id) => deviceIndex.has(id)).sort();
+  }
+  const target = deviceIndex.get(demand.target);
+  if (!target || !demand.source || demand.source === demand.target) return [demand.target];
+  if (!adjacency.has(demand.source) || !adjacency.has(demand.target)) return [demand.target];
+  const { distance, parents } = treeFor(demand.source);
+  const fronts = parents.get(demand.target) || [];
+  if (!fronts.length || !fronts.every(({ node }) => BACKEND_FRONT_KINDS.has(deviceIndex.get(node)?.kind))) return [demand.target];
+  const depth = distance.get(demand.target);
+  const members = new Set([demand.target]);
+  for (const { node } of fronts) {
+    for (const edge of adjacency.get(node) || []) {
+      if (distance.get(edge.device) !== depth) continue;
+      if (deviceIndex.get(edge.device)?.kind !== target.kind) continue;
+      members.add(edge.device);
+    }
+  }
+  return [...members].sort();
 }
 
 export const LINK_DIRECTIONS = ['forward', 'reverse'];
@@ -174,19 +233,41 @@ function resolveHops(path, linkIndex) {
   return { valid: true, hops };
 }
 
+// LB 가 실제로 각 백엔드에 얼마씩 보내는지. 풀을 화면에 보여 주려면 이 값이 필요하다.
+function backendShares(paths) {
+  const shares = new Map();
+  for (const path of paths) {
+    const id = path.devices.at(-1);
+    shares.set(id, (shares.get(id) || 0) + path.weight);
+  }
+  return [...shares].sort((a, b) => a[0].localeCompare(b[0])).map(([id, share]) => ({ id, share }));
+}
+
 export function resolveDemandPaths(topology, disabledDevices = new Set(), disabledLinks = new Set(), options = {}) {
   const linkIndex = new Map(topology.links.map((link) => [link.id, link]));
-  const deviceIds = new Set(topology.devices.map(({ id }) => id));
+  const deviceIndex = new Map(topology.devices.map((device) => [device.id, device]));
+  const deviceIds = new Set(deviceIndex.keys());
   const shortestCache = new Map();
   let adjacency;
+  let poolAdjacency;
+  const poolTrees = new Map();
+  const treeFor = (source) => {
+    if (!poolTrees.has(source)) poolTrees.set(source, shortestTree(poolAdjacency, source));
+    return poolTrees.get(source);
+  };
   const resolved = new Map();
   for (const demand of topology.demands) {
-    const cacheKey = JSON.stringify([demand.source, demand.target]);
     const explicit = demand.pathMode === 'explicit' || (demand.pathMode !== 'shortest' && demand.paths?.length);
+    let targets = [demand.target];
+    if (!explicit) {
+      poolAdjacency ??= adjacencyFor(topology, new Set(), new Set());
+      targets = backendPoolFor(demand, poolAdjacency, deviceIndex, treeFor);
+    }
+    const cacheKey = JSON.stringify([demand.source, targets]);
     if (!explicit && shortestCache.has(cacheKey)) { resolved.set(demand.id, shortestCache.get(cacheKey)); continue; }
     const candidatePaths = explicit
       ? demand.paths || []
-      : enumerateShortestPaths(adjacency ??= adjacencyFor(topology, disabledDevices, disabledLinks), demand.source, demand.target, options);
+      : enumerateShortestPaths(adjacency ??= adjacencyFor(topology, disabledDevices, disabledLinks), demand.source, targets, options);
     const activePaths = [];
     const invalidPaths = [];
     for (const path of candidatePaths) {
@@ -198,9 +279,12 @@ export function resolveDemandPaths(topology, disabledDevices = new Set(), disabl
         invalidPaths.push({ id: path.id, reason: walk.reason, ...(walk.hopIndex == null ? {} : { hopIndex: walk.hopIndex }) });
         continue;
       }
-      activePaths.push({ ...path, hops: walk.hops });
+      activePaths.push({ ...path, hops: walk.hops, weight: Number.isFinite(path.weight) ? path.weight : 1 });
     }
-    resolved.set(demand.id, { candidatePaths, activePaths, invalidPaths });
+    // 몫은 살아남은 경로에서만 다시 정규화한다. 한 갈래가 끊기면 남은 길이 그만큼 더 받는다.
+    const totalWeight = activePaths.reduce((sum, path) => sum + path.weight, 0);
+    for (const path of activePaths) path.weight = totalWeight > 0 ? path.weight / totalWeight : 1 / activePaths.length;
+    resolved.set(demand.id, { candidatePaths, activePaths, invalidPaths, backends: backendShares(activePaths) });
     if (!explicit) shortestCache.set(cacheKey, resolved.get(demand.id));
   }
   return resolved;
@@ -256,19 +340,22 @@ export function calculateScenario(topology, options = {}) {
   const noFaultPaths = disabledDevices.size || disabledLinks.size
     ? resolveDemandPaths(topology, new Set(), new Set(), options)
     : null;
-  // 같은 ECMP 경로가 여러 수요에서 재사용된다. 각 자원을 지나는 경로 수를 한 번
-  // 집계하면 부하는 경로 길이 × 경로 수 대신 고유 자원 수만큼만 누적하면 된다.
+  // 같은 ECMP 경로가 여러 수요에서 재사용된다. 각 자원이 받는 몫을 한 번 합쳐 두면
+  // 부하는 경로마다 다시 훑을 것 없이 고유 자원 수만큼만 누적하면 된다.
+  // 어떤 수요도 지나지 않는 장비는 조용히 0 으로만 보인다. 그 0 이 "부하가 없다"인지
+  // "연결만 해 두고 아무도 안 쓴다"인지 구분해 줘야 새로 그린 장비를 보고 헷갈리지 않는다.
+  const demandTouched = new Set();
   const footprintCache = new WeakMap();
   const footprintFor = (paths) => {
     if (footprintCache.has(paths)) return footprintCache.get(paths);
     const devices = new Map();
     const hops = new Map();
     for (const path of paths) {
-      for (const id of new Set(path.devices)) devices.set(id, (devices.get(id) || 0) + 1);
+      for (const id of new Set(path.devices)) devices.set(id, (devices.get(id) || 0) + path.weight);
       for (const hop of path.hops) {
         const key = `${hop.linkId}:${hop.direction}`;
-        if (!hops.has(key)) hops.set(key, { ...hop, count: 0 });
-        hops.get(key).count += 1;
+        if (!hops.has(key)) hops.set(key, { ...hop, weight: 0 });
+        hops.get(key).weight += path.weight;
       }
     }
     const footprint = { devices, hops: [...hops.values()] };
@@ -280,27 +367,29 @@ export function calculateScenario(topology, options = {}) {
     const { activePaths, invalidPaths } = resolvedPaths.get(demand.id);
     const validity = invalidPaths.length || validationIssues.some(({ resourceId }) => resourceId === demand.id) ? 'invalid' : 'valid';
     if (!activePaths.length) {
-      demandResults.push({ id: demand.id, name: demand.name, status: 'unreachable', validity, invalidPaths, deliveredRatio: 0, paths: [],
+      demandResults.push({ id: demand.id, name: demand.name, status: 'unreachable', validity, invalidPaths, deliveredRatio: 0, paths: [], backends: [],
         severedPaths: (noFaultPaths?.get(demand.id)?.activePaths || []).map(({ id, devices, links }) => ({ id, devices, links })),
         load: scaledLoad(demand.load, scale) });
+      for (const path of noFaultPaths?.get(demand.id)?.activePaths || []) for (const id of path.devices) demandTouched.add(id);
       continue;
     }
-    const share = 1 / activePaths.length;
     const entries = Object.entries(demand.load).filter(([, value]) => Number.isFinite(value) && value >= 0)
       .map(([axis, value]) => [axis, value, deliveryRoleOf(axis) === 'throughput']);
     const linkEntries = entries.filter(([axis]) => linkCarriesAxis(axis));
     const footprint = footprintFor(activePaths);
-    for (const [deviceId, count] of footprint.devices) {
-        addLoad(deviceLoads[deviceId], entries, scale * share * count, carriedFraction(deviceIndex.get(deviceId), demand));
+    for (const [deviceId, weight] of footprint.devices) {
+        demandTouched.add(deviceId);
+        addLoad(deviceLoads[deviceId], entries, scale * weight, carriedFraction(deviceIndex.get(deviceId), demand));
         for (const axis of deviceAxes.get(deviceId)) if (!Number.isFinite(demand.load[axis])) missingDeviceLoads[deviceId].add(axis);
     }
     for (const hop of footprint.hops) {
-        addLoad(linkLoads[hop.linkId][hop.direction], linkEntries, scale * share * hop.count);
+        addLoad(linkLoads[hop.linkId][hop.direction], linkEntries, scale * hop.weight);
         for (const axis of linkAxes.get(hop.linkId)) if (!Number.isFinite(demand.load[axis])) missingLinkLoads[hop.linkId][hop.direction].add(axis);
     }
     demandResults.push({
       id: demand.id, name: demand.name, status: 'delivered', validity, invalidPaths, load: scaledLoad(demand.load, scale),
-      paths: activePaths.map(({ id }) => ({ id, share })),
+      paths: activePaths.map(({ id, weight }) => ({ id, share: weight })),
+      backends: resolvedPaths.get(demand.id).backends,
     });
   }
 
@@ -340,7 +429,7 @@ export function calculateScenario(topology, options = {}) {
     if (failover.unknownSurge.has(device.id) && axes.new_sessions_per_sec) {
       axes.new_sessions_per_sec = { ...axes.new_sessions_per_sec, utilization: null, headroom: null, status: 'unknown', unknownReason: 'failover-surge-window-missing' };
     }
-    return { ...device, active: !disabledDevices.has(device.id), load: deviceLoads[device.id], axes, ...summarizeAxes(axes) };
+    return { ...device, active: !disabledDevices.has(device.id), carriesDemand: demandTouched.has(device.id), load: deviceLoads[device.id], axes, ...summarizeAxes(axes) };
   });
   const links = topology.links.map((link) => {
     const directions = Object.fromEntries(LINK_DIRECTIONS.map((direction) => {
@@ -416,7 +505,6 @@ export function calculateScenario(topology, options = {}) {
   for (const result of demandResults) {
     if (result.status === 'unreachable') { result.deliveredRatio = 0; result.deliveredRatioBound = 'exact'; result.droppedLoad = result.load; continue; }
     const { activePaths } = resolvedPaths.get(result.id);
-    const share = 1 / activePaths.length;
     const unknownConstraints = [];
     let delivered = 0;
     let admitted = 0;
@@ -427,9 +515,9 @@ export function calculateScenario(topology, options = {}) {
       unknownConstraints.push(...outcome.unknownConstraints);
       if (outcome.invalid) result.validity = 'invalid';
       if (outcome.admissionLimit) admissionLimit = outcome.admissionLimit;
-      delivered += share * pass;
-      admitted += share * admit;
-      return { id: path.id, share, deliveredRatio: pass, admissionRatio: admit, choke: choke && { resourceId: choke.resourceId, direction: choke.direction } };
+      delivered += path.weight * pass;
+      admitted += path.weight * admit;
+      return { id: path.id, share: path.weight, deliveredRatio: pass, admissionRatio: admit, choke: choke && { resourceId: choke.resourceId, direction: choke.direction } };
     });
     result.deliveredRatio = delivered;
     result.admissionRatio = admitted;
@@ -550,7 +638,7 @@ function failoverSurge(topology, options, disabledDevices, disabledLinks, scale,
       const before = baselinePaths.get(demand.id).activePaths;
       const after = currentPaths.get(demand.id).activePaths;
       if (!before.length || !after.length) continue;
-      const lost = before.filter((path) => path.devices.includes(failedId)).length / before.length;
+      const lost = before.filter((path) => path.devices.includes(failedId)).reduce((sum, path) => sum + path.weight, 0);
       const transferred = (demand.load.concurrent_sessions || 0) * scale * lost;
       if (!transferred) continue;
       if (!Number.isFinite(windowSec) || windowSec <= 0) {
@@ -558,8 +646,7 @@ function failoverSurge(topology, options, disabledDevices, disabledLinks, scale,
         report.transfers.push({ demandId: demand.id, failedId, transferred, surge: null, status: 'unknown', reason: 'reestablish-window-missing' });
         continue;
       }
-      const share = 1 / after.length;
-      for (const path of after) for (const deviceId of new Set(path.devices)) surge[deviceId] = (surge[deviceId] || 0) + (transferred / windowSec) * share;
+      for (const path of after) for (const deviceId of new Set(path.devices)) surge[deviceId] = (surge[deviceId] || 0) + (transferred / windowSec) * path.weight;
       report.transfers.push({ demandId: demand.id, failedId, transferred, surge: transferred / windowSec, windowSec, status: 'known', derivation: 'transferred_sessions / reestablish_window_sec' });
     }
   }

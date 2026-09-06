@@ -6,8 +6,9 @@ import { ICONS, ICON_EXTERNAL, ICON_FALLBACK, ICON_KINDS, ICON_SOURCE, ICON_SPRI
 const appSource = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
 
 test('covers every device kind offered by the editor with a fallback', () => {
-  const offered = appSource.match(/\['switch',[^\]]*\]/)[0].match(/'([a-z]+)'/g).map((value) => value.slice(1, -1));
-  assert.ok(offered.length >= 6);
+  // 편집기가 내놓는 클래스 목록은 팔레트 하나뿐이다. 장비 추가 폼도 여기서 읽어 쓴다.
+  const offered = [...appSource.match(/const PALETTE = \[[\s\S]*?\n\];/)[0].matchAll(/kind: '([a-z]+)'/g)].map(([, kind]) => kind);
+  assert.ok(offered.length >= 20, `팔레트 클래스가 ${offered.length}개뿐입니다.`);
   for (const kind of offered) assert.ok(ICONS[kind], `${kind} 심볼이 없습니다.`);
   assert.ok(ICONS[ICON_FALLBACK] && ICONS[ICON_EXTERNAL]);
   assert.equal(new Set(ICON_KINDS.map((kind) => ICONS[kind].id)).size, ICON_KINDS.length);

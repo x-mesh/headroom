@@ -408,8 +408,35 @@ function nodeAxisRow(device, key, axis) {
 }
 
 // 축 토큰은 시각 축약이라 읽히면 소음이다. 접근 가능한 이름은 요약만 담고 흔들리는 값을 넣지 않는다.
+// LB 뒤 백엔드는 엔진이 자동으로 한 풀로 묶는다. 화면에 보이지 않으면 사용자는 왜 부하가
+// 나뉘었는지 알 길이 없으므로 멤버마다 몇 대 중 몇 %인지 노드에 적는다.
+function backendPoolIndex(demands) {
+  const index = new Map();
+  for (const demand of demands) {
+    const backends = demand.backends || [];
+    for (const { id, share } of backends) {
+      if (!index.has(id)) index.set(id, { size: 0, shares: [] });
+      const entry = index.get(id);
+      entry.size = Math.max(entry.size, backends.length);
+      entry.shares.push(share);
+    }
+  }
+  // 풀이 아닌 장비에까지 "풀 1대 · 100%" 를 붙이면 소음이다. 다만 풀에 든 장비라면 풀을 끈
+  // demand 의 몫까지 세야 한다 — 그걸 빼면 42% 라고 적고 실제로는 71% 를 받는 일이 생긴다.
+  for (const [id, entry] of index) if (entry.size < 2) index.delete(id);
+  return index;
+}
+
+function poolNote(entry) {
+  if (!entry) return '';
+  const low = Math.round(Math.min(...entry.shares) * 100);
+  const high = Math.round(Math.max(...entry.shares) * 100);
+  return `풀 ${entry.size}대 · ${low === high ? `${high}%` : `${low}~${high}%`}`;
+}
+
 function nodeAccessibleName(device) {
-  const head = [device.name, [device.vendor, device.model].filter(Boolean).join(' '), device.kind, device.zone].filter(Boolean).join(' \u00b7 ');
+  const head = [device.name, [device.vendor, device.model].filter(Boolean).join(' '), device.kind, device.zone,
+    poolNote(backendPoolIndex(current.demands).get(device.id)), device.carriesDemand === false ? '지나는 수요 없음' : ''].filter(Boolean).join(' \u00b7 ');
   if (!device.active) return `${head} \u00b7 비활성`;
   const binding = device.axes[device.bindingAxis];
   const bindingText = binding ? `제한 축 ${axisCatalog[device.bindingAxis]?.label || device.bindingAxis} ${formatPercent(binding.utilization)}` : '한계 미확인';
@@ -691,8 +718,11 @@ function renderTopology() {
   element('diagram-layer').innerHTML = (topology.diagram?.shapes || []).map((shape) =>
     `<button type="button" class="diagram-shape${selectionHas('shape', shape.id) ? ' selected' : ''}" data-shape-id="${escapeAttribute(shape.id)}" data-kind="${escapeAttribute(shape.kind)}" style="left:${shape.x - viewport.minX}px;top:${shape.y - viewport.minY}px;width:${shape.width}px;height:${shape.height}px">${escapeText(shape.text || '')}</button>`).join('');
 
+  const pools = backendPoolIndex(current.demands);
   element('node-layer').innerHTML = current.devices.map((device) => {
     const status = device.active ? device.primaryStatus : 'disabled';
+    const pool = device.active ? poolNote(pools.get(device.id)) : '';
+    const idle = device.active && !pool && !device.carriesDemand ? '지나는 수요 없음' : '';
     const { rows, hidden } = nodeAxes(device);
     const verdict = sweep.resources.find(({ id }) => id === device.id);
     // 이미 죽은 장비에 "이게 죽으면 끊긴다"와 숨긴 축 개수를 붙이는 것은 소음이다.
@@ -703,7 +733,7 @@ function renderTopology() {
       ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis)).join('')
       : '<span class="node-axis" data-axis-state="disabled"><i>x</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>';
     return `<button type="button" class="mesh-node ${status} ${state.selectedId === device.id ? 'selected' : ''} ${selectionHas('device', device.id) ? 'multi-selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x - viewport.minX}px;top:${device.position.y - viewport.minY}px" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
-      <span class="node-symbol">${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}${classView.badge === 'on' ? `<span class="node-class-badge">${escapeText(kindInitial(device.kind))}</span>` : ''}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolId(device.kind)}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
+      <span class="node-symbol">${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}${classView.badge === 'on' ? `<span class="node-class-badge">${escapeText(kindInitial(device.kind))}</span>` : ''}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolId(device.kind)}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}${pool || idle ? `<span class="node-pool"${idle ? ' data-warn=""' : ''}>${escapeText(pool || idle)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
     </button>`;
   }).join('');
 }
@@ -976,15 +1006,19 @@ function openTemplatePicker() {
       ? `${GRADE_LABEL[grade.grade]}${grade.grade === 'single-point' ? ` ${grade.severs}` : ''}`
       : '';
     const haystack = [item.name, item.summary, item.teaches, gradeLabel, ...(item.tags || [])].join(' ').toLowerCase();
+    // 카드는 판정 → 이름 → 설명 → 배우는 점 순서로 읽힌다. 판정을 먼저 둔 건 카드를 훑을 때 그게 고르는 기준이기 때문이다.
     return `<button type="button" class="template-item" data-template="${escapeAttribute(item.id)}" data-search="${escapeAttribute(haystack)}">
-      <strong>${escapeText(item.name)}</strong>${gradeLabel ? `<b class="template-grade" data-grade="${escapeAttribute(grade.grade)}">${escapeText(gradeLabel)}</b>` : ''}<span>${escapeText(item.summary)}</span>${item.teaches ? `<em>${escapeText(item.teaches)}</em>` : ''}
+      ${gradeLabel ? `<b class="template-grade" data-grade="${escapeAttribute(grade.grade)}">${escapeText(gradeLabel)}</b>` : ''}
+      <strong>${escapeText(item.name)}</strong><span>${escapeText(item.summary)}</span>${item.teaches ? `<em>${escapeText(item.teaches)}</em>` : ''}
       ${(item.tags || []).length ? `<span class="template-tags">${item.tags.map((tag) => `<i>${escapeText(tag)}</i>`).join('')}</span>` : ''}
     </button>`;
   }).join('');
   openEditorPanel('설계 템플릿', `<p class="editor-hint">템플릿마다 먼저 차는 축이 다릅니다. 불러온 뒤 장비를 눌러 어느 축이 병목인지 확인하세요.</p>
-    <label class="template-search"><span class="visually-hidden">템플릿 검색</span>
-      <input type="search" id="template-search" placeholder="이름, 태그, 병목으로 검색 (예: TLS, 방화벽, 대역폭)" autocomplete="off"></label>
-    <p class="template-count" id="template-count" aria-live="polite">${templates.length}개</p>
+    <div class="template-head">
+      <label class="template-search"><span class="visually-hidden">템플릿 검색</span>
+        <input type="search" id="template-search" placeholder="이름, 태그, 병목으로 검색 (예: TLS, 방화벽, 대역폭)" autocomplete="off"></label>
+      <p class="template-count" id="template-count" aria-live="polite">${templates.length}개</p>
+    </div>
     <div class="template-list">${cards}</div>`);
   element('template-search').focus();
 }
@@ -1031,15 +1065,34 @@ function applyTemplate(id) {
   });
 }
 
+// 클래스마다 재는 축이 다르다. 서버에 처리량(bps)만 물어보면 NIC 한계가 비어 unknown 으로
+// 남고, 화면에는 0 이 아니라 물음표가 뜬다. 팔레트가 이미 클래스별 축을 알고 있으니 그걸 쓴다.
+const deviceLimitAxes = (kind) => Object.keys(PALETTE.find((item) => item.kind === kind)?.limits || { forwarding_bps: null, forwarding_pps: null });
+
+function deviceLimitFields(kind, limits = {}) {
+  return deviceLimitAxes(kind).map((axis) => {
+    const catalog = axisCatalog[axis] || { label: axis, unit: '' };
+    return `<label>${escapeText(`${catalog.label}${catalog.unit ? ` (${catalog.unit})` : ''}`)}<input name="${escapeAttribute(axis)}" type="number" min="1" step="any" value="${limits[axis] ?? ''}"></label>`;
+  }).join('');
+}
+
 function openDeviceForm(template = null) {
+  const kind = template?.kind || PALETTE[0].kind;
   openEditorPanel('장비 추가', `<p class="editor-hint">장비를 만든 뒤 캔버스에서 드래그해 위치를 조정하세요. 비어 있는 한계값은 unknown으로 유지됩니다.</p><form class="editor-form" data-editor-form="device">
     <label>이름<input name="name" maxlength="80" required value="${escapeAttribute(template?.name || '')}"></label>
-    <label>클래스<select name="kind">${['switch','router','firewall','lb','server','storage'].map((kind) => `<option ${template?.kind === kind ? 'selected' : ''}>${kind}</option>`).join('')}</select></label>
+    <label>클래스<select name="kind">${PALETTE.map((item) => `<option value="${escapeAttribute(item.kind)}" ${item.kind === kind ? 'selected' : ''}>${escapeText(`${item.label} · ${item.kind}`)}</option>`).join('')}</select></label>
     <label>영역<input name="zone" maxlength="80" value="${escapeAttribute(template?.zone || 'UNASSIGNED')}"></label>
-    <label>처리량 한계 (bps)<input name="forwarding_bps" type="number" min="1" step="any" value="${template?.limits?.forwarding_bps ?? ''}"></label>
-    <label>PPS 한계<input name="forwarding_pps" type="number" min="1" step="any" value="${template?.limits?.forwarding_pps ?? ''}"></label>
+    <span class="device-limit-fields">${deviceLimitFields(kind, template?.limits || {})}</span>
     <div class="form-actions"><button type="submit">장비 생성</button></div><p class="editor-error"></p></form>`);
   element('editor-panel-content').querySelector('form')._deviceTemplate = template || {};
+}
+
+// 클래스를 바꾸면 물어볼 축도 바뀐다. 이미 적은 값은 같은 축에 한해 살린다.
+function renderDeviceLimitFields(form) {
+  const fields = form.querySelector('.device-limit-fields');
+  if (!fields) return;
+  const kept = Object.fromEntries([...fields.querySelectorAll('input')].filter(({ value }) => value !== '').map(({ name, value }) => [name, value]));
+  fields.innerHTML = deviceLimitFields(form.querySelector('select[name="kind"]').value, { ...(form._deviceTemplate?.limits || {}), ...kept });
 }
 
 function openDemandForm() {
@@ -1057,6 +1110,17 @@ function demandEndpoint(demand, side) {
   return side === 'source' ? devices[0] : devices.at(-1);
 }
 
+// 자동으로 묶인 풀을 여기서 읽고 끌 수 있어야 한다. 보이지 않는 자동은 자동이 아니라 사고다.
+function backendPoolLine(demand) {
+  if (demand.backendPool === 'single') return '백엔드 풀 꺼짐 · target 한 대만 씁니다.';
+  const backends = current.demands.find(({ id }) => id === demand.id)?.backends || [];
+  if (backends.length < 2) return '백엔드 풀 없음 · LB 뒤에 같은 클래스 장비가 한 대뿐입니다.';
+  const members = backends.map(({ id, share }) => `${deviceName(id)} ${Math.round(share * 100)}%`).join(' · ');
+  return `백엔드 풀 ${backends.length}대 · ${members}`;
+}
+
+const deviceName = (id) => topology.devices.find((device) => device.id === id)?.name || id;
+
 function openDemandManager() {
   const rows = topology.demands.length ? topology.demands.map((demand) => {
     const source = demandEndpoint(demand, 'source') || topology.devices[0]?.id || '';
@@ -1068,10 +1132,11 @@ function openDemandManager() {
       <label>Packets (pps)<input name="forwarding_pps" type="number" min="0" step="any" value="${demand.load.forwarding_pps ?? 0}"></label>
       <label>CPS<input name="new_sessions_per_sec" type="number" min="0" step="any" value="${demand.load.new_sessions_per_sec ?? 0}"></label>
       <label>동시 세션<input name="concurrent_sessions" type="number" min="0" step="any" value="${demand.load.concurrent_sessions ?? 0}"></label>
-      <div class="demand-row-actions"><button type="submit">수정</button><button type="button" data-delete-demand="${escapeAttribute(demand.id)}">삭제</button></div><p class="editor-error"></p>
+      <div class="demand-row-actions"><button type="submit">수정</button><button type="button" data-delete-demand="${escapeAttribute(demand.id)}">삭제</button></div>
+      <p class="demand-pool"><label><input type="checkbox" name="single" ${demand.backendPool === 'single' ? 'checked' : ''}> 이 서버만</label><span>${escapeText(backendPoolLine(demand))}</span></p><p class="editor-error"></p>
     </form>`;
   }).join('') : '<div class="editor-empty"><strong>Traffic demand가 없습니다.</strong><span>새 demand를 추가하면 endpoint 사이의 최단 ECMP 경로를 계산합니다.</span></div>';
-  openEditorPanel('Traffic demand 관리', `<div class="demand-manager-head"><p class="editor-hint">endpoint나 부하를 수정하면 explicit path가 최단 ECMP 경로로 전환됩니다.</p><button type="button" data-new-demand>새 demand</button></div><div class="demand-editor-list">${rows}</div>`);
+  openEditorPanel('Traffic demand 관리', `<div class="demand-manager-head"><p class="editor-hint">endpoint나 부하를 수정하면 explicit path가 최단 ECMP 경로로 전환됩니다. LB 뒤에 같은 클래스 장비가 여럿이면 한 풀로 묶어 나눠 보냅니다.</p><button type="button" data-new-demand>새 demand</button></div><div class="demand-editor-list">${rows}</div>`);
 }
 
 function checkList(name, items, label) {
@@ -1454,7 +1519,10 @@ element('editor-panel-content').addEventListener('submit', (event) => {
   try {
     if (form.dataset.editorForm === 'device') {
       const template = form._deviceTemplate || {};
-      const device = addDevice(topology, { id: template.deviceId, name: data.get('name'), kind: data.get('kind'), zone: data.get('zone'), position: template.position || nextDevicePosition(), limits: { ...(template.limits || {}), forwarding_bps: data.get('forwarding_bps') || template.limits?.forwarding_bps || null, forwarding_pps: data.get('forwarding_pps') || template.limits?.forwarding_pps || null }, source: template.source, metadata: template.metadata, vendor: template.vendor, model: template.model });
+      const kind = data.get('kind');
+      const limits = { ...(template.limits || {}) };
+      for (const axis of deviceLimitAxes(kind)) limits[axis] = data.get(axis) || template.limits?.[axis] || null;
+      const device = addDevice(topology, { id: template.deviceId, name: data.get('name'), kind, zone: data.get('zone'), position: template.position || nextDevicePosition(), limits, source: template.source, metadata: template.metadata, vendor: template.vendor, model: template.model });
       if (template.mapShapeId && topology.diagram) {
         topology.diagram.connectors = topology.diagram.connectors.map((connector) => ({ ...connector,
           source: connector.source === template.mapShapeId ? device.id : connector.source,
@@ -1469,7 +1537,7 @@ element('editor-panel-content').addEventListener('submit', (event) => {
       closeEditorPanel(); commitTopology(`Demand ${demand.name}을 추가했습니다.`);
     }
     if (form.dataset.editorForm === 'demand-edit') {
-      const demand = updateDemand(topology, form.dataset.demandId, { name: data.get('name'), source: data.get('source'), target: data.get('target'), load: { forwarding_bps: data.get('forwarding_bps'), forwarding_pps: data.get('forwarding_pps') || 0, new_sessions_per_sec: data.get('new_sessions_per_sec') || 0, concurrent_sessions: data.get('concurrent_sessions') || 0 } });
+      const demand = updateDemand(topology, form.dataset.demandId, { name: data.get('name'), source: data.get('source'), target: data.get('target'), backendPool: data.get('single') ? 'single' : 'auto', load: { forwarding_bps: data.get('forwarding_bps'), forwarding_pps: data.get('forwarding_pps') || 0, new_sessions_per_sec: data.get('new_sessions_per_sec') || 0, concurrent_sessions: data.get('concurrent_sessions') || 0 } });
       commitTopology(`Demand ${demand.name}을 수정했습니다.`); openDemandManager();
     }
     if (form.dataset.editorForm === 'service') {
@@ -1499,6 +1567,10 @@ element('editor-panel-content').addEventListener('submit', (event) => {
 });
 element('editor-panel-content').addEventListener('input', (event) => {
   if (event.target.id === 'template-search') filterTemplates(event.target.value);
+});
+element('editor-panel-content').addEventListener('change', (event) => {
+  const form = event.target.closest('form[data-editor-form="device"]');
+  if (form && event.target.name === 'kind') renderDeviceLimitFields(form);
 });
 element('editor-panel-content').addEventListener('click', (event) => {
   const template = event.target.closest('[data-template]');
