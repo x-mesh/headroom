@@ -190,15 +190,3 @@ export const firewallCatalog = Object.freeze([
     ],
   },
 ]);
-
-export const deviceCatalog = firewallCatalog;
-
-export function catalogEntry(id) {
-  return deviceCatalog.find((entry) => entry.id === id) || null;
-}
-
-export function catalogProfile(entryId, profileId) {
-  const entry = catalogEntry(entryId);
-  if (!entry) return null;
-  return entry.profiles.find((profile) => profile.id === profileId) || entry.profiles[0];
-}

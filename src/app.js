@@ -6,7 +6,7 @@ import { parseProject, serializeProject } from './project.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
 import { vendorLogoFor } from './logos.js';
 import { buildTemplate, templates } from './templates.js';
-import { catalogEntry, catalogProfile, deviceCatalog } from './devices/firewalls.js';
+import { catalogEntry, catalogFor, catalogProfile } from './devices/catalog.js';
 
 let topology = cloneTopology();
 const state = { scale: 1, selectedId: 'fw-a', disabledDevices: new Set(), disabledLinks: new Set(), editorMode: 'select', connectSource: null, leftPanel: 'palette', zoom: 1 };
@@ -575,7 +575,7 @@ const SOURCE_TYPE_LABEL = { datasheet: '데이터시트', third_party_test: '제
 
 // 어느 조건의 값을 쓰고 있는지가 값 자체만큼 중요하다. 같은 장비가 조건에 따라 20배 갈린다.
 function renderSpecBlock(resource) {
-  const entries = deviceCatalog.filter(({ kind }) => kind === resource.kind);
+  const entries = catalogFor(resource.kind);
   if (!entries.length) return '';
   const entry = resource.spec ? catalogEntry(resource.spec.catalogId) : null;
   const profile = entry ? catalogProfile(entry.id, resource.spec.profileId) : null;

@@ -448,9 +448,12 @@ test('an unreachable demand keeps the path it would have taken', () => {
 });
 
 test('every catalog profile states axes the engine knows and numbers a datasheet could print', async () => {
-  const { deviceCatalog } = await import('../src/devices/firewalls.js');
+  const { deviceCatalog } = await import('../src/devices/catalog.js');
   const { axisCatalog } = await import('../src/data.js');
-  assert.ok(deviceCatalog.length >= 7, 'the catalog covers more than one manufacturer');
+  assert.ok(deviceCatalog.length >= 11, 'the catalog covers more than one manufacturer and more than one class');
+  for (const kind of ['firewall', 'switch', 'router']) {
+    assert.ok(deviceCatalog.some((entry) => entry.kind === kind), `${kind} needs at least one catalog entry`);
+  }
   const ids = new Set();
   for (const entry of deviceCatalog) {
     assert.equal(ids.has(entry.id), false, `${entry.id} is listed twice`);
@@ -478,4 +481,26 @@ test('every catalog profile states axes the engine knows and numbers a datasheet
   const inspecting = cisco.profiles.find(({ id }) => id === 'ftd-avc').limits.new_sessions_per_sec;
   const stateful = cisco.profiles.find(({ id }) => id === 'asa-stateful').limits.new_sessions_per_sec;
   assert.ok(stateful > inspecting * 3, 'stateful inspection admits far more new connections than full application visibility');
+});
+
+test('a switch datasheet mixes two bases, and the profile says so', async () => {
+  const { catalogEntry } = await import('../src/devices/catalog.js');
+  const entry = catalogEntry('cisco-catalyst-9300-48t');
+  const standalone = entry.profiles.find(({ id }) => id === 'standalone');
+  // 128 Gbps 단방향을 64바이트 프레임(프리앰블·IFG 포함 672비트)으로 나누면 190.5 Mpps 다.
+  // 즉 용량은 양방향 합계이고 레이트는 단방향이다. 그 사실이 note 에 적혀 있어야 한다.
+  const oneWayFrames = (standalone.limits.forwarding_bps / 2) / 672;
+  assert.ok(Math.abs(oneWayFrames - standalone.limits.forwarding_pps) / standalone.limits.forwarding_pps < 0.01,
+    'the forwarding rate matches half the switching capacity at 64 bytes, so the two numbers use different bases');
+  assert.match(standalone.note, /양방향 합계|단방향/);
+});
+
+test('a router datasheet turns features and packet size together', async () => {
+  const { catalogEntry } = await import('../src/devices/catalog.js');
+  const entry = catalogEntry('cisco-catalyst-8300-2n2s-4t2x');
+  const plain = entry.profiles.find(({ id }) => id === 'ipv4-1400b').limits.forwarding_bps;
+  const loaded = entry.profiles.find(({ id }) => id === 'sdwan-iqdf-imix').limits.forwarding_bps;
+  assert.ok(plain > loaded * 3, 'encryption, inspection and a smaller packet size together cost more than a third of the throughput');
+  // 이 표는 pps 를 적지 않는다. 없는 것을 지어내지 않는다.
+  assert.ok(entry.profiles.every(({ limits }) => limits.forwarding_pps === null));
 });
