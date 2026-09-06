@@ -408,6 +408,9 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Compact Load:** Drop the unit from the node value. The axis name carries the unit. Keep the unit in the inspector.
 - **Unknown Axis:** Print the measured load and an em dash. Never print zero percent for an unknown limit.
 - **Single Point:** Add a SPOF token to the meta line of a device whose loss severs the service. Do not add an axis row for it.
+- **Manufacturer Badge:** Put the manufacturer at the top-left of the symbol box. Use the project's own logo first, then the catalog mark in its brand color, then a short uppercase text badge. Keep the badge on a raised surface with a one-pixel border so it reads over the symbol.
+- **Model Line:** Put the model under the device name in muted micro type. The name says which box this is; the model says what it is.
+- **No Endorsement:** A mark identifies a device. Never place it where it reads as a partnership, certification, or approval, and never rank manufacturers against each other.
 - **Binding Axis:** Give the binding axis row full-strength label text. Keep the other axis labels muted.
 - **Name and Meta:** Show the device name in 11px data type. Show the class and the zone in 8px label type. Clip overflow.
 - **Selected:** Use a two-pixel state-color outline. Do not change the layout.

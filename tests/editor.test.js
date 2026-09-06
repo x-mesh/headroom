@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cloneTopology } from '../src/data.js';
-import { addDemand, addDevice, addLink, createEmptyTopology, moveDevice, removeDevice } from '../src/editor.js';
+import { addDemand, addDevice, addLink, createEmptyTopology, moveDevice, removeDevice, updateDevice } from '../src/editor.js';
 import { calculateScenario, findShortestPaths } from '../src/engine.js';
 
 test('creates, moves, and links devices with validated IDs', () => {
@@ -45,4 +45,23 @@ test('enumerates deterministic equal-cost shortest paths for endpoint demand', (
   const result = calculateScenario(topology);
   assert.equal(result.demands[0].paths.length, 2);
   assert.equal(result.links.find(({ id }) => id === 'a-b').load.forwarding_bps, 2e9);
+});
+
+test('a device carries its manufacturer and model, and rejects a logo that is not an image', () => {
+  const topology = createEmptyTopology();
+  addDevice(topology, { id: 'fw', vendor: '  Fortinet  ', model: 'FG-1800F', limits: { forwarding_bps: 1e9 } });
+  const device = topology.devices[0];
+  assert.deepEqual([device.vendor, device.model], ['Fortinet', 'FG-1800F']);
+  // 빈 값은 필드를 지운다. 잘못 적은 제조사가 화면에 남으면 안 된다.
+  updateDevice(topology, 'fw', { vendor: '', model: 'FG-2600F' });
+  assert.deepEqual([device.vendor, device.model], [undefined, 'FG-2600F']);
+
+  const logo = `data:image/png;base64,${'A'.repeat(64)}`;
+  updateDevice(topology, 'fw', { vendorLogo: logo });
+  assert.equal(device.vendorLogo, logo);
+  updateDevice(topology, 'fw', { vendorLogo: '' });
+  assert.equal(device.vendorLogo, undefined);
+  // 외부 URL 은 앱의 무의존 원칙을 깨고, 큰 파일은 프로젝트를 부풀린다.
+  assert.throws(() => updateDevice(topology, 'fw', { vendorLogo: 'https://example.com/logo.png' }), /data URI/);
+  assert.throws(() => updateDevice(topology, 'fw', { vendorLogo: `data:image/png;base64,${'A'.repeat(30000)}` }), /24KB/);
 });

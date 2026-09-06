@@ -52,3 +52,22 @@ test('records upstream provenance', () => {
   assert.equal(ICON_SOURCE.license, 'Apache-2.0');
   assert.ok(ICON_SOURCE.notice.endsWith('NOTICE.md'));
 });
+
+test('vendor marks resolve from a manufacturer string and stay optional', async () => {
+  const { VENDOR_LOGOS, VENDOR_LOGO_SOURCE, vendorLogoFor } = await import('../src/logos.js');
+  assert.ok(Object.keys(VENDOR_LOGOS).length >= 12, 'the catalog covers the manufacturers this tool draws');
+  for (const [slug, mark] of Object.entries(VENDOR_LOGOS)) {
+    assert.match(slug, /^[a-z0-9]+$/, `${slug} must be a normalized key`);
+    assert.match(mark.hex, /^#[0-9a-f]{6}$/);
+    assert.match(mark.path, /^[Mm]/, `${slug} must carry one path`);
+  }
+  // 사용자가 어떻게 적든 같은 마크를 찾아야 한다.
+  for (const written of ['Cisco', 'CISCO', 'cisco', ' cisco ']) assert.equal(vendorLogoFor(written)?.title, 'Cisco');
+  assert.equal(vendorLogoFor('Juniper Networks')?.title, 'Juniper Networks');
+  // 카탈로그에 없는 제조사는 마크가 없고, 화면은 약칭 배지로 떨어진다.
+  assert.equal(vendorLogoFor('Arista'), null);
+  assert.equal(vendorLogoFor(''), null);
+  assert.equal(vendorLogoFor(undefined), null);
+  assert.equal(VENDOR_LOGO_SOURCE.license, 'CC0-1.0');
+  assert.match(VENDOR_LOGO_SOURCE.note, /trademarks of their owners/);
+});

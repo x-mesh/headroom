@@ -4,6 +4,7 @@ import { addDemand, addDevice, addLink, moveDevice, normalizeId, removeDemand, r
 import { importDeviceDefinition } from './device-import.js';
 import { parseProject, serializeProject } from './project.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
+import { vendorLogoFor } from './logos.js';
 import { buildTemplate, templates } from './templates.js';
 
 let topology = cloneTopology();
@@ -247,6 +248,18 @@ function nodeAxes(device) {
   return { rows: entries.filter(([key]) => keep.has(key)), hidden: entries.length - keep.size };
 }
 
+// 제조사 표시 순서: 프로젝트가 직접 실은 로고 → 카탈로그 마크 → 약칭 텍스트.
+// 마크는 식별용이고 제휴를 뜻하지 않는다(vendor/brand-logos/NOTICE.md).
+function vendorBadge(device) {
+  if (device.vendorLogo) return `<img class="node-vendor-logo" src="${escapeAttribute(device.vendorLogo)}" alt="">`;
+  const mark = vendorLogoFor(device.vendor);
+  if (mark) {
+    return `<svg class="node-vendor-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false" style="--mark:${mark.hex}"><path d="${escapeAttribute(mark.path)}"></path></svg>`;
+  }
+  if (device.vendor) return `<span class="node-vendor">${escapeText(device.vendor)}</span>`;
+  return '';
+}
+
 function nodeAxisRow(device, key, axis) {
   // unknown·invalid 축에는 data-live-util을 붙이지 않는다. 텔레메트리가 미확인 값을 숫자로 덮어쓰면 안 된다.
   const live = axis.utilization == null ? '' : ` data-live-util="${axis.utilization}" data-live-seed="${escapeAttribute(device.id)}:${key}"`;
@@ -258,7 +271,7 @@ function nodeAxisRow(device, key, axis) {
 
 // 축 토큰은 시각 축약이라 읽히면 소음이다. 접근 가능한 이름은 요약만 담고 흔들리는 값을 넣지 않는다.
 function nodeAccessibleName(device) {
-  const head = `${device.name} \u00b7 ${device.kind} \u00b7 ${device.zone}`;
+  const head = [device.name, [device.vendor, device.model].filter(Boolean).join(' '), device.kind, device.zone].filter(Boolean).join(' \u00b7 ');
   if (!device.active) return `${head} \u00b7 비활성`;
   const binding = device.axes[device.bindingAxis];
   const bindingText = binding ? `제한 축 ${axisCatalog[device.bindingAxis]?.label || device.bindingAxis} ${formatPercent(binding.utilization)}` : '한계 미확인';
@@ -528,7 +541,7 @@ function renderTopology() {
       ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis)).join('')
       : '<span class="node-axis" data-axis-state="disabled"><i>x</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>';
     return `<button type="button" class="mesh-node ${status} ${state.selectedId === device.id ? 'selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x - viewport.minX}px;top:${device.position.y - viewport.minY}px" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
-      <span class="node-symbol"><svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolId(device.kind)}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span><span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
+      <span class="node-symbol">${vendorBadge(device)}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolId(device.kind)}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
     </button>`;
   }).join('');
 }
@@ -546,7 +559,7 @@ function renderInspector() {
   element('resource-state').style.color = `var(--${resource.active ? ({ overloaded: 'danger', warning: 'amber', invalid: 'danger', unknown: 'unknown', healthy: 'cyan' })[resource.primaryStatus] || 'unknown' : 'danger'})`;
   const binding = resource.axes[resource.bindingAxis];
   element('inspector-content').innerHTML = `
-    <div class="resource-identity"><strong>${escapeText(resource.name || resource.id.toUpperCase())}</strong><span>${escapeText(isDevice ? `${resource.kind.toUpperCase()} · ${resource.zone}` : `${resource.source} → ${resource.target}`)}</span></div>
+    <div class="resource-identity"><strong>${escapeText(resource.name || resource.id.toUpperCase())}</strong><span>${escapeText(isDevice ? [[resource.vendor, resource.model].filter(Boolean).join(' '), resource.kind.toUpperCase(), resource.zone].filter(Boolean).join(' · ') : `${resource.source} → ${resource.target}`)}</span></div>
     <div class="binding-callout"><span>BINDING AXIS</span><strong><span>${axisCatalog[resource.bindingAxis]?.label || resource.bindingAxis || '알려진 축 없음'}</span><span data-live-util="${binding?.utilization ?? ''}" data-live-seed="${resource.id}-binding">${binding ? formatPercent(binding.utilization) : '—'}</span></strong></div>
     <div class="axis-list">${Object.entries(resource.axes).map(([axis, result]) => renderAxis(axis, result, resource.id)).join('')}</div>
     ${isDevice ? renderBehavior(resource) : ''}
@@ -597,7 +610,9 @@ function renderDeviceEditor(resource) {
   return `<form class="inspector-editor" data-resource-form="device" data-resource-id="${resource.id}">
     <h3>장비 한계 편집</h3>
     <label>이름<input name="name" maxlength="80" required value="${escapeAttribute(resource.name)}"></label>
-    <label>영역<input name="zone" maxlength="80" required value="${escapeAttribute(resource.zone)}"></label>
+    <label>영역<input name="zone" maxlength="80" required value="${escapeAttribute(resource.zone)}" placeholder="FABRIC / RACK 04"></label>
+    <label>제조사<input name="vendor" maxlength="24" value="${escapeAttribute(resource.vendor || '')}" placeholder="약칭"></label>
+    <label>모델<input name="model" maxlength="40" value="${escapeAttribute(resource.model || '')}"></label>
     ${fields.map((axis) => `<label>${axisCatalog[axis]?.label || axis}<input name="${axis}" type="number" min="0" step="any" placeholder="미확인" value="${resource.limits[axis] ?? ''}"></label>`).join('')}
     <div class="inspector-editor-actions"><button type="submit">적용</button><button type="button" data-delete-resource="device">장비 삭제</button></div><p class="editor-error"></p>
   </form>`;
@@ -985,7 +1000,7 @@ element('inspector-content').addEventListener('change', (event) => {
 element('inspector-content').addEventListener('submit', (event) => {
   event.preventDefault(); const form = event.target; const data = new FormData(form);
   try {
-    if (form.dataset.resourceForm === 'device') { const limits = Object.fromEntries([...data.entries()].filter(([key]) => axisCatalog[key])); updateDevice(topology, form.dataset.resourceId, { name: data.get('name'), zone: data.get('zone'), limits }); }
+    if (form.dataset.resourceForm === 'device') { const limits = Object.fromEntries([...data.entries()].filter(([key]) => axisCatalog[key])); updateDevice(topology, form.dataset.resourceId, { name: data.get('name'), zone: data.get('zone'), vendor: data.get('vendor'), model: data.get('model'), limits }); }
     else updateLink(topology, form.dataset.resourceId, { capacityBps: data.get('capacityBps') });
     commitTopology('한계값을 적용했습니다.');
   } catch (error) { formError(form, error.message); }

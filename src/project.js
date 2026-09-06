@@ -46,7 +46,15 @@ export function validateProject(input) {
   if (!plainObject(input.topology)) throw new Error('Project topology is required');
   const topology = structuredClone(input.topology);
   if (!Array.isArray(topology.devices) || !Array.isArray(topology.links) || !Array.isArray(topology.demands)) throw new Error('Topology requires devices, links, and demands');
-  for (const device of topology.devices) { validId(device.id, 'Device'); boundedText(device.name, 'Device name'); boundedText(device.kind, 'Device kind'); boundedText(device.zone, 'Device zone'); }
+  for (const device of topology.devices) {
+    validId(device.id, 'Device'); boundedText(device.name, 'Device name'); boundedText(device.kind, 'Device kind'); boundedText(device.zone, 'Device zone');
+    if (device.vendor != null) boundedText(device.vendor, 'Device vendor');
+    if (device.model != null) boundedText(device.model, 'Device model');
+    // 로고는 프로젝트 파일과 함께 들어오므로 크기를 여기서도 막는다.
+    if (device.vendorLogo != null && (typeof device.vendorLogo !== 'string' || device.vendorLogo.length > 24 * 1024 || !device.vendorLogo.startsWith('data:image/'))) {
+      throw new Error('Device vendor logo must be an image data URI under 24KB');
+    }
+  }
   for (const link of topology.links) { validId(link.id, 'Link'); validId(link.source, 'Link source'); validId(link.target, 'Link target'); }
   for (const demand of topology.demands) { validId(demand.id, 'Demand'); boundedText(demand.name, 'Demand name'); if (demand.source) validId(demand.source, 'Demand source'); if (demand.target) validId(demand.target, 'Demand target'); }
   const scenario = plainObject(input.scenario) ? input.scenario : {};

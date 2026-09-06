@@ -235,6 +235,13 @@ button { color: inherit; }
 .mesh-node.overloaded .node-rail { background-image: repeating-linear-gradient(135deg, transparent 0 3px, color-mix(in srgb, var(--surface-raised) 55%, transparent) 3px 6px); }
 .mesh-node.unknown .node-rail, .mesh-node.disabled .node-rail { background: repeating-linear-gradient(90deg, var(--node-color) 0 4px, transparent 4px 8px); }
 .node-labels { display: block; width: max-content; max-width: 104px; margin: 0 auto; padding: 2px 4px 3px; overflow: hidden; background: var(--canvas); }
+/* 제조사 배지는 심볼 좌상단에 얹는다. 로고가 있으면 로고를, 없으면 약칭 텍스트를 쓴다. */
+.node-symbol { position: relative; }
+.node-vendor, .node-vendor-logo, .node-vendor-mark { position: absolute; top: 0; left: 0; z-index: 1; }
+.node-vendor-mark { width: 13px; height: 13px; padding: 1px; border: 1px solid var(--line-soft); background: var(--surface-raised); fill: var(--mark, var(--muted)); }
+.node-vendor { max-width: 46px; padding: 0 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--line-soft); background: var(--surface-raised); color: var(--muted); font: 700 7px/11px var(--font-data); letter-spacing: .04em; text-transform: uppercase; }
+.node-vendor-logo { width: auto; height: 13px; max-width: 46px; padding: 1px; border: 1px solid var(--line-soft); object-fit: contain; background: var(--surface-raised); }
+.node-model { display: block; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 500 8px/1.3 var(--font-data); letter-spacing: .02em; }
 .node-name { display: block; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 10px/1.1 var(--font-data); letter-spacing: .02em; }
 .node-axes { display: grid; gap: 4px; margin: 4px 0; }
 .node-axis { --axis-color: var(--cyan); position: relative; display: grid; grid-template-columns: 6px 4ch auto auto; gap: 0 4px; padding-bottom: 3px; align-items: baseline; text-align: left; font: 500 8px/1.2 var(--font-data); }

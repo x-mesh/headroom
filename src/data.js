@@ -54,8 +54,8 @@ const source = {
   condition: 'Rack Mesh MVP fixture · 기능 비활성 · 정상 상태',
 };
 
-const device = (id, name, kind, zone, x, y, limits) => ({
-  id, name, kind, zone, position: { x, y }, limits, source, enabled: true,
+const device = (id, name, kind, zone, x, y, vendor, model, limits) => ({
+  id, name, kind, zone, position: { x, y }, vendor, model, limits, source, enabled: true,
 });
 
 const link = (id, sourceId, targetId, capacityBps = 10e9) => ({
@@ -72,16 +72,16 @@ export const demoTopology = {
     { id: 'edge-pair', name: 'Edge routers', members: ['edge-a', 'edge-b'], sessionSync: 'stateful' },
   ],
   devices: [
-    device('edge-a', 'EDGE A', 'router', 'EDGE', 110, 115, { forwarding_bps: 10e9, forwarding_pps: 2.4e6 }),
-    device('edge-b', 'EDGE B', 'router', 'EDGE', 110, 430, { forwarding_bps: 10e9, forwarding_pps: 2.4e6 }),
-    device('fw-a', 'FW A', 'firewall', 'SECURITY', 300, 115, { forwarding_bps: 10e9, forwarding_pps: 1.5e6, new_sessions_per_sec: 42e3, concurrent_sessions: 700e3 }),
-    device('fw-b', 'FW B', 'firewall', 'SECURITY', 300, 430, { forwarding_bps: 10e9, forwarding_pps: 1.5e6, new_sessions_per_sec: 42e3, concurrent_sessions: 700e3 }),
-    device('spine-a', 'SPINE A', 'switch', 'FABRIC', 490, 175, { forwarding_bps: 20e9, forwarding_pps: 3.2e6 }),
-    device('spine-b', 'SPINE B', 'switch', 'FABRIC', 490, 405, { forwarding_bps: 20e9, forwarding_pps: 3.2e6 }),
-    device('leaf-a', 'LEAF A', 'switch', 'FABRIC / RACK 04', 675, 175, { forwarding_bps: 12e9, forwarding_pps: 2.4e6 }),
-    device('leaf-b', 'LEAF B', 'switch', 'FABRIC / RACK 07', 675, 405, { forwarding_bps: 12e9, forwarding_pps: 2.4e6 }),
-    device('api-a', 'API 01', 'server', 'FABRIC / RACK 04', 840, 175, { nic_bps: 12e9, nic_pps: null }),
-    device('api-b', 'API 02', 'server', 'FABRIC / RACK 07', 840, 405, { nic_bps: 12e9, nic_pps: null }),
+    device('edge-a', 'EDGE A', 'router', 'EDGE', 110, 115, 'Cisco', 'DEMO-RTR-10G', { forwarding_bps: 10e9, forwarding_pps: 2.4e6 }),
+    device('edge-b', 'EDGE B', 'router', 'EDGE', 110, 430, 'Cisco', 'DEMO-RTR-10G', { forwarding_bps: 10e9, forwarding_pps: 2.4e6 }),
+    device('fw-a', 'FW A', 'firewall', 'SECURITY', 300, 115, 'Fortinet', 'DEMO-FW-42K', { forwarding_bps: 10e9, forwarding_pps: 1.5e6, new_sessions_per_sec: 42e3, concurrent_sessions: 700e3 }),
+    device('fw-b', 'FW B', 'firewall', 'SECURITY', 300, 430, 'Fortinet', 'DEMO-FW-42K', { forwarding_bps: 10e9, forwarding_pps: 1.5e6, new_sessions_per_sec: 42e3, concurrent_sessions: 700e3 }),
+    device('spine-a', 'SPINE A', 'switch', 'FABRIC', 490, 175, 'Juniper Networks', 'DEMO-SPN-20G', { forwarding_bps: 20e9, forwarding_pps: 3.2e6 }),
+    device('spine-b', 'SPINE B', 'switch', 'FABRIC', 490, 405, 'Juniper Networks', 'DEMO-SPN-20G', { forwarding_bps: 20e9, forwarding_pps: 3.2e6 }),
+    device('leaf-a', 'LEAF A', 'switch', 'FABRIC / RACK 04', 675, 175, 'Arista', 'DEMO-LEAF-12G', { forwarding_bps: 12e9, forwarding_pps: 2.4e6 }),
+    device('leaf-b', 'LEAF B', 'switch', 'FABRIC / RACK 07', 675, 405, 'Arista', 'DEMO-LEAF-12G', { forwarding_bps: 12e9, forwarding_pps: 2.4e6 }),
+    device('api-a', 'API 01', 'server', 'FABRIC / RACK 04', 840, 175, 'Dell', 'DEMO-SRV-12G', { nic_bps: 12e9, nic_pps: null }),
+    device('api-b', 'API 02', 'server', 'FABRIC / RACK 07', 840, 405, 'Dell', 'DEMO-SRV-12G', { nic_bps: 12e9, nic_pps: null }),
   ],
   links: [
     link('edge-a-fw-a', 'edge-a', 'fw-a'),

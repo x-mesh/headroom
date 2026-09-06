@@ -16,6 +16,19 @@ function normalizeBehavior(kind, behavior) {
   return { mode, sessionSync };
 }
 
+// 제조사와 모델은 제품 식별용 사실이다(PRD 8절). 로고는 저장소에 두지 않고
+// 프로젝트 파일 안의 data URI 로만 받는다. 외부 URL 은 앱의 무의존 원칙을 깬다.
+const LOGO_LIMIT = 24 * 1024;
+function normalizeVendorLogo(value) {
+  if (value == null || value === '') return null;
+  const logo = String(value).trim();
+  if (!/^data:image\/(png|jpeg|gif|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(logo)) {
+    throw new Error('Vendor logo must be a base64 data URI for an image');
+  }
+  if (logo.length > LOGO_LIMIT) throw new Error(`Vendor logo must stay under ${LOGO_LIMIT / 1024}KB`);
+  return logo;
+}
+
 function normalizeDirectionality(directionality) {
   if (!directionality) return null;
   const responseShare = finite(directionality.responseShare, 'Response share', { min: 0 });
@@ -56,6 +69,9 @@ export function addDevice(topology, input) {
     position: { x: finite(input.position?.x ?? 470, 'Device x', ANY_COORDINATE), y: finite(input.position?.y ?? 290, 'Device y', ANY_COORDINATE) },
     limits: normalizeLimits(input.limits || { forwarding_bps: null, forwarding_pps: null }),
     source: input.source || { type: 'estimate', label: '사용자 정의', condition: '조건 미지정' }, enabled: true,
+    ...(input.vendor ? { vendor: String(input.vendor).trim().slice(0, 24) } : {}),
+    ...(input.model ? { model: String(input.model).trim().slice(0, 40) } : {}),
+    ...(normalizeVendorLogo(input.vendorLogo) ? { vendorLogo: normalizeVendorLogo(input.vendorLogo) } : {}),
     ...(normalizeBehavior(String(input.kind || 'switch'), input.behavior) ? { behavior: normalizeBehavior(String(input.kind || 'switch'), input.behavior) } : {}),
     ...(input.metadata ? { metadata: structuredClone(input.metadata) } : {}),
   };
@@ -69,6 +85,15 @@ export function updateDevice(topology, id, patch) {
   if (patch.name != null) device.name = String(patch.name).trim().slice(0, 80) || device.name;
   if (patch.kind != null) device.kind = String(patch.kind);
   if (patch.zone != null) device.zone = String(patch.zone).trim().slice(0, 80) || 'UNASSIGNED';
+  for (const [field, limit] of [['vendor', 24], ['model', 40]]) {
+    if (patch[field] == null) continue;
+    const value = String(patch[field]).trim().slice(0, limit);
+    if (value) device[field] = value; else delete device[field];
+  }
+  if (patch.vendorLogo != null) {
+    const logo = normalizeVendorLogo(patch.vendorLogo);
+    if (logo) device.vendorLogo = logo; else delete device.vendorLogo;
+  }
   if (patch.position) device.position = { x: finite(patch.position.x, 'Device x', ANY_COORDINATE), y: finite(patch.position.y, 'Device y', ANY_COORDINATE) };
   if (patch.limits) {
     for (const [axis, value] of Object.entries(patch.limits)) {

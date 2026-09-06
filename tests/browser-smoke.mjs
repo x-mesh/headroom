@@ -79,6 +79,9 @@ async function verify(viewport, screenshot, interact = false) {
   assert.ok(await page.locator('.topology-group').count() > 0, 'zones must draw as group boxes');
   assert.ok(await page.locator('.topology-group[data-depth="2"]').count() > 0, 'a slash in a zone nests one box inside another');
   assert.ok(await page.locator('.node-axis[style*="--util"]').count() > 0, 'a judged axis carries the meter value');
+  assert.ok(await page.locator('.mesh-node .node-vendor-mark').count() > 0, 'a known manufacturer draws its mark');
+  assert.ok(await page.locator('.mesh-node .node-vendor').count() > 0, 'a manufacturer with no mark falls back to a text badge');
+  assert.equal(await page.locator('[data-device-id="leaf-a"] .node-model').textContent(), 'DEMO-LEAF-12G');
   assert.equal(await page.locator('[data-device-id="api-a"] .node-axis[data-axis-state="unknown"][style*="--util"]').count(), 0,
     'an unknown limit must draw no meter, so it never reads as spare capacity');
 
