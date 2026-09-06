@@ -4,6 +4,7 @@ import { addDemand, addDevice, addLink, applySpec, moveDevice, normalizeId, remo
 import { importDeviceDefinition } from './device-import.js';
 import { parseProject, serializeProject } from './project.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
+import { GLYPHS, GLYPH_SPRITE } from './glyphs.js';
 import { vendorLogoFor } from './logos.js';
 import { buildTemplate, templates } from './templates.js';
 import { catalogEntry, catalogFor, catalogProfile } from './devices/catalog.js';
@@ -128,6 +129,15 @@ function renderBottleneck() {
   element('bottleneck-note').textContent = parts.filter(Boolean).join(' ');
 }
 
+function renderClassControl() {
+  const titles = { glyph: '심볼', label: '클래스', badge: '배지' };
+  element('class-control').innerHTML = Object.entries(CLASS_OPTIONS).map(([axis, options]) => `
+    <div class="layout-axis" role="group" aria-label="${titles[axis]} 표현">
+      <span>${titles[axis]}</span>
+      ${options.map(([value, label]) => `<button type="button" data-class-axis="${axis}" data-class-value="${value}" aria-pressed="${classView[axis] === value}">${escapeText(label)}</button>`).join('')}
+    </div>`).join('');
+}
+
 function render() {
   renderSummary();
   renderFailures();
@@ -136,6 +146,8 @@ function render() {
   renderComparison();
   renderBottleneck();
   renderEditorMode();
+  renderClassControl();
+  element('topology-canvas').dataset.classLabel = classView.label;
 }
 
 function renderSummary() {
@@ -212,6 +224,29 @@ const STATE_TOKEN = { healthy: '.', warning: '!', overloaded: '>', unknown: '?',
 const NODE_AXIS_LIMIT = 4;
 const AXIS_RANK = { overloaded: 0, invalid: 1, warning: 2, healthy: 3, unknown: 4 };
 const SI_STEPS = [[1e12, 'T'], [1e9, 'G'], [1e6, 'M'], [1e3, 'K']];
+// 클래스를 어떻게 보일지 겨루는 후보 셋. 서로 배타적이지 않으므로 각각 켜고 끈다.
+const CLASS_OPTIONS = {
+  glyph: [['stencil', '스텐실'], ['silhouette', '실루엣']],
+  label: [['meta', 'meta'], ['strong', '강조']],
+  badge: [['off', '끔'], ['on', '켬']],
+};
+const classView = { glyph: 'stencil', label: 'meta', badge: 'off' };
+try {
+  const saved = JSON.parse(localStorage.getItem('rack-mesh-class-view') || '{}');
+  for (const axis of Object.keys(classView)) {
+    if (CLASS_OPTIONS[axis].some(([value]) => value === saved[axis])) classView[axis] = saved[axis];
+  }
+} catch { /* 저장된 선택이 없으면 기본값을 쓴다 */ }
+
+// 이니셜은 앞 세 글자를 자르면 SWI·ROU 가 되어 읽히지 않는다. 손으로 정한다.
+const KIND_INITIAL = {
+  switch: 'SW', router: 'RT', hub: 'HB', modem: 'MD', wireless: 'WL',
+  firewall: 'FW', ips: 'IPS', waf: 'WAF', lb: 'LB', vpn: 'VPN', sslvpn: 'SSL',
+  server: 'SRV', web: 'WEB', vm: 'VM', db: 'DB', mail: 'ML', mainframe: 'MF',
+  storage: 'ST', nas: 'NAS', backup: 'BK', client: 'CL', cloud: 'EXT', rack: 'RK',
+};
+const kindInitial = (kind) => KIND_INITIAL[String(kind).toLowerCase()] || String(kind).slice(0, 3).toUpperCase();
+
 const KIND_ALIAS = { 'load-balancer': 'lb', loadbalancer: 'lb', balancer: 'lb', host: 'server', compute: 'server', vm: 'server', nas: 'storage', san: 'storage' };
 
 // 노드 폭 안에 들어가도록 단위를 떼고 5자 이내로 줄인다. 단위는 축 이름 열이 지시한다.
@@ -226,7 +261,9 @@ function formatNodeValue(value) {
 // kind는 임의 문자열이라 목록 밖 값이 들어온다. 화이트리스트를 통과한 값만 href에 넣는다.
 function symbolId(kind) {
   const key = String(kind ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  const exact = KIND_ALIAS[key] || key;
+  if (classView.glyph === 'silhouette' && GLYPHS[key]) return GLYPHS[key].id;
+  // 목록에 정확히 있는 kind 는 별칭보다 앞선다. 그러지 않으면 vm 이 server 심볼로 그려진다.
+  const exact = ICONS[key] ? key : (KIND_ALIAS[key] || key);
   if (ICONS[exact]) return ICONS[exact].id;
   return ICONS[ICON_KINDS.find((name) => key.includes(name)) || ICON_FALLBACK].id;
 }
@@ -321,7 +358,7 @@ function renderPalette() {
     // 2열 격자에서 홀수 그룹의 마지막 칸은 빈 자리로 남는다. 그 항목을 한 줄로 늘려 메운다.
     const wide = counts.get(item.group) % 2 === 1 && index === counts.get(item.group) - 1 ? ' data-wide=""' : '';
     return `${heading}<button type="button" class="palette-item"${wide} data-palette-kind="${item.kind}" aria-label="${escapeAttribute(item.label)} 추가">
-    <span class="palette-glyph"><svg aria-hidden="true" focusable="false"><use href="#${ICONS[item.kind].id}"></use></svg></span><span class="palette-label">${escapeText(item.label)}</span><span class="palette-kind">${item.kind.toUpperCase()}</span>
+    <span class="palette-glyph"><svg aria-hidden="true" focusable="false"><use href="#${symbolId(item.kind)}"></use></svg></span><span class="palette-label">${escapeText(item.label)}</span><span class="palette-kind">${item.kind.toUpperCase()}</span>
   </button>`;
   }).join('');
 }
@@ -538,13 +575,14 @@ function renderTopology() {
     const verdict = sweep.resources.find(({ id }) => id === device.id);
     // 이미 죽은 장비에 "이게 죽으면 끊긴다"와 숨긴 축 개수를 붙이는 것은 소음이다.
     const spof = device.active && verdict?.verdict === 'severs' && !verdict.endpoint;
-    const meta = [device.kind.toUpperCase(), behaviorToken(device), zonePath(device.zone).at(-1) || device.zone,
+    const strongClass = classView.label === 'strong';
+    const meta = [strongClass ? '' : device.kind.toUpperCase(), behaviorToken(device), zonePath(device.zone).at(-1) || device.zone,
       spof ? 'SPOF' : '', device.active && hidden ? `+${hidden}` : ''].filter(Boolean).join(' \u00b7 ');
     const axes = device.active
       ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis)).join('')
       : '<span class="node-axis" data-axis-state="disabled"><i>x</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>';
     return `<button type="button" class="mesh-node ${status} ${state.selectedId === device.id ? 'selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x - viewport.minX}px;top:${device.position.y - viewport.minY}px" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
-      <span class="node-symbol">${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolId(device.kind)}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
+      <span class="node-symbol">${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}${classView.badge === 'on' ? `<span class="node-class-badge">${escapeText(kindInitial(device.kind))}</span>` : ''}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolId(device.kind)}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${strongClass ? `<span class="node-class">${escapeText(device.kind.toUpperCase())}</span>` : ''}${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
     </button>`;
   }).join('');
 }
@@ -1058,6 +1096,14 @@ element('failure-list').addEventListener('click', (event) => {
   const button = event.target.closest('[data-failure-id]');
   if (button) toggleFailure(button.dataset.failureType, button.dataset.failureId);
 });
+element('class-control').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-class-axis]');
+  if (!button) return;
+  classView[button.dataset.classAxis] = button.dataset.classValue;
+  try { localStorage.setItem('rack-mesh-class-view', JSON.stringify(classView)); } catch { /* 저장이 막혀도 이번 세션은 바뀐다 */ }
+  renderPalette();
+  render();
+});
 document.querySelector('.mobile-fault-tray').addEventListener('click', (event) => {
   const button = event.target.closest('[data-quick-failure]');
   if (button) toggleFailure('device', button.dataset.quickFailure);
@@ -1349,7 +1395,7 @@ element('component-palette').addEventListener('pointermove', (event) => {
     if (Math.hypot(event.clientX - paletteDrag.startX, event.clientY - paletteDrag.startY) <= PALETTE_DRAG_THRESHOLD) return;
     paletteDrag.ghost = document.createElement('div');
     paletteDrag.ghost.className = 'palette-ghost';
-    paletteDrag.ghost.innerHTML = `<svg aria-hidden="true" focusable="false"><use href="#${ICONS[paletteDrag.kind].id}"></use></svg>`;
+    paletteDrag.ghost.innerHTML = `<svg aria-hidden="true" focusable="false"><use href="#${symbolId(paletteDrag.kind)}"></use></svg>`;
     document.body.append(paletteDrag.ghost);
     paletteDrag.item.classList.add('dragging');
   }
@@ -1373,7 +1419,7 @@ document.addEventListener('lostpointercapture', () => { if (paletteDrag) endPale
 reducedMotion.addEventListener('change', startTelemetry);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) updateTelemetry(); });
 
-element('icon-sprite').innerHTML = ICON_SPRITE;
+element('icon-sprite').innerHTML = ICON_SPRITE + GLYPH_SPRITE;
 element('topology-stage').style.setProperty('--zoom', String(state.zoom));
 renderPalette();
 setLeftPanel(state.leftPanel);

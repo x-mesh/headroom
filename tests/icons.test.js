@@ -71,3 +71,28 @@ test('vendor marks resolve from a manufacturer string and stay optional', async 
   assert.equal(VENDOR_LOGO_SOURCE.license, 'CC0-1.0');
   assert.match(VENDOR_LOGO_SOURCE.note, /trademarks of their owners/);
 });
+
+test('hand-drawn glyphs follow the same rules as the generated ones', async () => {
+  const { GLYPHS, GLYPH_KINDS, GLYPH_SPRITE } = await import('../src/glyphs.js');
+  assert.ok(GLYPH_KINDS.length >= 7, 'the silhouette set covers the classes the stencils cannot tell apart');
+  for (const kind of GLYPH_KINDS) {
+    const glyph = GLYPHS[kind];
+    assert.equal(glyph.id, `glyph-${kind}`);
+    // 스텐실과 같은 뷰박스라야 같은 자리에 같은 크기로 그려진다.
+    assert.equal(glyph.viewBox, '-2 -2 104 33');
+    // 스크립트·외부 참조 금지는 생성 심볼과 같은 기준이다.
+    for (const pattern of [/<script/i, /href=/i, /xlink:/i, /url\(/i, / on[a-z]+=/i]) {
+      assert.doesNotMatch(glyph.body, pattern, `${kind} body must stay inert`);
+    }
+    assert.equal((glyph.body.match(/<g/g) || []).length, (glyph.body.match(/<\/g>/g) || []).length, `${kind} has unbalanced groups`);
+    // 색은 커스텀 프로퍼티로만. 리터럴이 박히면 비활성·선택 상태에서 따로 논다.
+    assert.doesNotMatch(glyph.body.replace(/var\(--icon-[a-z]+,[^)]*\)/g, ''), /#[0-9a-f]{3,8}\b/i, `${kind} paints outside the icon tokens`);
+    assert.match(glyph.body, /stroke:var\(--icon-line,currentColor\)/, `${kind} must take its stroke from the icon token`);
+  }
+  assert.equal((GLYPH_SPRITE.match(/<symbol /g) || []).length, GLYPH_KINDS.length);
+  assert.match(GLYPH_SPRITE, /preserveAspectRatio="xMidYMid meet"/);
+  // 스텐실 심볼과 id 가 겹치면 <use> 가 엉뚱한 것을 집는다.
+  const { ICONS, ICON_KINDS } = await import('../src/icons.js');
+  const stencilIds = new Set(ICON_KINDS.map((kind) => ICONS[kind].id));
+  for (const kind of GLYPH_KINDS) assert.equal(stencilIds.has(GLYPHS[kind].id), false, `${kind} id collides with a stencil symbol`);
+});
