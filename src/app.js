@@ -126,6 +126,14 @@ function renderBottleneck() {
   element('bottleneck-note').textContent = parts.filter(Boolean).join(' ');
 }
 
+function renderLayoutControl() {
+  element('layout-control').innerHTML = Object.entries(LAYOUT_OPTIONS).map(([axis, options]) => `
+    <div class="layout-axis" role="group" aria-label="${axis === 'group' ? '그룹 표현' : '노드 표현'}">
+      <span>${axis === 'group' ? '그룹' : '노드'}</span>
+      ${options.map(([value, label]) => `<button type="button" data-layout-axis="${axis}" data-layout-value="${value}" aria-pressed="${layout[axis] === value}">${escapeText(label)}</button>`).join('')}
+    </div>`).join('');
+}
+
 function render() {
   renderSummary();
   renderFailures();
@@ -134,6 +142,9 @@ function render() {
   renderComparison();
   renderBottleneck();
   renderEditorMode();
+  renderLayoutControl();
+  element('topology-canvas').dataset.groupLayout = layout.group;
+  element('topology-canvas').dataset.nodeLayout = layout.node;
 }
 
 function renderSummary() {
@@ -251,7 +262,9 @@ function nodeAxisRow(device, key, axis) {
   // unknown·invalid 축에는 data-live-util을 붙이지 않는다. 텔레메트리가 미확인 값을 숫자로 덮어쓰면 안 된다.
   const live = axis.utilization == null ? '' : ` data-live-util="${axis.utilization}" data-live-seed="${escapeAttribute(device.id)}:${key}"`;
   const percent = axis.status === 'unknown' ? '\u2014' : axis.status === 'invalid' ? 'ERR' : formatPercent(axis.utilization);
-  return `<span class="node-axis" data-axis-state="${axis.status}"${key === device.bindingAxis ? ' data-binding=""' : ''}><i>${STATE_TOKEN[axis.status] || '?'}</i><b>${escapeText(nodeAxisLabel(key))}</b><em>${formatNodeValue(axis.load)}</em><s${live}>${percent}</s></span>`;
+  // 막대 후보가 쓰는 값. unknown 축은 넘기지 않아 막대가 그려지지 않는다.
+  const meter = axis.utilization == null ? '' : ` style="--util:${Math.min(axis.utilization, 1.5)}"`;
+  return `<span class="node-axis" data-axis-state="${axis.status}"${key === device.bindingAxis ? ' data-binding=""' : ''}${meter}><i>${STATE_TOKEN[axis.status] || '?'}</i><b>${escapeText(nodeAxisLabel(key))}</b><em>${formatNodeValue(axis.load)}</em><s${live}>${percent}</s></span>`;
 }
 
 // 축 토큰은 시각 축약이라 읽히면 소음이다. 접근 가능한 이름은 요약만 담고 흔들리는 값을 넣지 않는다.
@@ -330,14 +343,72 @@ const ZOOM_RANGE = { min: ZOOM_STEPS[0], max: ZOOM_STEPS.at(-1) };
 const ZOOM_WHEEL_SENSITIVITY = 0.0005;
 const WHEEL_LINE_HEIGHT = 16;
 // 노드는 심볼 중심이 기준이고 라벨이 아래로 흐르므로 방향별 여백이 다르다.
-const NODE_REACH = { left: 70, right: 70, top: 30, bottom: 150 };
+// 후보마다 노드 치수가 다르므로 그룹 상자와 캔버스가 그 치수를 따라간다.
+const NODE_REACH_BY_LAYOUT = {
+  standard: { left: 70, right: 70, top: 30, bottom: 150 },
+  compact: { left: 58, right: 58, top: 22, bottom: 116 },
+  wide: { left: 90, right: 90, top: 36, bottom: 168 },
+  meter: { left: 70, right: 70, top: 30, bottom: 172 },
+};
+const nodeReach = () => NODE_REACH_BY_LAYOUT[layout.node] || NODE_REACH_BY_LAYOUT.standard;
 let viewport = { minX: 0, minY: 0, width: CANVAS_MIN.width, height: CANVAS_MIN.height };
 
+// 레이아웃 후보. 실제 토폴로지와 계산 결과로 견주어 고르기 위한 임시 전환기다.
+const LAYOUT_OPTIONS = {
+  group: [['plain', '없음'], ['frame', '박스'], ['wash', '톤'], ['band', '밴드']],
+  node: [['standard', '기본'], ['compact', '압축'], ['wide', '넓게'], ['meter', '막대']],
+};
+const layout = { group: 'frame', node: 'standard' };
+try {
+  const saved = JSON.parse(localStorage.getItem('rack-mesh-layout') || '{}');
+  for (const axis of Object.keys(layout)) {
+    if (LAYOUT_OPTIONS[axis].some(([value]) => value === saved[axis])) layout[axis] = saved[axis];
+  }
+} catch { /* 저장된 선택이 없으면 기본값을 쓴다 */ }
+
+// zone 은 슬래시로 계층을 적는다. 'FABRIC / RACK 04' 는 FABRIC 안의 RACK 04 다.
+// 계층을 쓰지 않은 설계는 한 층짜리 그룹이 되고, 그리는 방식은 같다.
+const GROUP_PAD = { base: 14, step: 8, label: 17 };
+const zonePath = (zone) => String(zone || '').split('/').map((part) => part.trim()).filter(Boolean);
+
+function groupBoxes(devices) {
+  const NODE_REACH = nodeReach();
+  const byPath = new Map();
+  for (const device of devices) {
+    const path = zonePath(device.zone);
+    for (let depth = 1; depth <= path.length; depth += 1) {
+      const key = path.slice(0, depth).join(' / ');
+      const entry = byPath.get(key) || { key, label: path[depth - 1], depth, box: null };
+      const box = entry.box || { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+      entry.box = {
+        minX: Math.min(box.minX, device.position.x - NODE_REACH.left),
+        minY: Math.min(box.minY, device.position.y - NODE_REACH.top),
+        maxX: Math.max(box.maxX, device.position.x + NODE_REACH.right),
+        maxY: Math.max(box.maxY, device.position.y + NODE_REACH.bottom),
+      };
+      byPath.set(key, entry);
+    }
+  }
+  const deepest = Math.max(0, ...[...byPath.values()].map(({ depth }) => depth));
+  // 얕은 그룹일수록 여백을 크게 줘야 자식 상자를 감싼 것으로 읽힌다.
+  return [...byPath.values()]
+    .sort((a, b) => a.depth - b.depth || a.key.localeCompare(b.key))
+    .map((entry) => {
+      const pad = GROUP_PAD.base + (deepest - entry.depth) * GROUP_PAD.step;
+      return { ...entry, x: entry.box.minX - pad, y: entry.box.minY - pad - GROUP_PAD.label,
+        width: entry.box.maxX - entry.box.minX + pad * 2, height: entry.box.maxY - entry.box.minY + pad * 2 + GROUP_PAD.label };
+    });
+}
+
 function canvasViewport(devices) {
-  const bounds = devices.reduce((box, { position }) => ({
+  const NODE_REACH = nodeReach();
+  const bounds = (layout.group === 'plain' ? [] : groupBoxes(devices)).reduce((box, group) => ({
+    minX: Math.min(box.minX, group.x), minY: Math.min(box.minY, group.y),
+    maxX: Math.max(box.maxX, group.x + group.width), maxY: Math.max(box.maxY, group.y + group.height),
+  }), devices.reduce((box, { position }) => ({
     minX: Math.min(box.minX, position.x - NODE_REACH.left), minY: Math.min(box.minY, position.y - NODE_REACH.top),
     maxX: Math.max(box.maxX, position.x + NODE_REACH.right), maxY: Math.max(box.maxY, position.y + NODE_REACH.bottom),
-  }), { minX: 0, minY: 0, maxX: CANVAS_MIN.width, maxY: CANVAS_MIN.height });
+  }), { minX: 0, minY: 0, maxX: CANVAS_MIN.width, maxY: CANVAS_MIN.height }));
   const minX = bounds.minX < 0 ? bounds.minX - CANVAS_PAD : 0;
   const minY = bounds.minY < 0 ? bounds.minY - CANVAS_PAD : 0;
   const maxX = bounds.maxX > CANVAS_MIN.width ? bounds.maxX + CANVAS_PAD : CANVAS_MIN.width;
@@ -451,7 +522,11 @@ function renderTopology() {
   const devices = new Map(current.devices.map((item) => [item.id, item]));
   // 끊긴 demand 가 무장애였다면 지났을 링크. 살아 있지만 이 트래픽은 지나지 못한다.
   const severedPathLinks = new Set(current.demands.flatMap(({ severedPaths }) => (severedPaths || []).flatMap(({ links }) => links)));
-  element('link-layer').innerHTML = current.links.map((link) => {
+  const groupMarkup = layout.group === 'plain' ? '' : groupBoxes(current.devices).map((group) => `<g class="topology-group" data-depth="${group.depth}">
+      <rect class="group-frame" x="${group.x}" y="${group.y}" width="${group.width}" height="${group.height}"></rect>
+      <text class="group-label" x="${group.x + 11}" y="${group.y + 13}">${escapeText(group.label)}</text>
+    </g>`).join('');
+  element('link-layer').innerHTML = groupMarkup + current.links.map((link) => {
     const source = devices.get(link.source).position;
     const target = devices.get(link.target).position;
     const onSeveredPath = !link.severed && severedPathLinks.has(link.id);
@@ -479,7 +554,8 @@ function renderTopology() {
     const verdict = sweep.resources.find(({ id }) => id === device.id);
     // 이미 죽은 장비에 "이게 죽으면 끊긴다"와 숨긴 축 개수를 붙이는 것은 소음이다.
     const spof = device.active && verdict?.verdict === 'severs' && !verdict.endpoint;
-    const meta = [device.kind.toUpperCase(), behaviorToken(device), device.zone, spof ? 'SPOF' : '', device.active && hidden ? `+${hidden}` : ''].filter(Boolean).join(' \u00b7 ');
+    const meta = [device.kind.toUpperCase(), behaviorToken(device), zonePath(device.zone).at(-1) || device.zone,
+      spof ? 'SPOF' : '', device.active && hidden ? `+${hidden}` : ''].filter(Boolean).join(' \u00b7 ');
     const axes = device.active
       ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis)).join('')
       : '<span class="node-axis" data-axis-state="disabled"><i>x</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>';
@@ -862,6 +938,13 @@ element('scale-input').addEventListener('input', (event) => { state.scale = Numb
 element('failure-list').addEventListener('click', (event) => {
   const button = event.target.closest('[data-failure-id]');
   if (button) toggleFailure(button.dataset.failureType, button.dataset.failureId);
+});
+element('layout-control').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-layout-axis]');
+  if (!button) return;
+  layout[button.dataset.layoutAxis] = button.dataset.layoutValue;
+  try { localStorage.setItem('rack-mesh-layout', JSON.stringify(layout)); } catch { /* 저장이 막혀도 이번 세션은 바뀐다 */ }
+  render();
 });
 document.querySelector('.mobile-fault-tray').addEventListener('click', (event) => {
   const button = event.target.closest('[data-quick-failure]');

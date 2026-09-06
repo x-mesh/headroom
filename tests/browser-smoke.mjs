@@ -76,6 +76,21 @@ async function verify(viewport, screenshot, interact = false) {
   assert.doesNotMatch(unknownAxis, /\d%/, 'an unknown limit must never read as a percentage');
   assert.equal(await page.locator('#tab-palette').getAttribute('aria-selected'), 'true', 'the component tab opens first');
   await page.locator('#tab-failure').click();
+  // 레이아웃 후보 전환기. 고른 안이 정해지면 이 블록과 컨트롤을 함께 지운다.
+  assert.equal(await page.locator('[data-layout-axis]').count(), 8, 'both layout axes must offer their candidates');
+  await page.locator('[data-layout-axis="group"][data-layout-value="wash"]').click();
+  await page.locator('[data-layout-axis="node"][data-layout-value="meter"]').click();
+  await page.waitForTimeout(80);
+  assert.equal(await page.locator('#topology-canvas').getAttribute('data-group-layout'), 'wash');
+  assert.ok(await page.locator('.topology-group').count() > 0, 'a grouped layout must draw the zone boxes');
+  assert.ok(await page.locator('.topology-group[data-depth="2"]').count() > 0, 'a slash in a zone must nest one box inside another');
+  await page.locator('[data-layout-axis="group"][data-layout-value="plain"]').click();
+  await page.waitForTimeout(80);
+  assert.equal(await page.locator('.topology-group').count(), 0, 'the plain candidate draws no boxes');
+  await page.locator('[data-layout-axis="group"][data-layout-value="frame"]').click();
+  await page.locator('[data-layout-axis="node"][data-layout-value="standard"]').click();
+  await page.waitForTimeout(80);
+
   assert.equal(await page.locator('.failure-switch').count(), 20, 'every device and link must be failable, not two classes');
   assert.match(await page.locator('#failure-grade').textContent(), /단일 장애점 \d+개/, 'the panel must grade the design before anything is turned off');
   const forecasts = await page.locator('.failure-forecast').evaluateAll((nodes) => nodes.map((node) => node.dataset.verdict));

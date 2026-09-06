@@ -205,6 +205,23 @@ button { color: inherit; }
 .topology-canvas { position: absolute; left: var(--stage-pad); top: var(--stage-pad); width: var(--canvas-width, 940px); height: var(--canvas-height, 580px); background: var(--canvas); transform: scale(var(--zoom, 1)); transform-origin: 0 0; }
 .topology-canvas::before { content: ''; position: absolute; inset: 0; opacity: .32; background-image: linear-gradient(var(--line-soft) 1px, transparent 1px), linear-gradient(90deg, var(--line-soft) 1px, transparent 1px); background-size: 30px 30px; background-position: calc(-1 * var(--viewport-x, 0px)) calc(-1 * var(--viewport-y, 0px)); pointer-events: none; }
 .link-layer, .node-layer { position: absolute; inset: 0; }
+/* 캔버스 표현 후보 — 결정 뒤 고른 하나만 남기고 나머지 규칙을 지운다. */
+.layout-control { display: grid; gap: 4px; margin-top: 7px; }
+.layout-axis { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; }
+.layout-axis > span { min-width: 26px; color: var(--muted); font: 600 8px/1 var(--font-data); letter-spacing: .1em; }
+.layout-axis button { min-height: 22px; padding: 0 8px; border: 1px solid var(--line-soft); background: var(--surface); color: var(--muted); font: 600 8px/1 var(--font-data); letter-spacing: .06em; cursor: pointer; }
+.layout-axis button:hover { border-color: var(--line); color: var(--text); }
+.layout-axis button[aria-pressed="true"] { border-color: var(--signal-deep); background: var(--surface-raised); color: var(--signal-deep); }
+
+.topology-group .group-frame { fill: none; stroke: none; }
+.topology-group .group-label { fill: var(--muted); font: 600 9px/1 var(--font-data); letter-spacing: .1em; }
+[data-group-layout="frame"] .group-frame { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+[data-group-layout="frame"] .topology-group[data-depth="2"] .group-frame { stroke: var(--line-soft); }
+[data-group-layout="wash"] .group-frame { fill: color-mix(in srgb, var(--surface-tint) 55%, transparent); stroke: var(--line-soft); stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
+[data-group-layout="wash"] .topology-group[data-depth="2"] .group-frame { fill: color-mix(in srgb, var(--surface-raised) 60%, transparent); }
+[data-group-layout="band"] .group-frame { fill: none; stroke: var(--line); stroke-width: 1; stroke-dasharray: 0; vector-effect: non-scaling-stroke; clip-path: inset(0 0 calc(100% - 18px) 0); }
+[data-group-layout="band"] .group-label { fill: var(--text); }
+
 .link { stroke: var(--cyan); stroke-width: 2; fill: none; vector-effect: non-scaling-stroke; opacity: .68; }
 .link.unknown { stroke: var(--unknown); stroke-dasharray: 5 4; }.link.warning { stroke: var(--amber); }.link.overloaded { stroke: var(--danger); stroke-width: 3; }.link.invalid { stroke: var(--danger); stroke-dasharray: 2 3; }.link.disabled { stroke: var(--danger); stroke-dasharray: 7 7; opacity: .55; }.link.on-severed-path { stroke: var(--danger); stroke-dasharray: 2 6; opacity: .38; }
 .link-hit { stroke: transparent; stroke-width: 18; cursor: pointer; pointer-events: stroke; }
@@ -241,6 +258,30 @@ button { color: inherit; }
 .node-axis[data-binding] b { font-weight: 700; color: var(--text); }
 .node-axis em { font-style: normal; text-align: right; font-variant-numeric: tabular-nums; }
 .node-axis s { text-decoration: none; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; color: var(--axis-color); }
+/* 노드 표현 후보 — 결정 뒤 고른 하나만 남기고 나머지 규칙을 지운다. */
+[data-node-layout="compact"] .mesh-node { --symbol-h: 30px; width: 104px; }
+[data-node-layout="compact"] .node-symbol { width: 92px; }
+[data-node-layout="compact"] .node-glyph { width: 88px; height: 28px; }
+[data-node-layout="compact"] .node-rail { width: 92px; height: 2px; }
+[data-node-layout="compact"] .node-labels { max-width: 104px; padding: 2px 4px 3px; }
+[data-node-layout="compact"] .node-name { max-width: 96px; font-size: 10px; }
+[data-node-layout="compact"] .node-axis { grid-template-columns: 6px 4ch auto auto; gap: 0 4px; font-size: 8px; }
+[data-node-layout="compact"] .node-meta { font-size: 7px; }
+
+[data-node-layout="wide"] .mesh-node { --symbol-h: 58px; width: 168px; }
+[data-node-layout="wide"] .node-symbol { width: 152px; }
+[data-node-layout="wide"] .node-glyph { width: 146px; height: 54px; }
+[data-node-layout="wide"] .node-rail { width: 152px; }
+[data-node-layout="wide"] .node-labels { max-width: 168px; padding: 4px 8px 5px; }
+[data-node-layout="wide"] .node-name { max-width: 152px; font-size: 12px; }
+[data-node-layout="wide"] .node-axis { grid-template-columns: 8px 5ch 1fr auto; gap: 0 8px; font-size: 10px; }
+
+[data-node-layout="meter"] .node-axis { position: relative; padding-bottom: 3px; }
+[data-node-layout="meter"] .node-axis::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--line-soft); }
+[data-node-layout="meter"] .node-axis[style*="--util"]::before { content: ''; position: absolute; left: 0; bottom: 0; width: calc(min(var(--util), 1) * 100%); height: 2px; background: var(--axis-color); z-index: 1; }
+[data-node-layout="meter"] .node-axis[data-axis-state="overloaded"]::after { background: var(--danger); opacity: .35; }
+[data-node-layout="meter"] .node-axes { gap: 4px; }
+
 .node-meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 500 8px/1.1 var(--font-data); letter-spacing: .1em; }
 .canvas-footer { min-height: 46px; padding: 9px 22px; display: flex; align-items: center; justify-content: space-between; gap: 18px; color: var(--muted); border-top: 1px solid var(--line-soft); font: 500 9px/1 var(--font-data); }
 .bottleneck-note { margin: 0; color: var(--text); font: 500 11px/1.5 var(--font-ui); }
