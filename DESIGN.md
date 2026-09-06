@@ -20,8 +20,8 @@ colors:
   muted: "#526e64"
   signal: "#b8e737"
   signal-deep: "#587d00"
-  amber: "#b66b00"
-  danger: "#c9473f"
+  amber: "#9a5a00"
+  danger: "#b83c34"
   unknown: "#697286"
   cyan: "#087d70"
   action-ink: "#173028"
@@ -163,8 +163,8 @@ The palette separates a calm daylight workspace from a deep operational frame. S
 ### Secondary
 
 - **Capacity Cyan** (#087d70): Use for healthy resources, active links, live telemetry, and the first sparkline.
-- **Constraint Amber** (#b66b00): Use for caution states and the second sparkline.
-- **Fault Red** (#c9473f): Use for overloads, failures, negative changes, and the third sparkline.
+- **Constraint Amber** (#9a5a00): Use for caution states and the second sparkline.
+- **Fault Red** (#b83c34): Use for overloads, failures, negative changes, and the third sparkline.
 - **Unknown Slate** (#697286): Use when a capacity limit is not known.
 
 ### Neutral
@@ -300,6 +300,7 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 
 - **Frame:** Use the deep forest surface, light text, and a 72px minimum height.
 - **Run State:** Pair an 8px lamp with visible state text. Use lime, amber, or red for state.
+- **Warning Tier:** Name the warning tier the engine already computes. A design holding resources above the warning threshold must never read as stable, and the count belongs in the text.
 - **Live State:** Pair a cyan 7px indicator with `LIVE · SYNTHETIC TELEMETRY`.
 - **Motion:** Use a 1.8s alternate breath with the standard motion curve.
 
@@ -308,7 +309,10 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Structure:** Present four equal summary cells. Keep 28 recent samples in each SVG sparkline.
 - **Series:** Show headroom, maximum utilization, delivery, and total traffic.
 - **Legend:** Name every capacity state the canvas can paint, disabled included. A state the canvas draws but the legend omits is unreadable.
+- **One Name Per State:** The legend and the inspector must call a state the same thing. Two names for one state read as two states.
 - **Color:** Use cyan, amber, red, and deep signal green in that order.
+- **Headline Number:** Do not animate the largest number on the page. Synthetic variation belongs in the sparkline; a headline that drifts between two values contradicts the fixed comparison panel and the reader cannot tell which to trust.
+- **Metric Color:** Color the headroom figure by the same threshold the engine judges with. A figure the engine calls warning must not be painted the healthy color.
 - **Telemetry:** Add about ±1–2% synthetic variation to the presentation layer. Keep scenario values unchanged.
 - **Cadence:** Refresh visible motion every 820ms. Pause refresh work while the document is hidden.
 
@@ -325,6 +329,13 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Cover:** Let it cover what sits below and cast a shadow, so the panel reads as temporary.
 - **Dismiss:** Close on Escape, on the close button, and on a press outside the panel.
 - **Height:** Cap it to the viewport and scroll inside. Never let it push the page taller.
+
+### Canvas Headline
+
+- **Answer, Not Question:** The largest type on the canvas states the answer — the binding resource, its axis and direction, and its utilisation. A standing question in display type while its answer sits in 11px at the fold is the wrong way round.
+- **Tone:** Color the headline by the binding axis state, so overload and caution read before the number does.
+- **Detail Line:** Under it, state the load against the limit and how much growth is left before the first overload.
+- **Growth Limit:** Find that multiplier by bisecting the workload scale with the engine. It is a fact the tool can already compute and had nowhere to say.
 
 ### Bottleneck Note
 
