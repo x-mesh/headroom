@@ -425,6 +425,8 @@ try {
 
 // 선을 어떻게 그을지. 직선이 기본이다 - 굽히는 것은 보기의 문제이고, 어느 쪽을 골라도 어느
 // 자원이 무엇에 이어졌는지는 같다. 직각과 곡선은 노드 카드를 비켜 가므로 선이 숫자를 덜 가린다.
+let bendDrag = null;
+let lastBendPress = { key: '', at: 0 };
 const routeView = { mode: 'straight' };
 try {
   const saved = localStorage.getItem('rack-mesh-link-route');
@@ -758,9 +760,10 @@ function renderTopology() {
   // 마디를 한 번만 정하고 선·판정 영역·패킷 점·라벨이 모두 그것을 쓴다. 따로 계산하면
   // 곡선 위의 라벨이 직선 자리에 남는다. 양 끝 노드는 장애물에서 뺀다 - 자기 카드는 지나야 한다.
   const cards = new Map(current.devices.filter(({ position }) => position).map((device) => [device.id, cardBox(device.position)]));
+  const bendsOf = (id) => (bendDrag?.id === id ? bendDrag.points : topology.links.find((link) => link.id === id)?.waypoints || []);
   const routes = new Map(current.links.map((link) => [link.id, routeLink(
     devices.get(link.source).position, devices.get(link.target).position,
-    [...cards].filter(([id]) => id !== link.source && id !== link.target).map(([, box]) => box), routeView.mode)]));
+    [...cards].filter(([id]) => id !== link.source && id !== link.target).map(([, box]) => box), routeView.mode, bendsOf(link.id))]));
   // 라벨은 가운데 마디 위에서 자리를 찾는다(diagram.js 와 같은 규칙).
   const midSegment = (points) => { const half = Math.max(1, Math.floor(points.length / 2)); return [points[half - 1], points[half]]; };
   const labelSpots = placeLinkLabels(current.links.map((link) => {
@@ -774,6 +777,29 @@ function renderTopology() {
       from, to,
     };
   }), current.devices.map(({ position }) => position));
+  // 손잡이는 자동으로 생긴 마디가 아니라 사용자가 찍은 자리와 그 사이의 가운데에 둔다. 모드를
+  // 바꿔도 같은 자리에 있어야 무엇을 옮기는 것인지 예측할 수 있다. 가운데를 끌면 마디가 생기고,
+  // 찍힌 자리를 끌면 그 마디가 움직인다.
+  const bendHandles = (link) => {
+    const anchors = [devices.get(link.source).position, ...bendsOf(link.id), devices.get(link.target).position];
+    const pinned = bendsOf(link.id).length;
+    const handles = bendsOf(link.id).map((point, index) =>
+      `<rect class="link-handle" data-bend-link="${escapeAttribute(link.id)}" data-bend-index="${index}" data-bend-kind="move" x="${point.x - 4}" y="${point.y - 4}" width="8" height="8"></rect>`);
+    if (pinned >= 8) return handles.join('');
+    // 한가운데는 대개 노드 카드 밑이다 - 카드가 선 위에 그려지므로 그 자리의 손잡이는 눌리지
+    // 않는다. 가운데에서 시작해 양쪽으로 물러나며 카드에 안 걸리는 첫 자리를 쓴다.
+    const boxes = [...cards.values()];
+    const open = (point) => !boxes.some((box) => point.x > box.left && point.x < box.right && point.y > box.top && point.y < box.bottom);
+    for (let index = 1; index < anchors.length; index += 1) {
+      const from = anchors[index - 1]; const to = anchors[index];
+      const along = [0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74]
+        .map((share) => ({ x: from.x + (to.x - from.x) * share, y: from.y + (to.y - from.y) * share }));
+      const spot = along.find(open) ?? along[0];
+      handles.push(`<circle class="link-handle new" data-bend-link="${escapeAttribute(link.id)}" data-bend-index="${index - 1}" data-bend-kind="insert" cx="${spot.x}" cy="${spot.y}" r="4"></circle>`);
+    }
+    return handles.join('');
+  };
+
   element('link-layer').innerHTML = groupMarkup + current.links.map((link) => {
     const onSeveredPath = !link.severed && severedPathLinks.has(link.id);
     const status = linkStatus(link);
@@ -793,6 +819,7 @@ function renderTopology() {
       <path class="link-hit" d="${geometry}" tabindex="0" role="button" aria-label="${escapeAttribute(`${resourceName(link)} 링크 검사${link.severed ? ' · 끊김' : onSeveredPath ? ' · 경로 단절' : ''}`)}"></path>
       ${packetDots}
       ${spot ? `<text class="link-label"${link.severed ? '' : ` data-live-util="${utilization ?? ''}" data-live-seed="${link.id}"`} x="${spot.x}" y="${spot.y}" text-anchor="middle">${link.severed ? 'DOWN' : formatPercent(utilization)}</text>` : ''}
+      ${selectionHas('link', link.id) ? bendHandles(link) : ''}
     </g>`;
   }).join('') + diagramConnectors + groupLabels;
   fitGroupTags();
@@ -1882,6 +1909,8 @@ function contextItemsFor(resource, type) {
     if (catalogFor(resource.kind).length) items.push({ id: 'swap', label: resource.spec ? '장비 바꾸기' : '장비 고르기' });
     items.push({ id: 'duplicate', label: '복제' }, { id: 'connect', label: '여기서 링크 시작' });
   }
+  // 손으로 굽힌 선만 되돌릴 것이 있다. 굽히지 않은 선에 이 항목을 띄우면 누를 것이 없는 줄이 된다.
+  if (type === 'link' && resource.waypoints?.length) items.push({ id: 'straighten', label: '선 모양 초기화' });
   items.push({ id: 'fault', label: failed ? '장애 복구' : '장애 주입' });
   return items;
 }
@@ -1921,6 +1950,7 @@ function runContextAction(action) {
   const undo = (message) => () => { topology = previous; state.selectedId = id; commitTopology(message); };
   try {
     if (action === 'fault') { toggleFailure(type, id); return; }
+    if (action === 'straighten') { updateLink(topology, id, { waypoints: [] }); commitTopology('선을 자동 경로로 되돌렸습니다.'); return; }
     if (action === 'swap') { openDeviceSwapPicker(id); return; }
     if (action === 'connect') { state.editorMode = 'connect'; state.connectSource = id; renderTopology(); renderEditorMode(); showToast('연결할 두 번째 장비를 선택하세요.'); return; }
     if (action === 'delete') {
@@ -2125,6 +2155,54 @@ element('diagram-layer').addEventListener('pointerup', (event) => {
   topology = moveSelection(drag.initial, drag.selection, dx, dy, { grid: 15 });
   commitTopology('선택한 도형을 이동했습니다.');
 });
+// 선의 굴곡을 손으로 옮긴다. 가운데 손잡이를 끌면 마디가 새로 생기고, 네모 손잡이를 끌면
+// 이미 찍힌 마디가 움직인다. 두 번 누르면 그 마디를 지워 자동 경로로 돌려준다.
+element('link-layer').addEventListener('pointerdown', (event) => {
+  const handle = event.target.closest('.link-handle');
+  if (!handle || event.button !== 0) return;
+  const { bendLink, bendIndex, bendKind } = handle.dataset;
+  const link = topology.links.find(({ id }) => id === bendLink);
+  if (!link) return;
+  const start = canvasPoint(event);
+  const index = Number(bendIndex);
+  // 두 번 누르면 그 마디를 지운다. dblclick 을 쓰지 않는 것은 아래 preventDefault 가 호환
+  // 마우스 이벤트를 막아 그 이벤트가 영영 오지 않기 때문이다 - 눌린 간격을 직접 잰다.
+  const press = `${bendLink}:${bendIndex}:${bendKind}`;
+  if (bendKind === 'move' && press === lastBendPress.key && event.timeStamp - lastBendPress.at < 400) {
+    lastBendPress = { key: '', at: 0 };
+    const left = (link.waypoints || []).filter((_, at) => at !== index);
+    updateLink(topology, link.id, { waypoints: left });
+    commitTopology(left.length ? '굴곡 하나를 지웠습니다.' : '선을 자동 경로로 되돌렸습니다.');
+    return;
+  }
+  lastBendPress = { key: press, at: event.timeStamp };
+  const points = (link.waypoints || []).map((point) => ({ ...point }));
+  if (bendKind === 'insert') points.splice(index, 0, { ...start });
+  bendDrag = { id: bendLink, index, points, start, moved: false, pointerId: event.pointerId };
+  element('link-layer').setPointerCapture(event.pointerId);
+  event.preventDefault();
+  event.stopPropagation();
+});
+element('link-layer').addEventListener('pointermove', (event) => {
+  if (!bendDrag || event.pointerId !== bendDrag.pointerId) return;
+  const at = canvasPoint(event);
+  if (Math.hypot(at.x - bendDrag.start.x, at.y - bendDrag.start.y) >= 3) bendDrag.moved = true;
+  // 장비를 옮길 때와 같은 격자에 맞춘다. 눈금이 다르면 선과 장비가 미묘하게 어긋난다.
+  bendDrag.points[bendDrag.index] = { x: Math.round(at.x / 15) * 15, y: Math.round(at.y / 15) * 15 };
+  // 끄는 동안 선이 따라와야 어디에 놓을지 정할 수 있다. 잡은 포인터는 link-layer 가 쥐고 있어
+  // 안쪽을 다시 그려도 끊기지 않는다 - 손잡이만 옮기면 선이 제자리에 남아 결과를 못 본다.
+  renderTopology();
+});
+element('link-layer').addEventListener('pointerup', (event) => {
+  if (!bendDrag || event.pointerId !== bendDrag.pointerId) return;
+  const drag = bendDrag; bendDrag = null;
+  // 움직이지 않았으면 바뀐 것이 없다. 여기서 다시 그리면 손잡이가 새 요소로 갈려 두 번째
+  // 누름이 같은 자리로 이어지지 않는다.
+  if (!drag.moved) return;
+  try { updateLink(topology, drag.id, { waypoints: drag.points }); commitTopology('선의 굴곡을 옮겼습니다.'); }
+  catch (error) { showToast(error.message); renderTopology(); }
+});
+element('link-layer').addEventListener('pointercancel', () => { bendDrag = null; renderTopology(); });
 element('link-layer').addEventListener('click', (event) => {
   const group = event.target.closest('[data-link-id]');
   if (group) { selectElement('link', group.dataset.linkId, event.shiftKey || event.metaKey || event.ctrlKey); renderTopology(); renderInspector(); }
@@ -2518,7 +2596,7 @@ const topologyScroll = document.querySelector('.topology-scroll');
 // 있다는 것을 알 방법이 없었다. Shift 를 함께 누르면 이미 고른 것에 더한다.
 topologyScroll.addEventListener('pointerdown', (event) => {
   if (event.pointerType === 'touch') return;
-  const onResource = event.target.closest('.mesh-node, .link-hit, .diagram-shape');
+  const onResource = event.target.closest('.mesh-node, .link-hit, .link-handle, .diagram-shape');
   const panButton = event.button === 1 || event.button === 2;
   if (!onResource && event.button === 0 && state.editorMode === 'select') {
     const start = canvasPoint(event);
@@ -2578,7 +2656,7 @@ topologyScroll.addEventListener('pointerup', (event) => {
 // 그러면 포인터 잡기가 풀리며 pointercancel 이 와서 밀기가 시작하자마자 죽는다. 그래서 움직인
 // 뒤에 막는 것으로는 늦다 - 빈 곳에서는 누르는 순간부터 막는다. 자원 위 메뉴는 각자 열린다.
 topologyScroll.addEventListener('contextmenu', (event) => {
-  if (event.target.closest('.mesh-node, .link-hit, .diagram-shape')) return;
+  if (event.target.closest('.mesh-node, .link-hit, .link-handle, .diagram-shape')) return;
   event.preventDefault();
 }, true);
 topologyScroll.addEventListener('pointercancel', () => { selectionBoxState = null; element('selection-marquee').hidden = true; endPan(); });

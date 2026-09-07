@@ -257,9 +257,8 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
     const from = anchorPoint(a, edge.sourceAnchor);
     const to = anchorPoint(b, edge.targetAnchor);
     const pinned = (edge.waypoints || []).map((p) => ({ x: coordinate(p.x), y: coordinate(p.y) }));
-    if (pinned.length) return [{ edge, points: [from, ...pinned, to] }];
     const obstacles = [...cards].filter(([id]) => id !== edge.source && id !== edge.target).map(([, box]) => box);
-    return [{ edge, points: routeLink(from, to, obstacles, route) }];
+    return [{ edge, points: routeLink(from, to, obstacles, route, pinned) }];
   });
 
   const groups = result ? groupBoxes(result.devices.filter(({ position }) => position)) : [];

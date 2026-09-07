@@ -184,35 +184,9 @@ export function segmentHitsBox(a, b, box) {
 const pathClear = (points, obstacles) => points.every((point, index) =>
   index === 0 || !obstacles.some((box) => segmentHitsBox(points[index - 1], point, box)));
 
-/**
- * 두 점을 잇는 마디를 정한다. 직선은 두 점 그대로이고, 나머지는 노드 카드를 비켜 갈 통로를
- * 찾는다. 통로를 못 찾으면 곧게 잇는다 - 못 피한 것을 피한 것처럼 굽히면 그림이 거짓말을 한다.
- *
- * @param {{x:number,y:number}} from
- * @param {{x:number,y:number}} to
- * @param {{left:number,right:number,top:number,bottom:number}[]} obstacles 양 끝 노드는 빼고 넣는다.
- * @param {'straight'|'orthogonal'|'curved'} mode
- * @returns {{x:number,y:number}[]} 마디. 화면과 내보내기가 같은 이 배열로 그린다.
- */
-export function routeLink(from, to, obstacles = [], mode = 'straight') {
-  if (mode !== 'orthogonal' && mode !== 'curved') return [from, to];
-  if (pathClear([from, to], obstacles)) {
-    if (mode === 'orthogonal') return [from, to];
-    // 곧게 갈 수 있어도 곡선은 부풀린다. 길이에 비례하되 상한을 둬 짧은 선이 고리가 되지 않게 한다.
-    const dx = to.x - from.x; const dy = to.y - from.y;
-    const span = Math.hypot(dx, dy);
-    if (span < 1) return [from, to];
-    const bow = Math.min(span * BOW_RATIO, BOW_MAX);
-    // 부풀린 배가 남의 카드에 닿을 수 있다. 반대쪽으로도 재 보고, 둘 다 걸리면 곧게 둔다 -
-    // 피하려고 부풀린 선이 도리어 숫자를 가리면 굽힌 값어치가 없다.
-    for (const side of [1, -1]) {
-      const arc = [from, { x: (from.x + to.x) / 2 - (dy / span) * bow * side, y: (from.y + to.y) / 2 + (dx / span) * bow * side }, to];
-      if (pathClear(arc, obstacles)) return arc;
-    }
-    return [from, to];
-  }
-  const midX = (from.x + to.x) / 2;
-  const midY = (from.y + to.y) / 2;
+// 두 점 사이를 비켜 갈 통로 후보. 가운데를 기준으로 좌우(위아래)로 한 칸씩 밀어 가며 만든다.
+function laneRoutes(from, to) {
+  const midX = (from.x + to.x) / 2; const midY = (from.y + to.y) / 2;
   const vertical = []; const horizontal = [];
   for (let step = 0; step <= LANE_TRIES; step += 1) {
     for (const side of step ? [1, -1] : [1]) {
@@ -222,9 +196,52 @@ export function routeLink(from, to, obstacles = [], mode = 'straight') {
     }
   }
   // 가로로 먼 링크는 세로 통로부터 본다. 긴 쪽을 가로질러야 마디가 덜 튀어 나간다.
-  const wide = Math.abs(to.x - from.x) >= Math.abs(to.y - from.y);
-  const ordered = wide ? [...vertical, ...horizontal] : [...horizontal, ...vertical];
-  return ordered.find((points) => pathClear(points, obstacles)) ?? [from, to];
+  return Math.abs(to.x - from.x) >= Math.abs(to.y - from.y) ? [...vertical, ...horizontal] : [...horizontal, ...vertical];
+}
+
+// 한 구간을 모양에 맞춰 잇는다. 직각은 대각선을 남기지 않는 것이 약속이라, 비어 있는 통로를
+// 못 찾아도 곧은 대각선으로 돌아가지 않고 기본 통로를 쓴다.
+function legPoints(from, to, obstacles, mode) {
+  const dx = to.x - from.x; const dy = to.y - from.y;
+  if (mode === 'orthogonal') {
+    // 이미 축에 나란하면 그 자체로 직각이다. 억지로 꺾으면 마디만 늘고 그림이 복잡해진다.
+    if (Math.abs(dx) < 1 || Math.abs(dy) < 1) return [from, to];
+    const lanes = laneRoutes(from, to);
+    return lanes.find((points) => pathClear(points, obstacles)) ?? lanes[0];
+  }
+  const span = Math.hypot(dx, dy);
+  if (span < 1) return [from, to];
+  const bow = Math.min(span * BOW_RATIO, BOW_MAX);
+  const arcs = [1, -1].map((side) => [from,
+    { x: (from.x + to.x) / 2 - (dy / span) * bow * side, y: (from.y + to.y) / 2 + (dx / span) * bow * side }, to]);
+  // 곧게 갈 수 있으면 살짝 부풀리는 것으로 끝난다. 겹쳐 지나는 두 선이 갈려 보이게 하는 몫이다.
+  if (pathClear([from, to], obstacles)) return arcs.find((arc) => pathClear(arc, obstacles)) ?? [from, to];
+  // 막혀 있으면 통로부터 찾는다. 마디는 직각으로 잡히지만 그리는 쪽에서 둥글게 지나므로 곡선이다.
+  const lanes = laneRoutes(from, to);
+  return lanes.find((points) => pathClear(points, obstacles)) ?? arcs[0];
+}
+
+/**
+ * 두 점을 잇는 마디를 정한다. 직선은 두 점 그대로이고, 나머지는 노드 카드를 비켜 갈 통로를
+ * 찾는다. 손으로 찍은 마디가 있으면 그 자리를 반드시 지나고, 사이 구간만 모양을 맞춘다.
+ *
+ * @param {{x:number,y:number}} from
+ * @param {{x:number,y:number}} to
+ * @param {{left:number,right:number,top:number,bottom:number}[]} obstacles 양 끝 노드는 빼고 넣는다.
+ * @param {'straight'|'orthogonal'|'curved'} mode
+ * @param {{x:number,y:number}[]} waypoints 사용자가 끌어다 놓은 마디.
+ * @returns {{x:number,y:number}[]} 마디. 화면과 내보내기가 같은 이 배열로 그린다.
+ */
+export function routeLink(from, to, obstacles = [], mode = 'straight', waypoints = []) {
+  const anchors = [from, ...waypoints, to];
+  if (mode !== 'orthogonal' && mode !== 'curved') return anchors;
+  // 곡선은 찍은 마디를 그대로 지나며 매끈해진다. 구간마다 또 부풀리면 사용자가 놓은 자리가
+  // 어디였는지 그림에서 읽히지 않는다.
+  if (waypoints.length && mode === 'curved') return anchors;
+  if (!waypoints.length) return legPoints(from, to, obstacles, mode);
+  const points = [anchors[0]];
+  for (let index = 1; index < anchors.length; index += 1) points.push(...legPoints(anchors[index - 1], anchors[index], obstacles, mode).slice(1));
+  return points;
 }
 
 const round = (value) => Math.round(value * 100) / 100;

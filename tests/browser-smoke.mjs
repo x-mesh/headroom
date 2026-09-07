@@ -1078,6 +1078,52 @@ async function verify(viewport, screenshot, interact = false) {
       'a drag on a node must leave the scroll position alone');
 
     // 노드 레이어가 캔버스를 덮어 링크가 포인터를 못 받던 문제. 링크는 눌러서 검사할 수 있어야 한다.
+
+    // 굴곡을 손으로 옮긴다. 자동 경로가 늘 원하는 자리로 가지는 않으므로, 고른 선에 손잡이가
+    // 붙고 끌면 마디가 생겨야 한다. 두 번 누르면 그 마디가 사라져 자동 경로로 돌아간다.
+    // 도면을 갈아 끼우므로 interact 의 맨 끝에 둔다 - 앞에 두면 뒤따르는 단계가 앞 도면의
+    // 장비를 찾지 못하고, 앞에서 재 둔 빈 자리도 빈 자리가 아니게 된다.
+    await page.locator('[data-editor-action="new"]').click();
+    await page.locator('[data-template="three-tier"]').click();
+    await page.waitForFunction(() => document.querySelectorAll('.link-hit').length >= 4);
+    await page.locator('.zoom-control [data-zoom="fit"]').click();
+    await page.waitForTimeout(150);
+    // 여백을 눈대중으로 잡지 않고, 그 자리를 눌렀을 때 실제로 손잡이가 잡히는지로 고른다.
+    // 노드 카드가 선 위에 그려지므로 화면 밖이거나 카드 밑인 손잡이는 눌러도 다른 것이 눌린다.
+    const grab = await page.evaluate(() => {
+      const reachable = (handle) => {
+        const box = handle.getBoundingClientRect();
+        const x = box.left + box.width / 2; const y = box.top + box.height / 2;
+        return document.elementFromPoint(x, y) === handle ? { x, y } : null;
+      };
+      // id 를 먼저 모은다. 링크를 고를 때마다 층이 다시 그려져 앞서 담아 둔 요소는 떨어져
+      // 나가고, 그것에 보낸 클릭은 문서에 닿지 않는다 - 첫 링크만 재고 끝나 버린다.
+      const ids = [...document.querySelectorAll('.link-hit')].map((hit) => hit.closest('[data-link-id]').dataset.linkId);
+      for (const id of ids) {
+        document.querySelector(`[data-link-id="${id}"] .link-hit`)?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        for (const handle of document.querySelectorAll(`[data-link-id="${id}"] .link-handle[data-bend-kind="insert"]`)) {
+          const at = reachable(handle);
+          if (at) return { id, ...at };
+        }
+      }
+      return null;
+    });
+    assert.ok(grab, '굴곡 손잡이가 눌리는 링크가 하나는 있어야 잰다');
+    const shapeAt = () => page.evaluate((id) => document.querySelector(`[data-link-id="${id}"] .link`).getAttribute('d'), grab.id);
+    const beforeBend = await shapeAt();
+    await page.mouse.move(grab.x, grab.y);
+    await page.mouse.down();
+    await page.mouse.move(grab.x + 70, grab.y - 80, { steps: 6 });
+    assert.notEqual(await shapeAt(), beforeBend, '끄는 동안 선이 따라와야 어디에 놓을지 정할 수 있다');
+    await page.mouse.up();
+    await page.waitForFunction((id) => document.querySelectorAll(`[data-link-id="${id}"] .link-handle[data-bend-kind="move"]`).length === 1, grab.id);
+    const pinned = await page.locator(`[data-link-id="${grab.id}"] .link-handle[data-bend-kind="move"]`).first().boundingBox();
+    // 두 번 누르면 지운다. dblclick 이 아니라 눌린 간격을 직접 재는 것은, 끌기를 위해 기본
+    // 동작을 막으면 호환 마우스 이벤트가 오지 않기 때문이다.
+    await page.mouse.click(pinned.x + pinned.width / 2, pinned.y + pinned.height / 2);
+    await page.mouse.click(pinned.x + pinned.width / 2, pinned.y + pinned.height / 2);
+    await page.waitForFunction((id) => document.querySelectorAll(`[data-link-id="${id}"] .link-handle[data-bend-kind="move"]`).length === 0, grab.id);
+
   }
   await page.screenshot({ path: screenshot, fullPage: true });
   await page.close();

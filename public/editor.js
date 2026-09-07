@@ -399,10 +399,25 @@ export function updateLink(topology, id, patch) {
     if (topology.links.some((item) => item.id !== id && ['source', 'target'].some((end) => item[end] === owner.id && item[`${end}Port`] === portId))) throw new Error(`Port ${portId} is already connected`);
     next[`${side}Port`] = portId;
   }
+  // 손으로 굽힌 자리. 비우면 자동 경로로 되돌아간다.
+  if (patch.waypoints !== undefined) {
+    const points = normalizeWaypoints(patch.waypoints);
+    if (points.length) next.waypoints = points; else delete next.waypoints;
+  }
   for (const side of ['source', 'target']) delete link[`${side}Port`];
   delete link.capacityByDirection;
+  delete link.waypoints;
   Object.assign(link, next);
   return link;
+}
+
+// 선을 손으로 굽힌 자리. 여덟이면 어떤 화면에서도 넉넉하고, 그 이상은 저장 파일만 키운다.
+const WAYPOINT_LIMIT = 8;
+function normalizeWaypoints(points) {
+  if (points == null) return [];
+  if (!Array.isArray(points)) throw new Error('Link waypoints must be a list');
+  if (points.length > WAYPOINT_LIMIT) throw new Error(`A link takes at most ${WAYPOINT_LIMIT} waypoints`);
+  return points.map((point) => ({ x: finite(point?.x, 'Waypoint x', ANY_COORDINATE), y: finite(point?.y, 'Waypoint y', ANY_COORDINATE) }));
 }
 
 export function removeLink(topology, id) {

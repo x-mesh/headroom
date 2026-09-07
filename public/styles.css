@@ -312,6 +312,10 @@ button { color: inherit; }
 .link-hit { stroke: transparent; stroke-width: 18; fill: none; cursor: pointer; pointer-events: stroke; }
 /* 고른 선은 후광으로 알린다. 선 자체의 색과 굵기는 상태가 정하므로 덮어쓰지 않는다 - 넘친 선을 골랐다고 빨강이 사라지면 안 된다. */
 .link-selection { stroke: var(--signal-deep); stroke-width: 8; opacity: .38; fill: none; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: none; }
+/* 굴곡 손잡이. 네모는 이미 찍힌 마디, 동그라미는 끌면 새로 생기는 자리다. drawio 와 같은 약속이다. */
+.link-handle { fill: var(--surface-raised); stroke: var(--signal-deep); stroke-width: 1.5; cursor: grab; }
+.link-handle.new { fill: var(--canvas); opacity: .55; }
+.link-handle:hover, .link-handle:active { fill: var(--signal-deep); opacity: 1; cursor: grabbing; }
 .link-label { fill: var(--muted); font: 500 9px var(--font-data); paint-order: stroke; stroke: var(--canvas); stroke-width: 4px; }
 .packet-dot { fill: var(--signal-deep); stroke: var(--surface-raised); stroke-width: 1.5; filter: drop-shadow(0 1px 3px color-mix(in srgb, var(--signal-deep) 65%, transparent)); pointer-events: none; }
 .packet-dot.warning { fill: var(--amber); }.packet-dot.overloaded { fill: var(--danger); }.packet-dot.disabled { display: none; }

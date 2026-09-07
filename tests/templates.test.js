@@ -252,7 +252,7 @@ test('consensus spends packets, not bytes', () => {
 
 
 test('a bent line goes around the cards a straight one cuts through', () => {
-  const counted = { straight: 0, orthogonal: 0, curved: 0 };
+  const counted = { straight: { crossing: 0, diagonal: 0 }, orthogonal: { crossing: 0, diagonal: 0 }, curved: { crossing: 0, diagonal: 0 } };
   let links = 0;
   for (const { id } of templates) {
     const topology = buildTemplate(id);
@@ -265,14 +265,18 @@ test('a bent line goes around the cards a straight one cuts through', () => {
       const obstacles = [...boxes].filter(([memberId]) => memberId !== link.source && memberId !== link.target).map(([, box]) => box);
       for (const mode of LINK_ROUTES) {
         const points = routeLink(at.get(link.source), at.get(link.target), obstacles, mode);
-        if (points.some((point, index) => index && obstacles.some((box) => segmentHitsBox(points[index - 1], point, box)))) counted[mode] += 1;
+        if (points.some((point, index) => index && obstacles.some((box) => segmentHitsBox(points[index - 1], point, box)))) counted[mode].crossing += 1;
+        if (points.some((point, index) => index && Math.abs(point.x - points[index - 1].x) > 1 && Math.abs(point.y - points[index - 1].y) > 1)) counted[mode].diagonal += 1;
       }
     }
   }
   // 곧게 그으면 남의 카드를 뚫고 지나가는 선이 이만큼 있다. 굽히는 선택지가 있는 이유다.
-  assert.ok(counted.straight > 20, `직선이 카드를 지나는 링크가 ${counted.straight}개뿐이라 굽힐 이유를 못 보여 줍니다`);
-  assert.equal(counted.orthogonal, 0, `직각이 카드를 ${counted.orthogonal}개 링크에서 지납니다`);
-  assert.equal(counted.curved, 0, `곡선이 카드를 ${counted.curved}개 링크에서 지납니다`);
+  assert.ok(counted.straight.crossing > 20, `직선이 카드를 지나는 링크가 ${counted.straight.crossing}개뿐이라 굽힐 이유를 못 보여 줍니다`);
+  // 직각의 약속은 대각선을 남기지 않는 것이다. 통로를 못 찾아 한둘이 카드를 스치더라도 모양은 지킨다 -
+  // 대각선으로 돌아가면 직선 모드와 구분이 없어져 고를 이유가 사라진다.
+  assert.equal(counted.orthogonal.diagonal, 0, `직각인데 대각선이 ${counted.orthogonal.diagonal}개 남았습니다`);
+  assert.ok(counted.orthogonal.crossing <= 2, `직각이 카드를 ${counted.orthogonal.crossing}개 링크에서 지납니다`);
+  assert.equal(counted.curved.crossing, 0, `곡선이 카드를 ${counted.curved.crossing}개 링크에서 지납니다`);
   assert.ok(links > 200);
 });
 
@@ -293,5 +297,14 @@ test('every route mode draws a path that starts and ends on the devices it joins
   }
   // 곧게 갈 수 있어도 곡선은 부풀린다. 겹쳐 지나는 두 선이 갈려 보이게 하는 것이 이 모드의 값이다.
   assert.equal(routeLink(from, to, [], 'curved').length, 3);
-  assert.equal(routeLink(from, to, [], 'orthogonal').length, 2, '곧게 갈 수 있으면 직각은 굽히지 않는다');
+  // 비스듬한 링크는 막힌 곳이 없어도 두 번 꺾는다. 대각선이 남으면 직선 모드와 구분이 없다.
+  assert.equal(routeLink(from, to, [], 'orthogonal').length, 4);
+  // 이미 축에 나란하면 그대로 둔다. 억지로 꺾으면 마디만 늘고 그림이 복잡해진다.
+  assert.equal(routeLink(from, { x: 400, y: 0 }, [], 'orthogonal').length, 2);
+  // 손으로 찍은 마디는 어느 모드에서도 반드시 지난다.
+  const pinned = { x: 120, y: 260 };
+  for (const mode of LINK_ROUTES) {
+    assert.ok(routeLink(from, to, [], mode, [pinned]).some((point) => point.x === pinned.x && point.y === pinned.y),
+      `${mode}: 손으로 찍은 마디를 지나지 않습니다`);
+  }
 });
