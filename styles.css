@@ -123,6 +123,8 @@ button { color: inherit; }
 .tour-actions [data-tour="next"]:hover { color: var(--action-ink); }
 .tour[data-side="left"] { inset-inline-end: auto; inset-inline-start: 22px; }
 .tour[data-vertical="top"] { bottom: auto; top: 22px; }
+/* 대상 옆에 설 때는 구석 고정을 푼다. 자리는 그릴 때마다 다시 재어 인라인으로 넣는다. */
+.tour[data-anchored] { inset-inline-end: auto; inset-inline-start: auto; bottom: auto; transition: left 160ms ease-out, top 160ms ease-out; }
 /* 설명하는 대상에 씌우는 실선 박스. 바깥을 그늘로 덮어 그 안만 남긴다. 클릭은 통과시킨다. */
 .tour-spot { position: fixed; z-index: 44; border: 2px solid var(--signal); border-radius: 2px; box-shadow: 0 0 0 9999px color-mix(in srgb, var(--panel-deep) 42%, transparent); pointer-events: none; transition: left 160ms ease-out, top 160ms ease-out, width 160ms ease-out, height 160ms ease-out; }
 @media (prefers-reduced-motion: reduce) { .tour-spot { transition: none; } }

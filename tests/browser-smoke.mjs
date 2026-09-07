@@ -5,6 +5,8 @@ import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { server } from '../scripts/serve.mjs';
 import { cloneTopology } from '../src/data.js';
+import { templates } from '../src/templates.js';
+const templateCount = templates.length;
 
 await mkdir('.impeccable/review', { recursive: true });
 server.listen(0, '127.0.0.1');
@@ -1007,12 +1009,53 @@ async function verifyNumberMotion() {
   await page.close();
 }
 
+// 설명은 설명하는 것 옆에 있어야 한다. 화면 구석에 붙어 있으면 눈이 버튼과 글 사이를 계속
+// 오가야 하고, 화면이 넓을수록 그 거리가 멀어져 무엇을 가리키는지 흐려진다.
+async function verifyTourAnchoring() {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } });
+  await page.addInitScript(() => localStorage.clear());
+  page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
+  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+  await page.locator('#guide-button').click();
+  await page.waitForSelector('.tour');
+  // 안내 문구가 못 박은 개수를 말하면 설계를 더할 때마다 틀린 말이 된다.
+  assert.match(await page.locator('.tour-text').textContent(), new RegExp(`${templateCount}개 설계`),
+    '첫 단계가 실제 설계 개수를 말해야 한다');
+  for (let step = 0; step < 9; step += 1) {
+    await page.waitForTimeout(380);
+    const placed = await page.evaluate(() => {
+      const box = document.querySelector('.tour').getBoundingClientRect();
+      const spotEl = document.getElementById('tour-spot');
+      if (spotEl.hidden) return null;
+      const spot = spotEl.getBoundingClientRect();
+      const gapX = Math.max(0, Math.max(spot.left - box.right, box.left - spot.right));
+      const gapY = Math.max(0, Math.max(spot.top - box.bottom, box.top - spot.bottom));
+      return {
+        title: document.querySelector('.tour h2')?.textContent ?? '',
+        distance: Math.hypot(gapX, gapY),
+        overlaps: box.left < spot.right && spot.left < box.right && box.top < spot.bottom && spot.top < box.bottom,
+        inView: box.left >= 0 && box.top >= 0 && box.right <= window.innerWidth && box.bottom <= window.innerHeight,
+      };
+    });
+    if (placed) {
+      assert.ok(placed.distance <= 40, `${placed.title}: 설명 상자가 강조한 곳에서 ${Math.round(placed.distance)}px 떨어져 있습니다`);
+      assert.equal(placed.overlaps, false, `${placed.title}: 설명 상자가 가리키는 곳을 덮습니다`);
+      assert.equal(placed.inView, true, `${placed.title}: 설명 상자가 화면 밖으로 나갔습니다`);
+    }
+    const next = page.locator('[data-tour="next"]');
+    if (!(await next.isEnabled())) break;
+    await next.click();
+  }
+  await page.close();
+}
+
 try {
   await verify({ width: 1440, height: 1000 }, '.impeccable/review/desktop.png', true);
   await verify({ width: 390, height: 844 }, '.impeccable/review/mobile.png');
   await verifyCanvasEditing();
   await verifyBackendPool();
   await verifyNumberMotion();
+  await verifyTourAnchoring();
   const reducedPage = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
   await reducedPage.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   assert.equal(await reducedPage.locator('.packet-dot').first().evaluate((node) => getComputedStyle(node).display), 'none');

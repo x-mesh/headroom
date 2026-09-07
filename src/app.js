@@ -1267,7 +1267,8 @@ const TOUR_STEPS = [
   {
     title: '설계 템플릿',
     target: '[data-editor-action="new"]',
-    text: () => '여기서 시작합니다. 21개 설계가 들어 있고 각각 먼저 차는 축이 다릅니다. 3-tier 웹, DMZ 이중 방화벽, IoT 게이트웨이처럼 실제 구성을 골라 열 수 있습니다.',
+    // 개수를 못 박으면 설계를 더할 때마다 안내가 틀린 말을 한다. 목록에서 센다.
+    text: () => `여기서 시작합니다. ${templates.length}개 설계가 들어 있고 각각 먼저 차는 축이 다릅니다. 3-tier 웹, DMZ 이중 방화벽, IoT 게이트웨이처럼 실제 구성을 골라 열 수 있습니다.`,
   },
   {
     title: '워크로드 배율',
@@ -1409,7 +1410,10 @@ function placeTourSpot() {
   // 박스가 깜박이고, 스크롤이 끝난 뒤에도 다시 나타나지 않는 순간이 생긴다.
   if (!tour || !rect || rect.width < 4 || rect.height < 4) {
     spot.hidden = true;
+    delete box.dataset.anchored;
+    box.style.removeProperty('left'); box.style.removeProperty('top');
     box.dataset.side = 'right';
+    delete box.dataset.vertical;
     return;
   }
   const pad = 6;
@@ -1418,9 +1422,40 @@ function placeTourSpot() {
   spot.style.top = `${Math.max(2, rect.top - pad)}px`;
   spot.style.width = `${Math.min(rect.width + pad * 2, window.innerWidth - 4)}px`;
   spot.style.height = `${rect.height + pad * 2}px`;
-  // 가리키는 곳을 설명 상자가 덮으면 안내가 아니라 방해다. 대상 반대편으로 비킨다.
-  box.dataset.side = rect.left + rect.width / 2 > window.innerWidth / 2 ? 'left' : 'right';
-  box.dataset.vertical = rect.top > window.innerHeight / 2 ? 'top' : 'bottom';
+  anchorTourBox(box, rect);
+}
+
+// 설명은 설명하는 것 옆에 있어야 한다. 화면 구석에 붙여 두면 눈이 버튼과 글 사이를 계속
+// 오가야 하고, 화면이 넓을수록 그 거리가 멀어져 무엇을 가리키는지 흐려진다. 좁은 화면은
+// 다르다 - 상자가 화면 폭을 거의 다 쓰므로 아래에 그대로 두는 편이 낫다(styles.css 의 760px).
+const TOUR_NARROW = 760;
+const TOUR_GAP = 16;
+function anchorTourBox(box, rect) {
+  if (window.innerWidth <= TOUR_NARROW) {
+    delete box.dataset.anchored;
+    box.style.removeProperty('left'); box.style.removeProperty('top');
+    box.dataset.side = 'right';
+    box.dataset.vertical = 'bottom';
+    return;
+  }
+  box.dataset.anchored = '';
+  delete box.dataset.side;
+  delete box.dataset.vertical;
+  const size = box.getBoundingClientRect();
+  const edge = 10;
+  const clampX = (x) => Math.min(Math.max(edge, x), window.innerWidth - size.width - edge);
+  const clampY = (y) => Math.min(Math.max(edge, y), window.innerHeight - size.height - edge);
+  const put = (x, y) => { box.style.left = `${Math.round(x)}px`; box.style.top = `${Math.round(y)}px`; };
+  // 대상 아래를 먼저 본다. 읽는 순서가 위에서 아래라 버튼 다음에 설명이 오는 것이 자연스럽다.
+  const below = rect.bottom + TOUR_GAP;
+  if (below + size.height <= window.innerHeight - edge) { put(clampX(rect.left), below); return; }
+  const above = rect.top - TOUR_GAP - size.height;
+  if (above >= edge) { put(clampX(rect.left), above); return; }
+  // 위아래 어디에도 자리가 없으면 옆으로 비킨다. 세로로 밀어 넣으면 가리키는 곳을 덮는다 —
+  // 그러면 안내가 아니라 방해다.
+  const right = rect.right + TOUR_GAP;
+  const left = rect.left - TOUR_GAP - size.width;
+  put(right + size.width <= window.innerWidth - edge ? right : Math.max(edge, left), clampY(rect.top));
 }
 
 // 안내는 처음 한 번 뜨고 마는 것이 아니어야 한다. 작업 사본을 복원하면 첫 화면 설명이
