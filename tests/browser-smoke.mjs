@@ -915,31 +915,48 @@ async function verify(viewport, screenshot, interact = false) {
       }
       return null;
     });
-    assert.ok(emptySpot, 'the topology area must expose empty space to grab');
-    assert.equal(emptySpot.cursor, 'grab', 'empty space must show the open hand');
+    assert.ok(emptySpot, 'the topology area must expose empty space to work in');
+    // drawio 와 같은 손놀림이다. 빈 곳 왼쪽 드래그는 고르는 것이라 커서도 고르는 모양이어야 한다.
+    assert.equal(emptySpot.cursor, 'crosshair', 'empty space must show the selecting cursor');
 
     const panBefore = await page.evaluate(() => {
       const area = document.querySelector('.topology-scroll');
       return { left: Math.round(area.scrollLeft), top: Math.round(area.scrollTop),
-        maxLeft: Math.round(area.scrollWidth - area.clientWidth), maxTop: Math.round(area.scrollHeight - area.clientHeight) };
+        maxLeft: Math.round(area.scrollWidth - area.clientWidth), maxTop: Math.round(area.scrollHeight - area.clientHeight) }
     });
     assert.ok(panBefore.maxLeft > 0 && panBefore.maxTop > 0, 'the stage padding must leave room to pan in both directions');
+
+    // 왼쪽 드래그는 상자를 그린다. 화면은 밀리지 않아야 한다 - 예전에는 여기서 화면이 밀렸고
+    // 상자는 Shift 뒤에 숨어 있어 아무도 찾지 못했다.
     await page.mouse.move(emptySpot.x, emptySpot.y);
     await page.mouse.down();
+    await page.mouse.move(emptySpot.x - 200, emptySpot.y - 160, { steps: 8 });
+    assert.equal(await page.evaluate(() => !document.getElementById('selection-marquee').hidden), true,
+      'dragging empty space with the left button must draw the selection box');
+    assert.equal(await page.locator('.topology-scroll.panning').count(), 0, 'the selection box must not pan the area');
+    await page.mouse.up();
+    assert.equal(await page.evaluate(() => Math.round(document.querySelector('.topology-scroll').scrollLeft)), panBefore.left,
+      'drawing a selection box must leave the scroll position alone');
+    assert.equal(await page.evaluate(() => !document.getElementById('selection-marquee').hidden), false,
+      'the selection box must disappear with the pointer');
+
+    // 오른쪽 드래그가 화면을 민다.
+    await page.mouse.move(emptySpot.x, emptySpot.y);
+    await page.mouse.down({ button: 'right' });
     assert.equal(await page.locator('.topology-scroll.panning').count(), 1, 'panning must mark the area');
     assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.topology-scroll')).cursor), 'grabbing',
-      'pressing empty space must show the closed hand');
+      'panning must show the closed hand');
     await page.mouse.move(emptySpot.x - 120, emptySpot.y - 90, { steps: 8 });
-    await page.mouse.up();
+    await page.mouse.up({ button: 'right' });
     await page.waitForTimeout(60);
     const panAfter = await page.evaluate(() => {
       const area = document.querySelector('.topology-scroll');
       return { left: Math.round(area.scrollLeft), top: Math.round(area.scrollTop) };
     });
     assert.ok(Math.abs(panAfter.left - Math.min(panBefore.left + 120, panBefore.maxLeft)) < 3,
-      `dragging empty space must scroll horizontally, ${panBefore.left} to ${panAfter.left}`);
+      `right-dragging empty space must scroll horizontally, ${panBefore.left} to ${panAfter.left}`);
     assert.ok(Math.abs(panAfter.top - Math.min(panBefore.top + 90, panBefore.maxTop)) < 3,
-      `dragging empty space must scroll vertically, ${panBefore.top} to ${panAfter.top}`);
+      `right-dragging empty space must scroll vertically, ${panBefore.top} to ${panAfter.top}`);
     assert.equal(await page.locator('.topology-scroll.panning').count(), 0, 'panning must end with the pointer');
 
     // 노드 위에서 시작한 드래그는 이동이지 팬이 아니다.

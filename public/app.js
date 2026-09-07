@@ -1188,7 +1188,7 @@ function renderComparison() {
 function renderEditorMode() {
   // 여러 개를 고르는 두 손놀림이 화면 어디에도 적혀 있지 않아, 있는 줄 모르고 쓰지 못했다.
   // 빈 곳을 그냥 끌면 화면이 밀리고 Shift 를 누른 채 끌어야 선택 상자가 나온다.
-  const labels = { select: 'SELECT · DRAG TO MOVE · SHIFT+DRAG TO BOX · SHIFT+CLICK TO ADD', connect: state.connectSource ? `CONNECT · ${state.connectSource.toUpperCase()} → SELECT TARGET` : 'CONNECT · SELECT SOURCE' };
+  const labels = { select: 'SELECT · DRAG TO BOX · RIGHT-DRAG TO PAN · SHIFT+CLICK TO ADD', connect: state.connectSource ? `CONNECT · ${state.connectSource.toUpperCase()} → SELECT TARGET` : 'CONNECT · SELECT SOURCE' };
   element('editor-mode').lastChild.textContent = labels[state.editorMode] || state.editorMode.toUpperCase();
   document.querySelector('[data-editor-action="connect"]').setAttribute('aria-pressed', String(state.editorMode === 'connect'));
 }
@@ -2467,15 +2467,21 @@ element('drawio-file-input').addEventListener('change', async (event) => {
   } catch (error) { showToast(`drawio 가져오기 실패: ${error.message}`); }
 });
 const topologyScroll = document.querySelector('.topology-scroll');
+// drawio 와 같은 손놀림으로 맞춘다. 빈 곳을 왼쪽으로 끌면 고르고, 오른쪽이나 가운데로 끌면
+// 화면을 민다. 예전에는 왼쪽 드래그가 화면을 밀고 선택 상자는 Shift 뒤에 숨어 있어, 상자가
+// 있다는 것을 알 방법이 없었다. Shift 를 함께 누르면 이미 고른 것에 더한다.
 topologyScroll.addEventListener('pointerdown', (event) => {
   if (event.pointerType === 'touch') return;
   const onResource = event.target.closest('.mesh-node, .link-hit, .diagram-shape');
-  const middleButton = event.button === 1;
-  if (!onResource && event.button === 0 && event.shiftKey && state.editorMode === 'select') {
-    const start = canvasPoint(event); selectionBoxState = { pointerId: event.pointerId, start, end: start };
+  const panButton = event.button === 1 || event.button === 2;
+  if (!onResource && event.button === 0 && state.editorMode === 'select') {
+    const start = canvasPoint(event);
+    selectionBoxState = { pointerId: event.pointerId, start, end: start, additive: event.shiftKey || event.metaKey || event.ctrlKey };
     topologyScroll.setPointerCapture(event.pointerId); element('selection-marquee').hidden = false; event.preventDefault(); return;
   }
-  if (!middleButton && (event.button !== 0 || onResource || state.editorMode === 'connect')) return;
+  // 자원 위에서 시작한 것은 팬이 아니다. 노드의 오른쪽 클릭 메뉴가 열려야 하고, 링크와 도형도
+  // 저마다 할 일이 있다. 빈 곳에서 가운데나 오른쪽으로 시작한 것만 화면을 민다.
+  if (onResource || state.editorMode === 'connect' || !panButton) return;
   panState = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, left: topologyScroll.scrollLeft, top: topologyScroll.scrollTop };
   topologyScroll.setPointerCapture(event.pointerId);
   topologyScroll.classList.add('panning');
@@ -2490,20 +2496,39 @@ topologyScroll.addEventListener('pointermove', (event) => {
     return;
   }
   if (!panState || event.pointerId !== panState.pointerId) return;
+  if (Math.hypot(event.clientX - panState.startX, event.clientY - panState.startY) > 4) panMoved = true;
   topologyScroll.scrollLeft = panState.left - (event.clientX - panState.startX);
   topologyScroll.scrollTop = panState.top - (event.clientY - panState.startY);
 });
 topologyScroll.addEventListener('pointerup', (event) => {
   if (selectionBoxState && event.pointerId === selectionBoxState.pointerId) {
     const box = { left: Math.min(selectionBoxState.start.x, selectionBoxState.end.x), right: Math.max(selectionBoxState.start.x, selectionBoxState.end.x), top: Math.min(selectionBoxState.start.y, selectionBoxState.end.y), bottom: Math.max(selectionBoxState.start.y, selectionBoxState.end.y) };
-    state.selection = [
+    const boxed = [
       ...topology.devices.filter(({ position }) => position.x >= box.left && position.x <= box.right && position.y >= box.top && position.y <= box.bottom).map(({ id }) => ({ type: 'device', id })),
       ...(topology.diagram?.shapes || []).filter((shape) => shape.x < box.right && shape.x + shape.width > box.left && shape.y < box.bottom && shape.y + shape.height > box.top).map(({ id }) => ({ type: 'shape', id })),
     ];
-    selectionBoxState = null; element('selection-marquee').hidden = true; renderTopology(); return;
+    // Shift 를 함께 누르고 끌면 이미 고른 것에 더한다. 그러지 않으면 상자 안의 것으로 갈아 끼운다.
+    const keyOf = (item) => `${item.type}:${item.id}`;
+    if (selectionBoxState.additive) {
+      const seen = new Set(state.selection.map(keyOf));
+      state.selection = [...state.selection, ...boxed.filter((item) => !seen.has(keyOf(item)))];
+    } else state.selection = boxed;
+    // 상자로 하나만 고르면 인스펙터도 그것을 보여야 한다. 여럿이면 선택을 바꾸지 않는다 —
+    // 어느 하나를 골라 띄우면 나머지를 고르지 않은 것처럼 읽힌다.
+    const onlyDevice = state.selection.length === 1 && state.selection[0].type === 'device' ? state.selection[0].id : null;
+    if (onlyDevice) state.selectedId = onlyDevice;
+    selectionBoxState = null; element('selection-marquee').hidden = true; renderTopology(); renderInspector(); return;
   }
   endPan();
 });
+// 오른쪽 버튼으로 화면을 민 뒤에는 브라우저가 컨텍스트 메뉴를 띄운다. 민 것과 부른 것을
+// 구분해, 실제로 움직였을 때만 메뉴를 막는다 - 노드 위 오른쪽 클릭 메뉴는 그대로 열려야 한다.
+let panMoved = false;
+topologyScroll.addEventListener('contextmenu', (event) => {
+  if (!panMoved) return;
+  panMoved = false;
+  event.preventDefault();
+}, true);
 topologyScroll.addEventListener('pointercancel', () => { selectionBoxState = null; element('selection-marquee').hidden = true; endPan(); });
 topologyScroll.addEventListener('lostpointercapture', () => { if (!selectionBoxState) endPan(); });
 
