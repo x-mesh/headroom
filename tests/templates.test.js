@@ -217,3 +217,33 @@ test('every link label the canvas draws is a label a person can actually read', 
     }
   }
 });
+
+test('a four-node consensus cluster keeps its ledger while a quorum stands', () => {
+  const topology = buildTemplate('raft-cluster');
+  const ledger = (options) => calculateScenario(topology, { scale: 1, ...options }).services.find(({ id }) => id === 'svc-ledger');
+  assert.equal(ledger({}).status, 'pass');
+  // 팔로워 한 대는 잃어도 커밋이 이어진다. 넷의 정족수는 셋이다.
+  assert.equal(ledger({ disabledDevices: ['node-3'] }).status, 'pass');
+  assert.equal(ledger({ disabledDevices: ['node-3'] }).endpointGroups[0].available, 3);
+  // 두 대를 잃으면 정족수가 깨진다. 넷은 셋과 같은 내구성에 값만 더 든다.
+  assert.equal(ledger({ disabledDevices: ['node-3', 'node-4'] }).status, 'fail');
+  // 리더가 멈추면 정족수가 살아 있어도 쓰기가 들어갈 곳이 없다. 재선출까지가 그 공백이다.
+  const leaderDown = ledger({ disabledDevices: ['node-1'] });
+  assert.equal(leaderDown.endpointGroups[0].available, 3, '리더를 잃어도 셋은 남는다');
+  assert.equal(leaderDown.status, 'fail', '정족수가 살아도 쓰기 경로가 없으면 원장은 멈춘다');
+});
+
+test('consensus spends packets, not bytes', () => {
+  const result = calculateScenario(buildTemplate('raft-cluster'), { scale: 1 });
+  const leader = result.devices.find(({ id }) => id === 'node-1');
+  const follower = result.devices.find(({ id }) => id === 'node-2');
+  // 리더의 부담이 팔로워의 몇 배인지가 이 설계의 요지다. 리더는 돌아가며 맡으므로 넷의 사양이 같다.
+  assert.ok(leader.axes.nic_pps.utilization > follower.axes.nic_pps.utilization * 4,
+    `리더 ${leader.axes.nic_pps.utilization} 가 팔로워 ${follower.axes.nic_pps.utilization} 의 네 배를 넘지 못합니다`);
+  assert.ok(leader.axes.nic_pps.utilization > leader.axes.nic_bps.utilization * 2, '대역폭이 아니라 패킷이 먼저 차야 한다');
+  assert.equal(result.summary.bindingResourceId, 'node-1');
+  // 로그는 한쪽으로만 흐르는데 수락 응답은 보낸 것 하나에 하나씩이다. 바이트는 기울고 패킷은 같다.
+  const link = result.links.find(({ id }) => id === 'tor-node-2');
+  assert.equal(link.directions.forward.axes.forwarding_pps.load, link.directions.reverse.axes.forwarding_pps.load);
+  assert.ok(link.directions.forward.axes.forwarding_bps.load > link.directions.reverse.axes.forwarding_bps.load * 10);
+});

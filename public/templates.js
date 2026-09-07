@@ -495,6 +495,54 @@ function serviceSla() {
   });
 }
 
+/**
+ * Raft 합의 클러스터. 리더 한 대가 나머지 셋에 로그를 복제하고 각자 수락 응답을 돌려준다.
+ * 리더는 돌아가며 맡으므로 네 대가 모두 리더의 팬아웃을 견뎌야 한다 - 팔로워를 싸게 사는
+ * 설계가 성립하지 않는 이유이고, 이 그림이 말하려는 것이다.
+ *
+ * 보내는 것과 돌려받는 것을 수요 둘로 나눠 적었다. returnPath 로 한 수요에 묶지 않은 것은
+ * responseShare 가 throughput 축 전체에 같은 몫을 매기기 때문이다 - Raft 의 수락 응답은
+ * 바이트로는 로그의 몇 십분의 일인데 패킷으로는 하나에 하나씩이라, 한 숫자로는 둘 다 틀린다.
+ */
+function raftCluster() {
+  const topology = createEmptyTopology('Raft 합의 클러스터');
+  // 리더가 돌아가며 바뀌므로 네 대의 사양이 같다. 이 설계에서 가장 중요한 한 줄이다.
+  const node = { nic_bps: 10e9, nic_pps: 2e6 };
+  const port = { forwarding_bps: 10e9, forwarding_pps: 2e6 };
+  const followers = ['node-2', 'node-3', 'node-4'];
+  place(topology, [
+    { id: 'app', name: 'APP', kind: 'cloud', zone: 'EDGE', position: { x: 120, y: 330 }, limits: { forwarding_bps: 40e9 }, external: true },
+    ['tor', 'TOR', 'switch', 'EDGE', 300, 320, { forwarding_bps: 100e9, forwarding_pps: 60e6 }],
+    // 역할을 zone 계층으로 나눠 리더가 어느 대인지 상자로 보이게 한다. 숫자로도 드러나지만
+    // 다섯 배 차이를 읽기 전에 배치부터 말하는 편이 빠르다.
+    ['node-1', 'RAFT 01', 'server', 'CONSENSUS / LEADER', 560, 200, node],
+    ...repeat(3, (n, index) => [`node-${n + 1}`, `RAFT 0${n + 1}`, 'server', 'CONSENSUS / FOLLOWER',
+      490 + index * 170, 420, node]),
+  ]);
+  connect(topology, ['app', 'node-1', ...followers].map((id) => ({ source: 'tor', target: id, capacity: port })));
+  // 쓰기는 리더 한 대로만 들어간다. Raft 는 부하 분산이 아니다.
+  addDemand(topology, { id: 'writes', name: '트랜잭션 쓰기', source: 'app', target: 'node-1',
+    load: { forwarding_bps: 900e6, forwarding_pps: 600e3 } });
+  for (const [index, follower] of followers.entries()) {
+    const term = index + 2;
+    // 리더는 같은 로그를 팔로워마다 따로 보낸다. 한 번 쓴 것이 셋으로 늘어나는 자리다.
+    addDemand(topology, { id: `append-${term}`, name: `RAFT 0${term} 로그 복제`, source: 'node-1', target: follower,
+      load: { forwarding_bps: 800e6, forwarding_pps: 150e3 } });
+    // 수락 응답은 로그의 40분의 1이지만 패킷 수는 보낸 것과 같다. 합의의 부담은 바이트가 아니다.
+    addDemand(topology, { id: `ack-${term}`, name: `RAFT 0${term} 수락 응답`, source: follower, target: 'node-1',
+      load: { forwarding_bps: 20e6, forwarding_pps: 150e3 } });
+  }
+  return declare(topology, {
+    services: [{
+      // 수용 기준은 쓰기가 리더에 닿는 것과 정족수가 사는 것 둘이다. 복제 흐름을 여기 넣으면
+      // 팔로워 한 대가 죽을 때마다 실패로 잡히는데, Raft 는 정족수만 있으면 커밋을 이어 간다.
+      id: 'svc-ledger', name: '원장 쓰기', requiredDeliveryRatio: 0.99, demandIds: ['writes'],
+      // 넷의 정족수는 셋이다. 다섯이라야 두 대를 잃고도 버틴다 - 넷은 셋과 같은 내구성에 값만 더 든다.
+      endpointGroups: [{ id: 'quorum', name: '정족수', members: ['node-1', ...followers], minAvailable: 3 }],
+    }],
+  });
+}
+
 function datasheetPerimeter() {
   const topology = createEmptyTopology('데이터시트로 짠 경계');
   place(topology, [
@@ -718,6 +766,20 @@ export const templates = [
       observe: '처리량은 여전히 한가한데 LB의 TLS 재개 핸드셰이크가 108%가 됩니다. 응답을 우회해도 연결 추적은 남습니다.',
     },
     build: () => balancedFarm('dsr'),
+  },
+  {
+    id: 'raft-cluster', name: 'Raft 합의 클러스터',
+    group: 'scale',
+    grade: { verdict: 'single-point', severs: 10 },
+    summary: '리더 한 대가 나머지 셋에 로그를 복제하고 수락 응답을 받는 4대 합의 클러스터입니다.',
+    teaches: '리더의 패킷 처리량이 75%인데 팔로워는 15%입니다. 대역폭은 34%로 한가하니 합의는 바이트가 아니라 패킷 문제입니다. 리더는 돌아가며 맡으므로 네 대가 모두 이 부담을 견뎌야 합니다 — 팔로워를 싸게 사는 설계가 성립하지 않습니다. 링크를 보면 로그는 한쪽으로만 흐르는데 패킷 수는 양쪽이 같습니다.',
+    tags: ['Raft', '합의', '정족수', '블록체인', '복제', '패킷'],
+    experiment: {
+      prompt: '리더가 멈추면 클러스터는 어떻게 될까요?',
+      action: { type: 'fault-device', id: 'node-1', label: '리더 장애 실험' },
+      observe: '흐르던 수요 일곱이 전부 멈추고 원장 쓰기가 실패로 바뀝니다. 정족수는 넷 중 셋으로 살아 있는데도 그렇습니다 — 새 리더가 뽑히기 전까지 쓰기가 들어갈 곳이 없기 때문입니다. 팔로워 한 대였다면 통과였습니다.',
+    },
+    build: raftCluster,
   },
   {
     id: 'three-tier', name: '3-tier 웹 서비스',
