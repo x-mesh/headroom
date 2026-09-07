@@ -496,9 +496,16 @@ async function verify(viewport, screenshot, interact = false) {
     assert.ok(await page.locator('.template-item').count() >= 16, 'the picker must offer architectures, not just a blank sheet');
     // 목록이 길어지면 검색이 필요하다.
     await page.locator('#template-search').fill('TLS');
+    const total = await page.locator('.template-item').count();
     const matched = await page.locator('.template-item:not([hidden])').count();
-    assert.ok(matched >= 2 && matched < 16, `search must narrow the list, got ${matched}`);
+    // 목록이 자랄 때마다 고쳐야 하는 못 박은 숫자를 두지 않는다. 검색은 목록을 좁혀야 한다.
+    assert.ok(matched >= 2 && matched < total / 2, `search must narrow the list, got ${matched} of ${total}`);
     assert.match(await page.locator('#template-count').textContent(), /개 일치/);
+    // 자식이 전부 숨은 섹션은 제목만 남아 빈 칸을 만든다.
+    for (const section of await page.locator('.template-section').all()) {
+      const visible = await section.locator('.template-item:not([hidden])').count();
+      assert.equal(await section.isHidden(), visible === 0, '자식이 없는 섹션은 숨어야 하고, 있는 섹션은 보여야 한다');
+    }
     await page.locator('#template-search').fill('');
     assert.equal(await page.locator('.template-item:not([hidden])').count(), await page.locator('.template-item').count());
     assert.equal(await page.evaluate(() => Math.round(document.querySelector('.main-grid').getBoundingClientRect().top)), beforePanel,

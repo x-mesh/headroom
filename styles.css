@@ -762,3 +762,9 @@ button { color: inherit; }
 .link-direction span b { color: var(--text); font-weight: 600; }
 .link-direction span[data-status="warning"] { color: var(--amber); }
 .link-direction span[data-status="overloaded"] { color: var(--danger); }
+
+/* 설계가 스물을 넘으면 한 줄 목록으로는 고를 수 없다. 카드는 그대로 두고 제목만 사이에 끼운다. */
+.template-section { display: grid; gap: 8px; margin-bottom: 16px; }
+/* display 를 선언하면 [hidden] 의 기본 display:none 을 이긴다. 검색으로 비워진 섹션이 남는다. */
+.template-section[hidden] { display: none; }
+.template-section h3 { margin: 0; font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }

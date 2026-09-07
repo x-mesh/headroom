@@ -508,9 +508,22 @@ function datasheetPerimeter() {
   return topology;
 }
 
+// 설계가 스물을 넘으면 한 줄로 깔린 목록에서는 고를 수가 없다. 등급 배지도 기준이 되지 못한다 —
+// 스물넷 중 스물이 단일 장애점이다. 그래서 무엇을 가르치는지로 묶는다. 순서가 곧 섹션 순서다.
+export const templateGroups = Object.freeze([
+  { id: 'basics', label: '기본 구성' },
+  { id: 'balance', label: '부하 분산과 백엔드 풀' },
+  { id: 'security', label: '보안 경로' },
+  { id: 'capacity', label: '용량은 다른 곳에서 찬다' },
+  { id: 'evidence', label: '근거와 판정 기준' },
+  { id: 'scale', label: '규모와 장애 범위' },
+  { id: 'blank', label: '빈 캔버스' },
+]);
+
 export const templates = [
   {
     id: 'dual-fabric', name: '이중 팹릭 API 클러스터',
+    group: 'basics',
     // 등급은 이 파일 안의 리터럴에서 나오는 설계의 성질이지, 열 때마다 알아내야 하는 값이 아니다.
     // experiment.observe 의 퍼센트와 같은 규율로 tests/templates.test.js 가 계산과 대조한다.
     grade: { verdict: 'single-point', severs: 4 },
@@ -526,6 +539,7 @@ export const templates = [
   },
   {
     id: 'single-stack', name: '단일 경로 웹 서비스',
+    group: 'basics',
     grade: { verdict: 'single-point', severs: 4 },
     summary: '방화벽과 로드밸런서를 각각 한 대로 세운 구성입니다.',
     teaches: '무장애일 때는 모든 축이 75%로 아래 이중화 구성과 똑같습니다. 방화벽 한 대가 죽는 순간 트래픽 전부가 끊깁니다. 둘을 나란히 열어 비교하세요. 웹 서버는 로드밸런서가 한 풀로 묶어 나눠 보내므로 한 대가 죽어도 끊기지는 않지만, 남은 쪽이 150%가 되어 전달률이 67%로 내려갑니다.',
@@ -535,6 +549,7 @@ export const templates = [
   },
   {
     id: 'dual-stack', name: '이중화 웹 서비스',
+    group: 'basics',
     grade: { verdict: 'partial' },
     summary: '같은 부하를 같은 총용량으로 받되 절반짜리 장비 두 대로 나눈 구성입니다.',
     teaches: '방화벽 한 대가 죽어도 끊기지 않습니다. 대신 남은 쪽 대역폭이 150%가 되고, 세션 동기화가 없어 재수립 폭증까지 겹친 신규 세션은 178%가 됩니다. 이중화했다고 용량이 따라오는 것은 아닙니다. 웹 서버 쪽도 마찬가지로 한 대가 죽으면 풀이 흡수하지만 남은 쪽이 150%가 됩니다.',
@@ -544,6 +559,7 @@ export const templates = [
   },
   {
     id: 'inline-lb', name: '인라인 로드밸런싱',
+    group: 'balance',
     grade: { verdict: 'single-point', severs: 4 },
     summary: '요청과 응답이 모두 로드밸런서를 지나는 풀 프록시 구성입니다.',
     teaches: '로드밸런서가 양방향 바이트를 전부 부담해 처리량이 94%로 먼저 찹니다. 아래 DSR 구성과 같은 토폴로지이니 나란히 열어 비교하세요. 웹 서버 두 대는 로드밸런서가 묶은 한 백엔드 풀이라, 서버를 더 붙이면 demand를 손으로 나누지 않아도 부하가 나뉩니다.',
@@ -553,6 +569,7 @@ export const templates = [
   },
   {
     id: 'dsr-farm', name: 'DSR 로드밸런싱',
+    group: 'balance',
     grade: { verdict: 'single-point', severs: 4 },
     summary: '응답이 로드밸런서를 거치지 않고 서버에서 클라이언트로 직행합니다.',
     teaches: '같은 부하인데 로드밸런서 처리량이 9%로 떨어집니다. 연결 추적 부담은 그대로라 제한 축이 TLS 재개 핸드셰이크로 옮겨갑니다. 백엔드 풀은 인라인 구성과 똑같이 동작합니다 — 응답이 로드밸런서를 건너뛴다고 분배가 달라지지는 않습니다.',
@@ -566,6 +583,7 @@ export const templates = [
   },
   {
     id: 'three-tier', name: '3-tier 웹 서비스',
+    group: 'basics',
     grade: { verdict: 'single-point', severs: 4 },
     summary: '웹·앱·데이터 계층을 직렬로 지나는 구성입니다.',
     teaches: '계층마다 보는 축이 다릅니다. 웹은 세션, 앱은 NIC 패킷, 데이터는 NIC 대역폭으로 판정됩니다.',
@@ -579,6 +597,7 @@ export const templates = [
   },
   {
     id: 'spine-leaf', name: '스파인-리프 팹릭',
+    group: 'basics',
     grade: { verdict: 'single-point', severs: 6 },
     summary: '스파인 2대와 리프 3대를 모두 연결한 클로스 구성입니다.',
     teaches: 'East-West 트래픽이 두 스파인으로 갈립니다. 스파인 하나를 끄면 남은 쪽이 전부 받는 것을 볼 수 있습니다.',
@@ -592,6 +611,7 @@ export const templates = [
   },
   {
     id: 'security-chain', name: '인라인 보안 체인',
+    group: 'security',
     grade: { verdict: 'single-point', severs: 8 },
     summary: '방화벽과 WAF를 직렬로 지나는 구성입니다.',
     teaches: '대역폭이 아니라 WAF의 TLS 신규 핸드셰이크가 먼저 찹니다. 방화벽은 세션 동기화가 없어 장애 시 재수립 폭증이 계산됩니다.',
@@ -605,6 +625,7 @@ export const templates = [
   },
   {
     id: 'remote-access', name: '원격 접속 VPN',
+    group: 'security',
     grade: { verdict: 'single-point', severs: 10 },
     summary: '원격 근무자가 SSL VPN 게이트웨이를 지나 내부 자원에 닿는 구성입니다.',
     teaches: '대역폭과 세션은 절반도 안 찼는데 동시 VPN 터널이 먼저 한계에 닿습니다. VPN 장비는 바이트보다 터널 수로 규격이 정해집니다.',
@@ -618,6 +639,7 @@ export const templates = [
   },
   {
     id: 'branch-vpn', name: '지사 IPsec 연결',
+    group: 'security',
     grade: { verdict: 'single-point', severs: 9 },
     summary: '지사를 WAN 회선과 IPsec 게이트웨이로 본사에 잇는 구성입니다.',
     teaches: '암호화 처리량이 회선보다 먼저 찹니다. 회선을 늘려도 게이트웨이를 바꾸지 않으면 그대로입니다.',
@@ -631,6 +653,7 @@ export const templates = [
   },
   {
     id: 'dmz', name: 'DMZ 이중 방화벽',
+    group: 'security',
     grade: { verdict: 'single-point', severs: 7 },
     summary: '외부 방화벽과 내부 방화벽 사이에 DMZ를 둔 구성입니다.',
     teaches: '같은 트래픽이 방화벽 두 대를 지납니다. 용량이 작은 내부 방화벽이 먼저 찹니다.',
@@ -644,6 +667,7 @@ export const templates = [
   },
   {
     id: 'hybrid-cloud', name: '하이브리드 클라우드 연결',
+    group: 'capacity',
     grade: { verdict: 'single-point', severs: 7 },
     summary: '온프레미스와 클라우드를 WAN 회선으로 잇는 구성입니다.',
     teaches: '사이트 안은 넉넉한데 WAN 회선 하나가 전체를 결정합니다. 좁은 구간을 찾는 연습입니다.',
@@ -657,6 +681,7 @@ export const templates = [
   },
   {
     id: 'cdn-origin', name: 'CDN 오리진',
+    group: 'balance',
     grade: { verdict: 'single-point', severs: 2 },
     summary: '엣지 캐시가 앞에 있고 미스만 오리진으로 가는 구성입니다.',
     teaches: '오리진으로 가는 양은 적은데 오리진의 신규 세션이 먼저 찹니다. 캐시 적중률이 왜 용량 문제인지 보여줍니다.',
@@ -670,6 +695,7 @@ export const templates = [
   },
   {
     id: 'microservices', name: 'East-West 마이크로서비스',
+    group: 'capacity',
     grade: { verdict: 'single-point', severs: 7 },
     summary: '서비스끼리 서로 호출하는 다대다 구성입니다.',
     teaches: '작은 패킷이 아주 많습니다. 대역폭은 남는데 스위치의 패킷 처리량이 먼저 찹니다.',
@@ -679,6 +705,7 @@ export const templates = [
   },
   {
     id: 'backup', name: '백업 네트워크',
+    group: 'capacity',
     grade: { verdict: 'single-point', severs: 5 },
     summary: '야간 백업과 아카이브가 스토리지로 몰리는 구성입니다.',
     teaches: '세션은 몇 개 없는데 NIC 대역폭이 먼저 찹니다. 소수 대용량 플로우의 모습입니다.',
@@ -692,6 +719,7 @@ export const templates = [
   },
   {
     id: 'vdi', name: 'VDI 데스크톱 풀',
+    group: 'balance',
     grade: { verdict: 'single-point', severs: 2 },
     summary: '가상 데스크톱을 브로커 뒤에 둔 구성입니다.',
     teaches: '데스크톱 세션은 오래 붙어 있습니다. 신규 세션보다 동시 세션이 먼저 찹니다.',
@@ -705,6 +733,7 @@ export const templates = [
   },
   {
     id: 'payment', name: '결제 처리',
+    group: 'security',
     grade: { verdict: 'single-point', severs: 2 },
     summary: 'WAF 뒤에 결제 애플리케이션과 원장을 둔 구성입니다.',
     teaches: '연결 재사용이 낮아 대역폭은 한가한데 TLS 신규 핸드셰이크가 먼저 찹니다.',
@@ -718,6 +747,7 @@ export const templates = [
   },
   {
     id: 'streaming', name: '스트리밍 배포',
+    group: 'balance',
     grade: { verdict: 'single-point', severs: 2 },
     summary: '오리진에서 엣지를 거쳐 시청자로 내보내는 구성입니다.',
     teaches: '세션은 적고 바이트는 많습니다. 순수 대역폭이 병목인 드문 경우입니다.',
@@ -731,6 +761,7 @@ export const templates = [
   },
   {
     id: 'iot', name: 'IoT 게이트웨이',
+    group: 'capacity',
     grade: { verdict: 'single-point', severs: 2 },
     summary: '현장 센서를 게이트웨이로 모아 수집 플랫폼에 넣는 구성입니다.',
     teaches: '작은 패킷이 대량입니다. 대역폭은 9%인데 게이트웨이의 패킷 처리량이 먼저 찹니다.',
@@ -744,6 +775,7 @@ export const templates = [
   },
   {
     id: 'disaster-recovery', name: '재해복구 이중 사이트',
+    group: 'capacity',
     grade: { verdict: 'single-point', severs: 7 },
     summary: '주 사이트와 보조 사이트를 좁은 회선으로 잇고 복제하는 구성입니다.',
     teaches: '사이트 안은 넉넉한데 사이트 간 회선이 복제로 가득 찹니다.',
@@ -757,6 +789,7 @@ export const templates = [
   },
   {
     id: 'asym-wan', name: '비대칭 가입자 회선',
+    group: 'capacity',
     grade: { verdict: 'single-point', severs: 4 },
     summary: '내려받기와 올려보내기의 용량이 다른 지사 회선입니다.',
     teaches: '같은 링크인데 방향마다 한계가 다릅니다. 이 회선은 내려받기 1 Gbps, 올려보내기 200 Mbps입니다. 부하가 네 배 작은 올려보내기 쪽이 먼저 85%에 닿습니다 — 야간 백업이 지사 회선을 죽이는 이유입니다. CARRIER는 외부망으로 선언했으므로 우리가 적어 준 대역폭 하나만 판정하고, 모르는 패킷 처리량은 0이 아니라 미확인으로 둡니다.',
@@ -770,6 +803,7 @@ export const templates = [
   },
   {
     id: 'service-sla', name: '서비스 수용 기준',
+    group: 'evidence',
     grade: { verdict: 'partial' },
     summary: '장비 사용률이 아니라 선언한 서비스 기준으로 판정하는 구성입니다.',
     teaches: '이 설계는 경고선을 80%가 아니라 65%로 잡았고, 인터넷뱅킹을 수용 기준 99%, 웹 3대 중 2대 이상 살아 있을 것으로 선언했습니다. 그래서 판정을 장비가 아니라 서비스가 합니다. 장비가 101%로 빨개도 서비스는 통과일 수 있고, 배율을 1.6배까지 올려야 수용 기준이 무너집니다. 100%를 넘으면 곧 장애라는 말은 수용 기준을 정하지 않았을 때만 참입니다.',
@@ -783,6 +817,7 @@ export const templates = [
   },
   {
     id: 'datasheet-perimeter', name: '데이터시트로 짠 경계',
+    group: 'evidence',
     grade: { verdict: 'single-point', severs: 8 },
     summary: '카탈로그 데이터시트 값을 그대로 붙이고 우리 트래픽 조건과 대조하는 구성입니다.',
     teaches: '카탈로그에서 방화벽 두 대를 붙였습니다. 근거 레코드 8개 중 계산에 들어간 것은 1개입니다. 포티넷의 20 Gbps는 1518바이트 UDP에 기능을 켜지 않고 잰 값이고, 이 설계의 워크로드 조건이 그것과 같아서 씁니다. 팔로알토의 값은 App-ID와 로깅을 켠 조건에서 잰 것이라 조건이 맞지 않고, 두 장비의 세션 축은 데이터시트가 어떻게 쟀는지 밝히지 않아 미확인입니다. 왼쪽 워크로드 조건에서 프레임 크기를 64로 바꿔 보세요 — 지금 쓰는 20 Gbps가 조건 불일치로 바뀝니다.',
@@ -796,6 +831,7 @@ export const templates = [
   },
   {
     id: 'blank', name: '빈 설계',
+    group: 'blank',
     summary: '컴포넌트 탭에서 장비를 끌어다 직접 그립니다.',
     teaches: '',
     tags: ['빈 캔버스'],

@@ -7,7 +7,7 @@ import { GLYPHS, GLYPH_SPRITE } from './glyphs.js';
 import { behaviorToken, formatNodeValue, groupBoxes, GROUP_PAD, kindInitial, nodeAxes, nodeAxisLabel, NODE_REACH, nodeView, STATE_TOKEN, symbolFor, zonePath } from './node-view.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
 import { vendorLogoFor } from './logos.js';
-import { buildTemplate, templates } from './templates.js';
+import { buildTemplate, templateGroups, templates } from './templates.js';
 import { buildSpec, catalogEntry, catalogFor, catalogProfile } from './devices/catalog.js';
 import { addConnector, addShape, alignSelection, copySelection, distributeSelection, exportDiagramSvg, groupSelection, importDrawio, moveSelection, pasteSelection, removeDiagramElements, ungroupSelection, updateShape } from './diagram.js';
 import { createHistory } from './history.js';
@@ -1298,17 +1298,26 @@ function placeTourSpot() {
 // 함께 오지 않고, 사용자가 만든 설계에는 애초에 가르칠 것이 없다. 그래서 언제든 여는 문을 둔다.
 // 안내는 처음 한 번 뜨고 마는 것이 아니어야 한다. 작업 사본을 복원하면 첫 화면 설명이
 // 함께 오지 않고, 사용자가 만든 설계에는 애초에 가르칠 것이 없다. 그래서 언제든 여는 문을 둔다.
-function openTemplatePicker() {
-  const cards = templates.map((item) => {
-    const grade = templateGrade(item.id);
-    const gradeLabel = grade ? `${GRADE_LABEL[grade.verdict]}${grade.verdict === 'single-point' ? ` ${grade.severs}` : ''}` : '';
-    const haystack = [item.name, item.summary, item.teaches, gradeLabel, ...(item.tags || [])].join(' ').toLowerCase();
-    // 카드는 판정 → 이름 → 설명 → 배우는 점 순서로 읽힌다. 판정을 먼저 둔 건 카드를 훑을 때 그게 고르는 기준이기 때문이다.
-    return `<button type="button" class="template-item" data-template="${escapeAttribute(item.id)}" data-search="${escapeAttribute(haystack)}">
+function templateCard(item, groupLabel) {
+  const grade = templateGrade(item.id);
+  const gradeLabel = grade ? `${GRADE_LABEL[grade.verdict]}${grade.verdict === 'single-point' ? ` ${grade.severs}` : ''}` : '';
+  // 섹션 이름도 검색어가 된다. "보안"으로 찾으면 그 섹션이 통째로 나와야 자연스럽다.
+  const haystack = [item.name, item.summary, item.teaches, gradeLabel, groupLabel, ...(item.tags || [])].join(' ').toLowerCase();
+  // 카드는 판정 → 이름 → 설명 → 배우는 점 순서로 읽힌다. 판정을 먼저 둔 건 카드를 훑을 때 그게 고르는 기준이기 때문이다.
+  return `<button type="button" class="template-item" data-template="${escapeAttribute(item.id)}" data-search="${escapeAttribute(haystack)}">
       ${gradeLabel ? `<b class="template-grade" data-grade="${escapeAttribute(grade.verdict)}">${escapeText(gradeLabel)}</b>` : ''}
       <strong>${escapeText(item.name)}</strong><span>${escapeText(item.summary)}</span>${item.teaches ? `<em>${escapeText(item.teaches)}</em>` : ''}
       ${(item.tags || []).length ? `<span class="template-tags">${item.tags.map((tag) => `<i>${escapeText(tag)}</i>`).join('')}</span>` : ''}
-    </button>`;
+  </button>`;
+}
+
+function openTemplatePicker() {
+  // 카드 자체는 그대로 두고 제목만 사이에 끼운다. 검색은 여전히 .template-item 전부를 훑는다.
+  const sections = templateGroups.map(({ id, label }) => {
+    const members = templates.filter((item) => item.group === id);
+    if (!members.length) return '';
+    return `<section class="template-section" data-group="${escapeAttribute(id)}"><h3>${escapeText(label)}</h3>
+      <div class="template-list">${members.map((item) => templateCard(item, label)).join('')}</div></section>`;
   }).join('');
   openEditorPanel('설계 템플릿', `<p class="editor-hint">템플릿마다 먼저 차는 축이 다릅니다. 불러온 뒤 장비를 눌러 어느 축이 병목인지 확인하세요.</p>
     <div class="template-head">
@@ -1316,7 +1325,7 @@ function openTemplatePicker() {
         <input type="search" id="template-search" placeholder="이름, 태그, 병목으로 검색 (예: TLS, 방화벽, 대역폭)" autocomplete="off"></label>
       <p class="template-count" id="template-count" aria-live="polite">${templates.length}개</p>
     </div>
-    <div class="template-list">${cards}</div>`);
+    ${sections}`);
   element('template-search').focus();
 }
 
@@ -1371,6 +1380,10 @@ function filterTemplates(query) {
     const match = !needle || item.dataset.search.includes(needle);
     item.hidden = !match;
     if (match) shown += 1;
+  }
+  // 자식이 전부 숨은 섹션은 제목만 남아 빈 칸을 만든다. 함께 숨긴다.
+  for (const section of document.querySelectorAll('.template-section')) {
+    section.hidden = ![...section.querySelectorAll('.template-item')].some((item) => !item.hidden);
   }
   element('template-count').textContent = needle ? `${shown}개 일치` : `${templates.length}개`;
 }
