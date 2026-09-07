@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cloneTopology } from '../src/data.js';
-import { calculateScenario } from '../src/engine.js';
+import { calculateScenario, sweepSingleFaults } from '../src/engine.js';
 import { buildTemplate, templates } from '../src/templates.js';
 import { serializeProject } from '../src/project.js';
 
@@ -108,5 +108,21 @@ test('a design stays inside the budget one edit has', () => {
     const topology = buildTemplate(id);
     const resources = topology.devices.length + topology.links.length;
     assert.ok(resources <= RESOURCE_LIMIT, `${id} 의 자원이 ${resources}개입니다. 상한은 ${RESOURCE_LIMIT}개입니다.`);
+  }
+});
+
+// 등급을 정의에 적어 두면 설계 고르기를 열 때 목록 전체를 훑지 않아도 된다. 대신 적어 둔 값이
+// 계산과 갈라질 수 있으므로, observe 의 퍼센트를 대조하는 것과 같은 방식으로 여기서 묶어 둔다.
+test('the verdict a design claims on its card is the verdict the sweep reaches', () => {
+  for (const template of templates) {
+    const sweep = sweepSingleFaults(buildTemplate(template.id));
+    if (!sweep.resources.length) {
+      assert.equal(template.grade, undefined, `${template.id}: 훑을 자원이 없는데 등급을 적었습니다.`);
+      continue;
+    }
+    assert.ok(template.grade, `${template.id} 에 등급이 없습니다.`);
+    assert.equal(template.grade.verdict, sweep.grade, `${template.id} 의 판정`);
+    // 단일 장애점만 개수를 카드에 적는다. 나머지는 개수를 말하지 않으므로 적어 두지 않는다.
+    assert.equal(template.grade.severs, sweep.grade === 'single-point' ? sweep.severs : undefined, `${template.id} 의 단절 개수`);
   }
 });

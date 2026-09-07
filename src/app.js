@@ -1057,10 +1057,16 @@ function nextDevicePosition() {
 }
 
 const GRADE_LABEL = { 'single-point': '단일 장애점', partial: '이중화 · 용량 부족', redundant: '이중화', unknown: '판정 불가' };
-let templateGrades = null;
+const templateGrades = new Map();
+// 설계 고르기를 열 때마다 목록 전체를 훑던 자리다. 훑기 비용은 자원 수를 따라 가파르게 붙어
+// 큰 설계 하나가 패널 첫 열기를 눈에 띄게 멈춰 세운다. 등급은 저장소 안 리터럴에서 나오는
+// 설계의 성질이라 정의에 적혀 있고, 적히지 않은 것만 그 자리에서 훑는다.
 function templateGrade(id) {
-  if (!templateGrades) {
-    templateGrades = new Map(templates.map((item) => [item.id, sweepSingleFaults(buildTemplate(item.id))]));
+  const declared = templates.find((item) => item.id === id)?.grade;
+  if (declared) return declared;
+  if (!templateGrades.has(id)) {
+    const sweep = sweepSingleFaults(buildTemplate(id));
+    templateGrades.set(id, sweep.resources.length ? { verdict: sweep.grade, severs: sweep.severs } : null);
   }
   return templateGrades.get(id);
 }
@@ -1260,13 +1266,11 @@ function placeTourSpot() {
 function openTemplatePicker() {
   const cards = templates.map((item) => {
     const grade = templateGrade(item.id);
-    const gradeLabel = grade.resources.length
-      ? `${GRADE_LABEL[grade.grade]}${grade.grade === 'single-point' ? ` ${grade.severs}` : ''}`
-      : '';
+    const gradeLabel = grade ? `${GRADE_LABEL[grade.verdict]}${grade.verdict === 'single-point' ? ` ${grade.severs}` : ''}` : '';
     const haystack = [item.name, item.summary, item.teaches, gradeLabel, ...(item.tags || [])].join(' ').toLowerCase();
     // 카드는 판정 → 이름 → 설명 → 배우는 점 순서로 읽힌다. 판정을 먼저 둔 건 카드를 훑을 때 그게 고르는 기준이기 때문이다.
     return `<button type="button" class="template-item" data-template="${escapeAttribute(item.id)}" data-search="${escapeAttribute(haystack)}">
-      ${gradeLabel ? `<b class="template-grade" data-grade="${escapeAttribute(grade.grade)}">${escapeText(gradeLabel)}</b>` : ''}
+      ${gradeLabel ? `<b class="template-grade" data-grade="${escapeAttribute(grade.verdict)}">${escapeText(gradeLabel)}</b>` : ''}
       <strong>${escapeText(item.name)}</strong><span>${escapeText(item.summary)}</span>${item.teaches ? `<em>${escapeText(item.teaches)}</em>` : ''}
       ${(item.tags || []).length ? `<span class="template-tags">${item.tags.map((tag) => `<i>${escapeText(tag)}</i>`).join('')}</span>` : ''}
     </button>`;
