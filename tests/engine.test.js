@@ -132,7 +132,10 @@ test('splits a link that carries traffic both ways', () => {
   assert.equal(shared.bindingDirection, 'reverse');
   assert.equal(round4(shared.axes.forwarding_bps.utilization), 0.5);
   assert.equal(round4(oneWay.directions.forward.axes.forwarding_bps.utilization), 0.86);
-  assert.equal(round4(oneWay.directions.reverse.axes.forwarding_bps.utilization), 0);
+  // 한쪽으로만 지나는 링크의 반대쪽은 0 이 아니라 미확인이다. 요청이 지나간 길에 응답이 하나도
+  // 안 돌아오는 일은 없고, 얼마가 돌아오는지는 수요가 returnPath 를 적어야 알 수 있다.
+  assert.equal(oneWay.directions.reverse.axes.forwarding_bps.status, 'unknown');
+  assert.equal(oneWay.directions.reverse.axes.forwarding_bps.unknownReason, 'return-not-modelled');
   assert.equal(oneWay.bindingDirection, 'forward');
 });
 
@@ -781,9 +784,14 @@ test('sends the response share down the return path a demand declares', () => {
   const hop = (result, id, direction) => result.links.find((link) => link.id === id).directions[direction].axes.forwarding_bps.load;
   const plain = calculateScenario(returnPathFixture({ declared: false }));
   const split = calculateScenario(returnPathFixture());
-  // 적지 않으면 오늘 그대로다. 되돌아오는 길에는 아무것도 그리지 않는다.
+  const state = (result, id, direction) => result.links.find((link) => link.id === id).directions[direction].axes.forwarding_bps.status;
+  // 적지 않으면 요청 홉에 전부 실린다. 되돌아오는 길은 0 이 아니라 미확인으로 남는다 -
+  // 응답이 어디로 가는지 아무도 적지 않았으므로 그 값은 계산된 적이 없다.
   assert.equal(hop(plain, 'client-edge', 'forward'), 10e9);
-  assert.equal(hop(plain, 'client-edge', 'reverse'), 0);
+  assert.equal(state(plain, 'client-edge', 'reverse'), 'unknown');
+  // 아무 수요도 지나지 않는 링크는 다르다. 양쪽 다 비어 있는 것이 사실이므로 0 이 맞다 -
+  // 모르는 것과 없는 것을 같은 기호로 그리면 둘 다 못 읽는다.
+  assert.equal(state(plain, 'app-edge', 'forward'), 'healthy');
   assert.equal(hop(plain, 'app-edge', 'forward'), 0);
   // 적으면 응답 9할이 되돌아오는 홉으로 옮겨간다. LB 로 가는 링크에는 요청 1할만 남는다.
   near(hop(split, 'client-edge', 'forward'), 1e9, '요청 홉');
@@ -821,4 +829,35 @@ test('counts a session once when the request and the response share a device', (
   const edge = calculateScenario(topology).devices.find(({ id }) => id === 'edge');
   // 세션 수는 요청 다리에만 싣는다. 두 다리에 다 실으면 양쪽에 걸친 장비가 같은 연결을 두 번 센다.
   assert.equal(edge.axes.new_sessions_per_sec.load, 20e3);
+});
+
+test('a direction nobody modelled reads unknown, not a quiet zero', () => {
+  const result = calculateScenario(cloneTopology());
+  const oneWay = result.links.find(({ id }) => id === 'leaf-b-api-b');
+  const busy = oneWay.directions.forward.axes.forwarding_bps;
+  const idle = oneWay.directions.reverse.axes.forwarding_bps;
+  assert.ok(busy.utilization > 0);
+  assert.equal(idle.status, 'unknown');
+  assert.equal(idle.unknownReason, 'return-not-modelled');
+  // 모르는 것이 이 링크의 건강은 아니다. 링크마다 미확인을 물리면 253개 중 178개가 회색이 되어
+  // 그림이 아무 말도 못 한다 - 그 공백은 방향별 숫자와 사유가 제자리에서 말한다.
+  assert.equal(oneWay.primaryStatus, 'warning', '판정은 실제로 흐르는 방향이 정한다');
+  assert.equal(result.summary.growthLadder.unresolved
+    .some(({ resourceId, direction }) => resourceId === 'leaf-b-api-b' && direction === 'reverse'), false,
+  '모델링하지 않은 반환 방향은 언제 차는지의 미확정이 아니다');
+});
+
+test('no design paints a number on a direction it never carried', () => {
+  for (const { id } of templates) {
+    const topology = buildTemplate(id);
+    if (!topology.links.length) continue;
+    for (const link of calculateScenario(topology, { scale: 1 }).links) {
+      const forward = link.directions.forward.axes.forwarding_bps;
+      const reverse = link.directions.reverse.axes.forwarding_bps;
+      if (!forward || !reverse) continue;
+      // 한쪽만 흐르면 반대쪽은 계산된 적이 없다. 양쪽 다 비어 있으면 그것은 사실이므로 0 이 맞다.
+      if ((forward.load ?? 0) > 0) assert.notEqual(reverse.utilization, 0, `${id} ${link.id}: 역방향을 0%로 그렸습니다`);
+      if ((reverse.load ?? 0) > 0) assert.notEqual(forward.utilization, 0, `${id} ${link.id}: 정방향을 0%로 그렸습니다`);
+    }
+  }
 });

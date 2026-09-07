@@ -1079,6 +1079,22 @@ async function verify(viewport, screenshot, interact = false) {
 
     // 노드 레이어가 캔버스를 덮어 링크가 포인터를 못 받던 문제. 링크는 눌러서 검사할 수 있어야 한다.
 
+    // 응답은 되돌아온다. 요청 점과 같은 모양으로 그리면 returnPath 로 응답을 옮겨 놓고도 그림은
+    // 예전과 같아져, 무엇이 달라졌는지 화면에서 읽히지 않는다. 응답을 적은 설계에서만 잰다 -
+    // 적지 않은 설계의 역방향은 0 이 아니라 미확인이고, 모르는 양을 움직이는 점으로 그리지 않는다.
+    await page.locator('[data-editor-action="new"]').click();
+    await page.locator('[data-template="dsr-farm"]').click();
+    await page.waitForFunction(() => document.querySelectorAll('.packet-dot.response').length > 0);
+    const flows = await page.evaluate(() => ({
+      request: document.querySelectorAll('.packet-dot:not(.response)').length,
+      response: document.querySelectorAll('.packet-dot.response').length,
+      backward: [...document.querySelectorAll('.packet-dot.response animateMotion')]
+        .filter((motion) => motion.getAttribute('keyPoints') === '1;0').length,
+    }));
+    assert.ok(flows.request > 0, '요청 패킷이 흘러야 한다');
+    assert.ok(flows.response > 0, '응답 패킷이 요청과 다른 모양으로 되돌아와야 한다');
+    assert.equal(flows.backward, flows.response, '응답 패킷은 선을 거꾸로 달려야 한다');
+
     // 굴곡을 손으로 옮긴다. 자동 경로가 늘 원하는 자리로 가지는 않으므로, 고른 선에 손잡이가
     // 붙고 끌면 마디가 생겨야 한다. 두 번 누르면 그 마디가 사라져 자동 경로로 돌아간다.
     // 도면을 갈아 끼우므로 interact 의 맨 끝에 둔다 - 앞에 두면 뒤따르는 단계가 앞 도면의

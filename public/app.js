@@ -806,13 +806,23 @@ function renderTopology() {
     const spot = labelSpots.get(link.id);
     const geometry = escapeAttribute(linkPath(routes.get(link.id), routeView.mode));
     const utilization = link.axes.forwarding_bps?.utilization;
-    const packetCount = !link.severed && !onSeveredPath && utilization > 0 ? Math.min(3, Math.max(1, Math.ceil(utilization * 3))) : 0;
-    const packetDuration = Math.max(1.25, 3.4 - Math.min(utilization || 0, 1.5) * 1.25);
-    // 점은 선을 따라간다. 예전에는 cx/cy 를 양 끝 사이에서 옮겼는데, 그러면 굽은 선 위에서
-    // 점만 곧게 질러가 어느 길로 흐르는지가 그림과 어긋난다.
-    const packetDots = Array.from({ length: packetCount }, (_, index) => `<circle class="packet-dot ${status}" r="3">
-      <animateMotion path="${geometry}" dur="${packetDuration.toFixed(2)}s" begin="-${(packetDuration * index / packetCount).toFixed(2)}s" repeatCount="indefinite"></animateMotion>
-    </circle>`).join('');
+    // 점은 방향마다 따로 흐른다. 하나로 합치면 요청과 응답이 같은 줄로 보여, returnPath 를 적어
+    // 응답을 옮겨 놓고도 그림은 예전과 같아진다. 되돌아오는 점은 속을 비워 한눈에 갈리게 한다.
+    // 미확인 방향에는 아무것도 그리지 않는다 - 모르는 양을 움직이는 점으로 그리면 사실이 된다.
+    const packetStream = (direction) => {
+      const axis = link.directions?.[direction]?.axes?.forwarding_bps;
+      const share = axis && axis.status !== 'unknown' ? axis.utilization : null;
+      if (link.severed || onSeveredPath || !(share > 0)) return '';
+      const count = Math.min(3, Math.max(1, Math.ceil(share * 3)));
+      const duration = Math.max(1.25, 3.4 - Math.min(share, 1.5) * 1.25);
+      const back = direction === 'reverse';
+      // 경로는 출발지에서 도착지로 그려져 있다. 응답은 그 길을 거꾸로 달리므로 keyPoints 를 뒤집는다.
+      const along = back ? ' keyPoints="1;0" keyTimes="0;1" calcMode="linear"' : '';
+      return Array.from({ length: count }, (_, index) => `<circle class="packet-dot ${status}${back ? ' response' : ''}" r="${back ? 2.6 : 3}">
+        <animateMotion path="${geometry}"${along} dur="${duration.toFixed(2)}s" begin="-${(duration * index / count).toFixed(2)}s" repeatCount="indefinite"></animateMotion>
+      </circle>`).join('');
+    };
+    const packetDots = packetStream('forward') + packetStream('reverse');
     return `<g class="link-group" data-link-id="${escapeAttribute(link.id)}">
       ${selectionHas('link', link.id) ? `<path class="link-selection" d="${geometry}"></path>` : ''}
       <path class="link ${status}" d="${geometry}"></path>
@@ -893,13 +903,21 @@ function renderIdleNote(resource) {
   </div>`;
 }
 
-// 링크의 평면 축은 바쁜 쪽 방향 하나만 말한다. 방향마다 용량이 다른 회선에서는 그것으로 부족하다
-// — 넘친 방향만 보이고 반대쪽이 왜 멀쩡한지 알 길이 없다. 그래서 한계가 갈리는 링크만 두 방향을
-// 나란히 편다. 양쪽이 같은 링크에 같은 숫자를 두 번 적는 것은 소음이다.
+// 링크의 평면 축은 바쁜 쪽 방향 하나만 말한다. 방향마다 용량이 다르거나 한쪽만 미확인인
+// 회선에서는 그것으로 부족하다 — 넘친 방향만 보이고 반대쪽이 왜 멀쩡한지, 혹은 왜 값이 없는지
+// 알 길이 없다. 그래서 한계나 판정이 갈리는 링크만 두 방향을 나란히 편다. 양쪽이 똑같은 링크에
+// 같은 숫자를 두 번 적는 것은 소음이다.
 function renderLinkDirections(resource) {
   const axes = [...new Set(['forward', 'reverse'].flatMap((direction) => Object.keys(resource.directions?.[direction]?.axes || {})))];
-  const split = axes.filter((axis) => resource.directions?.forward?.axes[axis]?.limit !== resource.directions?.reverse?.axes[axis]?.limit);
+  const split = axes.filter((axis) => {
+    const forward = resource.directions?.forward?.axes[axis];
+    const reverse = resource.directions?.reverse?.axes[axis];
+    return forward?.limit !== reverse?.limit || forward?.status !== reverse?.status;
+  });
   if (!split.length) return '';
+  // 왜 비었는지를 그 자리에서 말한다. 사유 없이 — 만 그리면 도구가 고장 난 것으로 읽힌다.
+  const unmodelled = split.some((axis) => ['forward', 'reverse']
+    .some((direction) => resource.directions?.[direction]?.axes[axis]?.unknownReason === 'return-not-modelled'));
   const rows = [['forward', '정방향', resource.source], ['reverse', '역방향', resource.target]].map(([direction, label, from]) => {
     const cells = split.map((axis) => {
       const result = resource.directions?.[direction]?.axes[axis];
@@ -908,7 +926,10 @@ function renderLinkDirections(resource) {
     }).join('');
     return `<div class="link-direction"><strong>${label}<small>${escapeText(from)} 에서</small></strong>${cells}</div>`;
   }).join('');
-  return `<div class="direction-list"><span class="spec-code">방향별 한계</span>${rows}</div>`;
+  const note = unmodelled
+    ? '<p class="direction-note">응답이 어느 길로 돌아오는지 이 설계의 수요가 적지 않았습니다. 되돌아오는 방향은 0%가 아니라 미확인입니다.</p>'
+    : '';
+  return `<div class="direction-list"><span class="spec-code">방향별 한계</span>${rows}${note}</div>`;
 }
 const SOURCE_TYPE_LABEL = { datasheet: '데이터시트', third_party_test: '제3자 시험', user_measured: '실측', estimate: '추정' };
 

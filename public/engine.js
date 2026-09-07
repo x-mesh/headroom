@@ -325,7 +325,12 @@ function growthLadder(activeResources, scale, warningThreshold) {
       for (const [axis, value] of Object.entries(axes || {})) {
         const at = direction ? { resourceId: resource.id, axis, direction } : { resourceId: resource.id, axis };
         if (value.utilization == null || !(value.utilization > 0)) {
-          if (value.status === 'unknown') unresolved.push({ ...at, reason: value.unknownReason ?? null });
+          // 모델링하지 않은 반환 방향은 사다리의 미확정이 아니다. 이 자원이 언제 차는지를 못
+          // 푼 것이 아니라, 응답이 어디로 가는지 수요가 적지 않은 것이다. 여기에 세면 화면의
+          // "순서 미확정" 이 60 개에서 247 개로 뛰어 진짜 미확정이 그 안에 묻힌다.
+          if (value.status === 'unknown' && value.unknownReason !== 'return-not-modelled') {
+            unresolved.push({ ...at, reason: value.unknownReason ?? null });
+          }
           continue;
         }
         rungs.push({ ...at, breachScale: scale / value.utilization, warningScale: (scale * warningThreshold) / value.utilization, limit: value.limit });
@@ -380,6 +385,9 @@ export function calculateScenario(topology, options = {}) {
   const demandResults = [];
   const missingDeviceLoads = Object.fromEntries(topology.devices.map(({ id }) => [id, new Set()]));
   const missingLinkLoads = Object.fromEntries(topology.links.map(({ id }) => [id, { forward: new Set(), reverse: new Set() }]));
+  // 어느 방향에 수요가 실제로 지났는지. 한쪽만 흐르는 링크의 반대쪽 0% 는 계산값이 아니라
+  // 아무도 모델링하지 않은 양이다 - 그 둘을 가리려면 부하가 아니라 지났는지를 봐야 한다.
+  const touchedDirections = new Set();
   const resolvedPaths = resolveDemandPaths(topology, disabledDevices, disabledLinks, options);
   // 장애가 있을 때만 푼다. 끊긴 demand 가 무장애였다면 어디를 지났는지는 결과에 남지 않으므로
   // 캔버스가 무엇이 끊겼는지 그릴 수 없다. 폭증 계산도 같은 경로를 쓴다.
@@ -440,6 +448,7 @@ export function calculateScenario(topology, options = {}) {
         for (const axis of deviceAxes.get(deviceId)) if (!Number.isFinite(demand.load[axis])) missingDeviceLoads[deviceId].add(axis);
       }
       for (const hop of footprint.hops) {
+        touchedDirections.add(`${hop.linkId}:${hop.direction}`);
         addLoad(linkLoads[hop.linkId][hop.direction], hopEntries, scale * hop.weight * share);
         for (const axis of linkAxes.get(hop.linkId)) if (!Number.isFinite(demand.load[axis])) missingLinkLoads[hop.linkId][hop.direction].add(axis);
       }
@@ -499,10 +508,17 @@ export function calculateScenario(topology, options = {}) {
     return { ...device, active: !disabledDevices.has(device.id), carriesDemand: demandTouched.has(device.id), load: deviceLoads[device.id], axes, ...summarizeAxes(axes) };
   });
   const links = topology.links.map((link) => {
+    // 한쪽으로만 수요가 지나면 반대쪽은 0 이 아니라 미확인이다. 요청이 지나간 링크에 응답이
+    // 하나도 안 돌아오는 일은 없고, 얼마가 돌아오는지는 수요가 returnPath 를 적어야 알 수 있다.
+    // 0% 로 그리면 모델링하지 않은 양이 한가하다는 사실로 읽힌다 - 이 도구가 하지 않기로 한 일이다.
+    const carried = LINK_DIRECTIONS.filter((direction) => touchedDirections.has(`${link.id}:${direction}`));
     const directions = Object.fromEntries(LINK_DIRECTIONS.map((direction) => {
       const capacity = { forwarding_bps: null, ...link.capacity, ...(link.capacityByDirection?.[direction] || {}) };
       const load = linkLoads[link.id][direction];
-      const axes = Object.fromEntries(Object.entries(capacity).map(([axis, limit]) => [axis, axisResult(missingLinkLoads[link.id][direction].has(axis) ? null : load[axis] ?? 0, limit, warningThreshold)]));
+      const unmodelled = carried.length === 1 && !carried.includes(direction);
+      const axes = Object.fromEntries(Object.entries(capacity).map(([axis, limit]) => [axis, unmodelled
+        ? { load: null, limit, utilization: null, headroom: null, status: 'unknown', unknownReason: 'return-not-modelled' }
+        : axisResult(missingLinkLoads[link.id][direction].has(axis) ? null : load[axis] ?? 0, limit, warningThreshold)]));
       return [direction, { load, axes }];
     }));
     // 평면 axes 는 사용률이 큰 방향을 고른다. 동률이면 forward. UI 는 이 형태를 그대로 읽는다.
@@ -516,9 +532,15 @@ export function calculateScenario(topology, options = {}) {
       load[axis] = directions[pick].load[axis] || 0;
     }
     // 상태 요약은 양방향 전부를 본다. 한쪽만 unknown 이어도 안전하다고 말하지 않는다.
+    // 다만 모델링하지 않은 반환 방향은 뺀다. 그것은 이 링크를 몰라서가 아니라 수요가 응답의
+    // 행선지를 적지 않아서이고, 링크의 건강으로 세면 253개 중 178개가 미확인이 되어 그림이
+    // 아무 말도 못 하게 된다. 그 공백은 방향별 숫자와 사유 코드가 제자리에서 말한다.
     const spread = {};
     for (const direction of LINK_DIRECTIONS) {
-      for (const [axis, result] of Object.entries(directions[direction].axes)) spread[`${direction}:${axis}`] = result;
+      for (const [axis, result] of Object.entries(directions[direction].axes)) {
+        if (result.unknownReason === 'return-not-modelled') continue;
+        spread[`${direction}:${axis}`] = result;
+      }
     }
     const summary = summarizeAxes(spread);
     const [bindingDirection, bindingAxis] = summary.bindingAxis ? summary.bindingAxis.split(':') : [null, null];
