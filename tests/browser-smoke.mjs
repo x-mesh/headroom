@@ -613,6 +613,41 @@ async function verify(viewport, screenshot, interact = false) {
       'the node must say which mode it runs so the device is findable');
     assert.equal(await page.locator('.behavior-choice input:checked').inputValue(), 'dsr');
 
+    // 선 위는 노드 카드가 절반쯤 덮고 있어 화면 좌표로 누르면 카드가 먼저 잡는다. 여기서 재는
+    // 것은 겨냥이 아니라 고른 뒤에 벌어지는 일이므로, 클릭을 선의 판정 영역에 곧장 보낸다.
+    const clickLink = (index, shift) => page.evaluate(({ index, shift }) => {
+      const hit = document.querySelectorAll('.link-hit')[index];
+      hit.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: shift }));
+      return hit.closest('[data-link-id]').dataset.linkId;
+    }, { index, shift });
+    await clickLink(0, false);
+    assert.equal(await page.locator('.link-selection').count(), 1, '고른 선은 화면에서 고른 것으로 보여야 한다');
+    await clickLink(1, true);
+    const many = await page.locator('.link-selection').count();
+    assert.equal(many, 2, `Shift 로 선을 더했는데 ${many}개만 표시됩니다. 여럿을 골라야 한꺼번에 지울 수 있습니다.`);
+    // 후광은 선 자체의 색을 덮지 않는다. 넘친 선을 골랐다고 빨강이 사라지면 안 된다.
+    assert.equal(await page.evaluate(() => [...document.querySelectorAll('.link-selection')]
+      .every((halo) => halo.parentElement.querySelector('.link'))), true, '고른 선에도 상태를 말하는 선이 남아야 한다');
+
+    // 상자도 선을 담아야 한다. 두 선의 가운데를 함께 덮는 상자를 그려 확인한다.
+    const span = await page.evaluate(() => {
+      const mid = [...document.querySelectorAll('.link-hit')].slice(0, 2).map((hit) => {
+        const m = hit.getScreenCTM(); const at = (a) => +hit.getAttribute(a);
+        const point = hit.ownerSVGElement.createSVGPoint();
+        point.x = (at('x1') + at('x2')) / 2; point.y = (at('y1') + at('y2')) / 2;
+        return point.matrixTransform(m);
+      });
+      return { left: Math.min(...mid.map((p) => p.x)), right: Math.max(...mid.map((p) => p.x)),
+        top: Math.min(...mid.map((p) => p.y)), bottom: Math.max(...mid.map((p) => p.y)) };
+    });
+    await page.mouse.move(span.left - 24, span.top - 24);
+    await page.mouse.down();
+    await page.mouse.move(span.right + 24, span.bottom + 24, { steps: 10 });
+    await page.mouse.up();
+    const boxed = await page.locator('.link-selection').count();
+    assert.ok(boxed >= 2, `상자가 선을 ${boxed}개만 담았습니다. 상자는 지나가는 선을 집어야 합니다.`);
+    await page.keyboard.press('Escape');
+
     await page.locator('[data-editor-action="new"]').click();
     await page.locator('[data-template="blank"]').click();
     await page.waitForFunction(() => document.querySelector('#scenario-subtitle')?.textContent.startsWith('사용자 설계'));
@@ -968,6 +1003,9 @@ async function verify(viewport, screenshot, interact = false) {
       'drawing a selection box must leave the scroll position alone');
     assert.equal(await page.evaluate(() => !document.getElementById('selection-marquee').hidden), false,
       'the selection box must disappear with the pointer');
+
+    // 선을 고르는 일은 고른 것이 보여야 성립한다. 예전에는 고르기는 되는데 화면이 그대로여서
+    // 아무 일도 일어나지 않은 것처럼 읽혔고, 상자는 장비와 도형만 담아 선은 하나씩만 고를 수 있었다.
 
     // 빈 곳에서 오른쪽 버튼을 누르면 브라우저 메뉴가 뜨면 안 된다. macOS 는 누르는 순간 그것을
     // 여는데, 그러면 포인터 잡기가 풀려 밀기가 시작하자마자 죽는다. 헤드리스는 네이티브 메뉴를

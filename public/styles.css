@@ -310,6 +310,8 @@ button { color: inherit; }
 .link.disabled { stroke: var(--danger); stroke-width: 2; stroke-dasharray: 7 7; opacity: .55; }
 .link.on-severed-path { stroke: var(--danger); stroke-width: 2; stroke-dasharray: 2 6; opacity: .45; }
 .link-hit { stroke: transparent; stroke-width: 18; cursor: pointer; pointer-events: stroke; }
+/* 고른 선은 후광으로 알린다. 선 자체의 색과 굵기는 상태가 정하므로 덮어쓰지 않는다 - 넘친 선을 골랐다고 빨강이 사라지면 안 된다. */
+.link-selection { stroke: var(--signal-deep); stroke-width: 8; opacity: .38; fill: none; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: none; }
 .link-label { fill: var(--muted); font: 500 9px var(--font-data); paint-order: stroke; stroke: var(--canvas); stroke-width: 4px; }
 .packet-dot { fill: var(--signal-deep); stroke: var(--surface-raised); stroke-width: 1.5; filter: drop-shadow(0 1px 3px color-mix(in srgb, var(--signal-deep) 65%, transparent)); pointer-events: none; }
 .packet-dot.warning { fill: var(--amber); }.packet-dot.overloaded { fill: var(--danger); }.packet-dot.disabled { display: none; }

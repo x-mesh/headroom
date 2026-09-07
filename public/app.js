@@ -742,6 +742,9 @@ function renderTopology() {
     return `<g class="diagram-connector" data-connector-id="${escapeAttribute(connector.id)}"><polyline points="${points}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4"></polyline></g>`;
   }).join('');
   // 라벨이 어디에 앉을지 먼저 정한다. 한 링크만 보고는 옆 라벨과 겹치는지 알 수 없다.
+  const selectionHas = (type, id) => state.selection.some((item) => item.type === type && item.id === id)
+    || type === 'shape' && state.selection.some((item) => item.type === 'group'
+      && topology.diagram?.groups?.find(({ id: groupId }) => groupId === item.id)?.memberIds.includes(id));
   const linkStatus = (link) => (link.severed ? 'disabled' : severedPathLinks.has(link.id) ? 'on-severed-path' : link.primaryStatus);
   const labelSpots = placeLinkLabels(current.links.map((link) => ({
     id: link.id,
@@ -766,6 +769,7 @@ function renderTopology() {
       <animate attributeName="cy" values="${source.y};${target.y}" dur="${packetDuration.toFixed(2)}s" begin="-${(packetDuration * index / packetCount).toFixed(2)}s" repeatCount="indefinite"></animate>
     </circle>`).join('');
     return `<g class="link-group" data-link-id="${escapeAttribute(link.id)}">
+      ${selectionHas('link', link.id) ? `<line class="link-selection" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}"></line>` : ''}
       <line class="link ${status}" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}"></line>
       <line class="link-hit" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}" tabindex="0" role="button" aria-label="${escapeAttribute(`${resourceName(link)} 링크 검사${link.severed ? ' · 끊김' : onSeveredPath ? ' · 경로 단절' : ''}`)}"></line>
       ${packetDots}
@@ -774,9 +778,6 @@ function renderTopology() {
   }).join('') + diagramConnectors + groupLabels;
   fitGroupTags();
 
-  const selectionHas = (type, id) => state.selection.some((item) => item.type === type && item.id === id)
-    || type === 'shape' && state.selection.some((item) => item.type === 'group'
-      && topology.diagram?.groups?.find(({ id: groupId }) => groupId === item.id)?.memberIds.includes(id));
   element('diagram-layer').innerHTML = (topology.diagram?.shapes || []).map((shape) =>
     `<button type="button" class="diagram-shape${selectionHas('shape', shape.id) ? ' selected' : ''}" data-shape-id="${escapeAttribute(shape.id)}" data-kind="${escapeAttribute(shape.kind)}" style="left:${shape.x - viewport.minX}px;top:${shape.y - viewport.minY}px;width:${shape.width}px;height:${shape.height}px">${escapeText(shape.text || '')}</button>`).join('');
 
@@ -2485,6 +2486,21 @@ element('drawio-file-input').addEventListener('change', async (event) => {
     commitTopology(`drawio에서 도형 ${imported.shapes.length}개와 연결선 ${imported.connectors.length}개를 가져왔습니다. 계산 의미는 장비에 별도로 지정하세요.`);
   } catch (error) { showToast(`drawio 가져오기 실패: ${error.message}`); }
 });
+// 선분이 상자와 겹치는지. Liang-Barsky 로 매개변수 구간을 잘라, 남는 구간이 있으면 겹친 것이다.
+// 장비는 가운데 점이 상자 안에 있어야 하지만 링크는 지나가기만 해도 고른다 - 가로질러 그은
+// 얇은 상자로 여러 선을 한꺼번에 집는 것이 선을 여럿 고르는 유일하게 쓸 만한 손놀림이다.
+function segmentHitsBox(a, b, box) {
+  let enter = 0; let leave = 1;
+  const dx = b.x - a.x; const dy = b.y - a.y;
+  for (const [slope, room] of [[-dx, a.x - box.left], [dx, box.right - a.x], [-dy, a.y - box.top], [dy, box.bottom - a.y]]) {
+    if (slope === 0) { if (room < 0) return false; continue; }
+    const cut = room / slope;
+    if (slope < 0) { if (cut > leave) return false; if (cut > enter) enter = cut; }
+    else { if (cut < enter) return false; if (cut < leave) leave = cut; }
+  }
+  return true;
+}
+
 const topologyScroll = document.querySelector('.topology-scroll');
 // drawio 와 같은 손놀림으로 맞춘다. 빈 곳을 왼쪽으로 끌면 고르고, 오른쪽이나 가운데로 끌면
 // 화면을 민다. 예전에는 왼쪽 드래그가 화면을 밀고 선택 상자는 Shift 뒤에 숨어 있어, 상자가
@@ -2524,6 +2540,14 @@ topologyScroll.addEventListener('pointerup', (event) => {
     const boxed = [
       ...topology.devices.filter(({ position }) => position.x >= box.left && position.x <= box.right && position.y >= box.top && position.y <= box.bottom).map(({ id }) => ({ type: 'device', id })),
       ...(topology.diagram?.shapes || []).filter((shape) => shape.x < box.right && shape.x + shape.width > box.left && shape.y < box.bottom && shape.y + shape.height > box.top).map(({ id }) => ({ type: 'shape', id })),
+
+      ...(() => {
+        const at = new Map(topology.devices.map((device) => [device.id, device.position]));
+        return topology.links.filter((link) => {
+          const from = at.get(link.source); const to = at.get(link.target);
+          return from && to && segmentHitsBox(from, to, box);
+        }).map(({ id }) => ({ type: 'link', id }));
+      })(),
     ];
     // Shift 를 함께 누르고 끌면 이미 고른 것에 더한다. 그러지 않으면 상자 안의 것으로 갈아 끼운다.
     const keyOf = (item) => `${item.type}:${item.id}`;
@@ -2533,8 +2557,8 @@ topologyScroll.addEventListener('pointerup', (event) => {
     } else state.selection = boxed;
     // 상자로 하나만 고르면 인스펙터도 그것을 보여야 한다. 여럿이면 선택을 바꾸지 않는다 —
     // 어느 하나를 골라 띄우면 나머지를 고르지 않은 것처럼 읽힌다.
-    const onlyDevice = state.selection.length === 1 && state.selection[0].type === 'device' ? state.selection[0].id : null;
-    if (onlyDevice) state.selectedId = onlyDevice;
+    const only = state.selection.length === 1 ? state.selection[0] : null;
+    if (only && (only.type === 'device' || only.type === 'link')) state.selectedId = only.id;
     selectionBoxState = null; element('selection-marquee').hidden = true; renderTopology(); renderInspector(); return;
   }
   endPan();
