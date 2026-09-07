@@ -141,3 +141,37 @@ test('a design answers what fills up first, or it has nothing to show', () => {
     assert.notEqual(binding.axes[result.summary.bindingAxis]?.utilization, null, `${id}: 병목 축에 사용률이 없습니다.`);
   }
 });
+
+// 엔진이 할 줄 아는 것을 아무 설계도 보여 주지 않으면, 그 코드 경로는 단위 테스트만 지나고
+// 사용자는 존재를 모른다. 그래서 선언이 아니라 계산 결과를 본다 — 랙을 적어 놓고 전력 metadata 를
+// 빠뜨리면 조용히 unknown 으로 남는 것처럼, 필드만 있고 가르치지는 않는 상태를 막는다.
+test('a capability the engine has is a capability some design actually shows', () => {
+  const shown = {
+    '랙 전력과 U': false, '서비스 수용 기준': false, '장애 도메인': false,
+    '방향별 링크 용량': false, '데이터시트 근거': false, '경로 열거 한계': false,
+    '명시 경로': false, '명시 백엔드 풀': false,
+  };
+  for (const { id } of templates) {
+    const topology = buildTemplate(id);
+    const result = calculateScenario(topology, { scale: 1 });
+    shown['랙 전력과 U'] ||= result.racks.some(({ status, powerWatts, usedU }) => status !== 'unknown' && powerWatts != null && usedU != null);
+    shown['서비스 수용 기준'] ||= result.services.some(({ status }) => status === 'pass' || status === 'fail');
+    // 두 방향의 한계가 다르고 양쪽에 실제로 부하가 흘러야 비대칭을 가르치는 것이다.
+    shown['방향별 링크 용량'] ||= result.links.some(({ directions }) => directions
+      && directions.forward.axes.forwarding_bps?.limit !== directions.reverse.axes.forwarding_bps?.limit
+      && directions.forward.axes.forwarding_bps?.load > 0 && directions.reverse.axes.forwarding_bps?.load > 0);
+    shown['데이터시트 근거'] ||= result.devices.some(({ axes }) => Object.values(axes)
+      .some(({ evidenceApplicability, utilization }) => ['applicable', 'user-asserted'].includes(evidenceApplicability) && utilization != null));
+    shown['경로 열거 한계'] ||= result.demands.some(({ pathEnumeration }) => pathEnumeration?.complete === false);
+    shown['명시 경로'] ||= topology.demands.some(({ pathMode, paths }) => pathMode === 'explicit' && paths?.length);
+    shown['명시 백엔드 풀'] ||= topology.demands.some(({ backendPool }) => backendPool != null);
+    // 도메인은 켜고 끈 결과가 달라야 무언가를 실제로 묶은 것이다.
+    for (const { id: domainId } of topology.failureDomains || []) {
+      const after = calculateScenario(topology, { scale: 1, disabledDomains: [domainId] });
+      shown['장애 도메인'] ||= after.summary.unreachableCount !== result.summary.unreachableCount;
+    }
+  }
+  for (const [capability, exercised] of Object.entries(shown)) {
+    assert.ok(exercised, `${capability} 를 결과로 보여 주는 설계가 없습니다. 선언만 하고 가르치지 않습니다.`);
+  }
+});

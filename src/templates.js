@@ -508,6 +508,133 @@ function datasheetPerimeter() {
   return topology;
 }
 
+function dcPod() {
+  const topology = createEmptyTopology('데이터센터 POD');
+  const rack = (n) => `POD 1 / RACK 0${n}`;
+  const spines = repeat(4, (n) => `spine-${n}`);
+  const leaves = repeat(8, (n) => `leaf-${n}`);
+  place(topology, [
+    { id: 'internet', name: 'INTERNET', kind: 'cloud', zone: 'EDGE', position: { x: 140, y: 110 }, limits: { forwarding_bps: 400e9 }, external: true },
+    ['border-a', 'BORDER A', 'router', 'EDGE', 560, 110, { forwarding_bps: 200e9, forwarding_pps: 30e6 }],
+    ['border-b', 'BORDER B', 'router', 'EDGE', 860, 110, { forwarding_bps: 200e9, forwarding_pps: 30e6 }],
+    ['fw-a', 'FW A', 'firewall', 'EDGE', 560, 270, { forwarding_bps: 100e9, forwarding_pps: 15e6, new_sessions_per_sec: 600e3, concurrent_sessions: 10e6 }],
+    ['fw-b', 'FW B', 'firewall', 'EDGE', 860, 270, { forwarding_bps: 100e9, forwarding_pps: 15e6, new_sessions_per_sec: 600e3, concurrent_sessions: 10e6 }],
+    ...repeat(4, (n) => [`spine-${n}`, `SPINE 0${n}`, 'switch', 'POD 1 / SPINE', 320 + (n - 1) * 200, 430, { forwarding_bps: 100e9, forwarding_pps: 15e6 }]),
+    ...repeat(8, (n) => [`leaf-${n}`, `LEAF 0${n}`, 'switch', rack(n), 140 + (n - 1) * 120, 590, { forwarding_bps: 60e9, forwarding_pps: 9e6 }]),
+    // 마지막 랙만 스토리지다. 백업이 그 한 대로 모이고, 이 설계에서 가장 꽉 차는 곳이 된다.
+    ...repeat(8, (n) => [`node-${n}`, n === 8 ? 'STORAGE' : `NODE 0${n}`, n === 8 ? 'nas' : 'server', rack(n),
+      140 + (n - 1) * 120, 750, { nic_bps: 25e9, nic_pps: 4e6 }]),
+  ]);
+  connect(topology, [
+    ...mesh(['internet'], ['border-a', 'border-b'], 200e9),
+    ...mesh(['border-a', 'border-b'], ['fw-a', 'fw-b'], 100e9),
+    ...mesh(['fw-a', 'fw-b'], spines, 100e9),
+    ...mesh(spines, leaves, 50e9),
+    ...repeat(8, (n) => [`leaf-${n}`, `node-${n}`, 25e9]),
+  ]);
+  addDemand(topology, { id: 'north', name: '북남 API', source: 'internet', target: 'node-1',
+    load: { forwarding_bps: 4e9, forwarding_pps: 700e3, new_sessions_per_sec: 200e3, concurrent_sessions: 3e6 } });
+  for (const n of repeat(6, (index) => index)) {
+    addDemand(topology, { id: `ew-0${n}`, name: `동서 0${n}`, source: `node-${n}`, target: `node-${n + 1}`,
+      load: { forwarding_bps: 9e9, forwarding_pps: 1.5e6 } });
+  }
+  for (const n of [1, 3, 5, 7]) {
+    addDemand(topology, { id: `backup-0${n}`, name: `백업 0${n}`, source: `node-${n}`, target: 'node-8',
+      load: { forwarding_bps: 5.5e9, forwarding_pps: 800e3 } });
+  }
+  return declare(topology, {
+    // 랙은 장비 한 대씩 죽지 않는다. 리프와 그 랙의 서버가 한 묶음이고, 전원 계통은
+    // 논리적 이중화를 가로지른다 - 경계 라우터와 방화벽이 같은 계통에 물려 있다.
+    failureDomains: [
+      ...repeat(8, (n) => ({ id: `rack-0${n}`, name: `RACK 0${n}`, deviceIds: [`leaf-${n}`, `node-${n}`], linkIds: [] })),
+      { id: 'power-a', name: '전원 계통 A', deviceIds: ['border-a', 'fw-a'], linkIds: [] },
+      { id: 'power-b', name: '전원 계통 B', deviceIds: ['border-b', 'fw-b'], linkIds: [] },
+    ],
+    haGroups: [{ id: 'fw-pair', name: '경계 방화벽', members: ['fw-a', 'fw-b'], sessionSync: 'none', reestablishWindowSec: 30 }],
+  });
+}
+
+function poolAndPath() {
+  const topology = createEmptyTopology('풀 추론과 강제 경로');
+  place(topology, [
+    { id: 'internet', name: 'INTERNET', kind: 'cloud', zone: 'EDGE', position: { x: 110, y: 200 }, limits: { forwarding_bps: 40e9 }, external: true },
+    ['waf', 'WAF', 'waf', 'DMZ', 350, 200, { forwarding_bps: 20e9, forwarding_pps: 3e6, new_sessions_per_sec: 150e3, concurrent_sessions: 2e6 }],
+    { id: 'admin', name: 'ADMIN', kind: 'client', zone: 'OPS', position: { x: 110, y: 470 }, limits: { nic_bps: 10e9, nic_pps: 2e6 }, external: true },
+    ['sw', 'OPS SW', 'switch', 'OPS', 350, 470, { forwarding_bps: 40e9, forwarding_pps: 6e6 }],
+    ...repeat(3, (n, index) => [`web-${n}`, `WEB 0${n}`, 'web', `RACK 0${n}`, 640, 120 + index * 200,
+      { nic_bps: 25e9, nic_pps: 4e6, new_sessions_per_sec: 40e3 }]),
+  ]);
+  connect(topology, [
+    ['internet', 'waf', 20e9], ['admin', 'sw', 10e9], ['sw', 'waf', 20e9],
+    ...mesh(['waf'], repeat(3, (n) => `web-${n}`), 25e9),
+    ...mesh(['sw'], repeat(3, (n) => `web-${n}`), 25e9),
+  ]);
+  // 앞단이 WAF 라 자동 추론은 풀을 못 만든다(BFS 선행자가 전부 lb 여야 한다). 손으로 적는다.
+  addDemand(topology, { id: 'shop', name: '쇼핑 트래픽', source: 'internet', target: 'web-1',
+    backendPool: { memberIds: ['web-1', 'web-2', 'web-3'] },
+    load: { forwarding_bps: 9e9, forwarding_pps: 1.4e6, new_sessions_per_sec: 90e3, concurrent_sessions: 1.4e6 } });
+  // 최단 경로는 OPS SW 에서 곧장 가지만, 정책이 WAF 를 지나게 한다. 그 경로를 그대로 적는다.
+  addDemand(topology, { id: 'patch', name: '패치 배포', source: 'admin', target: 'web-1', backendPool: 'single',
+    paths: [{ id: 'via-waf', devices: ['admin', 'sw', 'waf', 'web-1'], links: ['admin-sw', 'sw-waf', 'waf-web-1'] }],
+    load: { forwarding_bps: 6e9, forwarding_pps: 500e3, new_sessions_per_sec: 400, concurrent_sessions: 8e3 } });
+  return topology;
+}
+
+function closPaths() {
+  const topology = createEmptyTopology('경로가 너무 많은 팹릭');
+  const fabric = { forwarding_bps: 400e9, forwarding_pps: 300e6 };
+  const tier = (stage, count, x, top, gap) => repeat(count, (n, index) =>
+    [`t${stage}-${n}`, `T${stage}-0${n}`, 'switch', `TIER ${stage}`, x, top + index * gap, fabric]);
+  place(topology, [
+    ['leaf-a', 'LEAF A', 'switch', 'RACK 01', 120, 350, fabric],
+    ...tier(1, 4, 330, 140, 140), ...tier(2, 4, 530, 140, 140), ...tier(3, 5, 730, 110, 130),
+    ['leaf-b', 'LEAF B', 'switch', 'RACK 02', 940, 350, fabric],
+  ]);
+  const stage = (n, count) => repeat(count, (index) => `t${n}-${index}`);
+  connect(topology, [
+    ...mesh(['leaf-a'], stage(1, 4), 100e9),
+    ...mesh(stage(1, 4), stage(2, 4), 100e9),
+    ...mesh(stage(2, 4), stage(3, 5), 100e9),
+    ...mesh(stage(3, 5), ['leaf-b'], 100e9),
+  ]);
+  addDemand(topology, { id: 'east-west', name: '동서 트래픽', source: 'leaf-a', target: 'leaf-b',
+    load: { forwarding_bps: 40e9, forwarding_pps: 30e6 } });
+  return topology;
+}
+
+function rackPower() {
+  const topology = createEmptyTopology('랙 전력과 공간');
+  const gpu = { uHeight: 4, typicalDrawWatts: 2400, maximumDrawWatts: 3200 };
+  place(topology, [
+    { id: 'client', name: 'OPS', kind: 'client', zone: 'OFFICE', position: { x: 900, y: 150 }, limits: { nic_bps: 10e9 }, external: true },
+    { id: 'fw', name: 'FW', kind: 'firewall', zone: 'ROW A / RACK 01', position: { x: 250, y: 310 },
+      limits: { forwarding_bps: 20e9, forwarding_pps: 3e6, new_sessions_per_sec: 120e3, concurrent_sessions: 2e6 },
+      metadata: { uHeight: 2, typicalDrawWatts: 320, maximumDrawWatts: 600 } },
+    { id: 'core', name: 'CORE SW', kind: 'switch', zone: 'ROW A / RACK 01', position: { x: 250, y: 150 },
+      limits: { forwarding_bps: 80e9, forwarding_pps: 12e6 },
+      metadata: { uHeight: 1, typicalDrawWatts: 430, maximumDrawWatts: 750 } },
+    { id: 'gpu-01', name: 'GPU 01', kind: 'server', zone: 'ROW A / RACK 01', position: { x: 130, y: 490 }, limits: { nic_bps: 25e9, nic_pps: 4e6 }, metadata: gpu },
+    { id: 'gpu-02', name: 'GPU 02', kind: 'server', zone: 'ROW A / RACK 01', position: { x: 370, y: 490 }, limits: { nic_bps: 25e9, nic_pps: 4e6 }, metadata: gpu },
+    { id: 'gpu-03', name: 'GPU 03', kind: 'server', zone: 'ROW A / RACK 02', position: { x: 660, y: 490 }, limits: { nic_bps: 25e9, nic_pps: 4e6 }, metadata: gpu },
+    { id: 'nas', name: 'NAS', kind: 'nas', zone: 'ROW A / RACK 02', position: { x: 660, y: 310 }, limits: { nic_bps: 25e9, nic_pps: 4e6 },
+      metadata: { uHeight: 2, typicalDrawWatts: 620, maximumDrawWatts: 900 } },
+  ]);
+  connect(topology, [['client', 'fw', 10e9], ['fw', 'core', 20e9],
+    ...mesh(['core'], ['gpu-01', 'gpu-02', 'gpu-03', 'nas'], 25e9)]);
+  addDemand(topology, { id: 'train', name: '학습 데이터 읽기', source: 'gpu-01', target: 'nas', load: { forwarding_bps: 18e9, forwarding_pps: 2.4e6 } });
+  addDemand(topology, { id: 'train-2', name: '학습 데이터 읽기 2', source: 'gpu-02', target: 'nas', load: { forwarding_bps: 4e9, forwarding_pps: 800e3 } });
+  addDemand(topology, { id: 'ops', name: '운영 접속', source: 'client', target: 'nas',
+    load: { forwarding_bps: 500e6, forwarding_pps: 100e3, new_sessions_per_sec: 2e3, concurrent_sessions: 40e3 } });
+  return declare(topology, {
+    // 전력 기준은 랙이 정한다. 장비가 다른 기준을 선언하면 합계를 내지 않고 미확인으로 남긴다 —
+    // nameplate 과 typical 은 더할 수 없는 값이다.
+    racks: [
+      { id: 'rack-01', name: 'RACK 01', deviceIds: ['core', 'fw', 'gpu-01', 'gpu-02'], powerBasis: 'typical', powerBudgetWatts: 5000, capacityU: 42 },
+      { id: 'rack-02', name: 'RACK 02', deviceIds: ['gpu-03', 'nas'], powerBasis: 'typical', powerBudgetWatts: 5000, capacityU: 42 },
+    ],
+  });
+}
+
 // 설계가 스물을 넘으면 한 줄로 깔린 목록에서는 고를 수가 없다. 등급 배지도 기준이 되지 못한다 —
 // 스물넷 중 스물이 단일 장애점이다. 그래서 무엇을 가르치는지로 묶는다. 순서가 곧 섹션 순서다.
 export const templateGroups = Object.freeze([
@@ -828,6 +955,62 @@ export const templates = [
       observe: '포티넷의 처리량이 98%까지 오르는 것이 보입니다. 같은 화면의 팔로알토는 배율을 아무리 올려도 사용률이 나오지 않습니다 — 그 값은 다른 조건에서 잰 것이라 이 설계에 쓸 수 있는지 아직 말할 수 없습니다.',
     },
     build: datasheetPerimeter,
+  },
+  {
+    id: 'dc-pod', name: '데이터센터 POD',
+    group: 'scale',
+    grade: { verdict: 'single-point', severs: 16 },
+    summary: '경계 2쌍과 4스파인·8리프 팹릭을 한 POD로 묶은 구성입니다.',
+    teaches: '자원이 79개입니다. 어디가 병목인지 그림으로는 보이지 않습니다 — 팹릭은 20% 언저리인데 정작 꽉 찬 곳은 스토리지 랙 한 대의 NIC입니다. 장애 주입 탭에서 RACK 08 도메인 하나를 내려 보세요. 리프와 서버가 함께 죽어 백업 수요 네 개가 한꺼번에 끊깁니다 — 랙은 장비 한 대씩 죽지 않습니다. 단일 장애점이 16개나 잡히는 것도 서버가 리프 한 대에만 물려 있기 때문입니다.',
+    tags: ['POD', 'Clos', '장애 도메인', '규모', '단일 홈'],
+    experiment: {
+      prompt: '스파인 한 대가 멈추면 이 POD에서 무엇이 달라질까요?',
+      action: { type: 'fault-device', id: 'spine-1', label: 'SPINE 01 장애 실험' },
+      observe: '끊기는 수요는 하나도 없습니다. 남은 스파인 셋이 27%로 오를 뿐이고, 이 설계에서 가장 꽉 찬 곳은 여전히 88%인 스토리지 NIC입니다. 굵은 곳이 병목이 아닙니다.',
+    },
+    build: dcPod,
+  },
+  {
+    id: 'pool-and-path', name: '풀 추론과 강제 경로',
+    group: 'balance',
+    grade: { verdict: 'single-point', severs: 6 },
+    summary: '도구가 대신 정해 주는 것과 내가 적어 줘야 하는 것을 한 화면에 둔 구성입니다.',
+    teaches: '이 도구는 로드밸런서 뒤의 서버를 한 풀로 묶어 줍니다. 그런데 앞이 WAF면 묶지 않습니다 — 자동 추론은 앞단이 전부 로드밸런서일 때만 도는 규칙이라, 풀을 적지 않으면 WEB 01 한 대가 60%를 지고 나머지 둘은 0%로 남습니다. 그래서 이 설계는 풀을 손으로 적었습니다. 아래쪽 패치 배포는 반대로 한 대만 보게 묶었고, 최단 경로를 두고도 WAF를 반드시 지나도록 경로를 직접 적었습니다. 그래서 링크 OPS SW–WEB 01은 0%입니다. 도구가 정해 주는 것과 내가 정해야 하는 것의 경계가 여기입니다.',
+    tags: ['백엔드 풀', '정책 경로', '추론', 'WAF', '패치 배포'],
+    experiment: {
+      prompt: 'WEB 02가 빠지면 풀은 어떻게 될까요?',
+      action: { type: 'fault-device', id: 'web-2', label: 'WEB 02 장애 실험' },
+      observe: '풀이 두 대로 줄어 남은 서버의 신규 세션이 114%가 됩니다. 풀을 손으로 적어 두지 않았다면 WEB 01 한 대만 부하를 지고 나머지 둘은 처음부터 놀고 있었을 것입니다.',
+    },
+    build: poolAndPath,
+  },
+  {
+    id: 'clos-paths', name: '경로가 너무 많은 팹릭',
+    group: 'scale',
+    grade: { verdict: 'partial' },
+    summary: '3단 Clos로 동서 경로가 열거 한계를 넘는 구성입니다.',
+    teaches: '이 팹릭의 동서 경로는 80개입니다. 도구는 한 수요당 64개까지만 열거하고 거기서 멈추므로, 전달률을 판정 불가로 둡니다 — 다 세지 못한 것을 다 셌다고 말하지 않습니다. 그 증거가 T3-05입니다. 아무 장애도 없는데 0%로 보이는 것은 그 스위치가 노는 것이 아니라 계산이 거기까지 닿지 못한 것입니다. 미확인은 망이 아픈 것이 아니라 도구의 예산이 모자란 것입니다.',
+    tags: ['Clos', '경로 열거', '판정 불가', 'ECMP', '팹릭'],
+    experiment: {
+      prompt: '스위치를 한 대 끄면 판정이 어떻게 달라질까요?',
+      action: { type: 'fault-device', id: 't3-5', label: 'T3-05 장애 실험' },
+      observe: '장비를 한 대 껐는데 판정이 판정 불가에서 정상으로 바뀝니다. 사용률은 어느 자원도 달라지지 않았습니다 — 경로가 80개에서 64개로 줄어 열거가 끝났을 뿐입니다.',
+    },
+    build: closPaths,
+  },
+  {
+    id: 'rack-power', name: '랙 전력과 공간',
+    group: 'capacity',
+    grade: { verdict: 'single-point', severs: 7 },
+    summary: '대역폭이 아니라 랙의 전력 예산이 먼저 차는 구성입니다.',
+    teaches: '랙에 자리는 31U가 남았는데 전력 예산이 먼저 넘었습니다. 5,000W 예산에 typical 합계가 5,550W입니다. 네트워크 축은 전부 통과인데 전체 판정이 fail인 이유가 이것이고, 배율을 아무리 낮춰도 이 값은 바뀌지 않습니다 — 전력은 트래픽의 함수가 아닙니다. 그리고 nameplate과 typical은 더할 수 없습니다. 장비 하나가 랙과 다른 전력 기준을 선언하면 이 랙의 전력은 합계가 아니라 미확인이 됩니다.',
+    tags: ['랙', '전력', 'U', '코로케이션', 'GPU'],
+    experiment: {
+      prompt: '배율을 올리면 이 설계의 판정이 달라질까요?',
+      action: { type: 'scale', value: 1.1, label: '배율 1.10배' },
+      observe: 'NAS 대역폭이 99%까지 올라도 아직 넘지 않았는데 판정은 여전히 fail입니다. 넘은 것은 대역폭이 아니라 RACK 01의 전력 예산이고, 그 값은 배율을 따라가지 않습니다.',
+    },
+    build: rackPower,
   },
   {
     id: 'blank', name: '빈 설계',
