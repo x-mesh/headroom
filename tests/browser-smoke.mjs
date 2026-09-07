@@ -282,24 +282,31 @@ async function verify(viewport, screenshot, interact = false) {
   await page.waitForFunction(() => document.querySelector('#tour')?.hidden === false);
   assert.match(await page.locator('.tour-count').textContent(), /^1 \/ \d+$/);
   const tourTexts = [];
+  let spotted = 0;
   for (let step = 1; ; step += 1) {
     tourTexts.push(await page.locator('.tour-text').textContent());
-    // 부드러운 스크롤이 끝나야 자리가 정해진다. 멈춘 뒤에 잰다.
+    // 부드러운 스크롤이 끝나야 자리가 정해진다. 멈춘 뒤에 잰다. 단계가 바뀌면 기준을 비운다 —
+    // 앞 단계의 마지막 위치가 남아 있으면 첫 폴에서 "이미 멈췄다"로 잘못 읽는다.
+    await page.evaluate(() => { window.__tourSettle = null; });
     await page.waitForFunction(() => {
-      const spot = document.querySelector('.tour-highlight');
-      if (!spot) return true;
+      const spot = document.querySelector('#tour-spot');
+      if (spot.hidden) return true;
       const top = Math.round(spot.getBoundingClientRect().top);
       const settled = window.__tourSettle === top;
       window.__tourSettle = top;
       return settled;
     }, null, { polling: 120 });
-    // 안내가 가리키는 곳은 상자가 덮지 않아야 한다. 덮으면 안내가 아니라 방해다.
+    // 실선 박스는 실제 조작 대상 위에 있어야 하고, 설명 상자가 그것을 덮으면 안 된다.
     assert.equal(await page.evaluate(() => {
+      const spot = document.querySelector('#tour-spot');
+      if (spot.hidden) return true;
       const box = document.querySelector('#tour').getBoundingClientRect();
-      const spot = document.querySelector('.tour-highlight')?.getBoundingClientRect();
-      if (!spot) return true;
-      return Math.min(spot.bottom, box.top, window.innerHeight) - Math.max(spot.top, 0) > 8;
-    }), true, `${step}단계에서 강조한 영역이 상자에 가렸습니다.`);
+      const rect = spot.getBoundingClientRect();
+      const inView = rect.top >= -1 && rect.bottom <= window.innerHeight + 1 && rect.width > 4 && rect.height > 4;
+      const clear = box.right < rect.left || box.left > rect.right || box.bottom < rect.top || box.top > rect.bottom;
+      return inView && clear;
+    }), true, `${step}단계의 실선 박스가 화면 밖이거나 설명 상자에 가렸습니다.`);
+    if (!await page.locator('#tour-spot').evaluate((node) => node.hidden)) spotted += 1;
     const last = await page.locator('[data-tour="next"]').textContent() === '닫기';
     await page.locator('[data-tour="next"]').click();
     if (last) break;
@@ -310,12 +317,14 @@ async function verify(viewport, screenshot, interact = false) {
   assert.match(tourTexts.join(' '), /1\.\d\d배에서/, 'the tour must read the breach scale off the live calculation');
   assert.match(tourTexts.join(' '), /미확인은 0%가 아닙니다|한계를 모르는 축은 막대를 채우지 않고/,
     'the tour must state the one rule a newcomer gets wrong');
+  // 단계마다 화면의 실제 조작 대상을 가리켜야 한다. 설명만 하는 단계는 마무리 하나뿐이다.
+  assert.ok(spotted >= tourTexts.length - 1, `실선 박스가 ${spotted}단계에만 떴습니다.`);
   // 안내가 만진 것은 시나리오 상태뿐이고, 끝나면 그대로 돌아와야 한다.
   await page.waitForFunction(() => document.querySelector('#tour')?.hidden === true);
   assert.deepEqual(await page.evaluate(() => ({
     scale: document.querySelector('#scale-input').value, faults: document.querySelector('#summary-faults').textContent,
   })), beforeTour, 'the tour must put the design back where it found it');
-  assert.equal(await page.locator('.tour-highlight').count(), 0);
+  assert.equal(await page.locator('#tour-spot').evaluate((node) => node.hidden), true, 'the box must not outlive the tour');
 
   // 처음 오는 사람이 보는 화면에도 설명이 있어야 한다. 답은 실험을 누른 뒤에 편다.
   assert.match(await page.locator('#learning-panel').textContent(), /독립인 한계를 여럿/, 'the first screen must state what the tool claims');
