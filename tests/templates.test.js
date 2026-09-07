@@ -4,6 +4,7 @@ import { cloneTopology } from '../src/data.js';
 import { calculateScenario, sweepSingleFaults } from '../src/engine.js';
 import { buildTemplate, templates } from '../src/templates.js';
 import { serializeProject } from '../src/project.js';
+import { NODE_REACH, formatNodePercent, placeLinkLabels } from '../src/node-view.js';
 
 // 화면이 "이 설계에서 확인할 것"으로 내보내는 문장이다. 계산이 실제로 그렇게 나오지 않으면
 // 도구가 스스로 틀린 말을 가르치게 된다. 그래서 문구에 적힌 숫자를 엔진과 대조한다.
@@ -173,5 +174,43 @@ test('a capability the engine has is a capability some design actually shows', (
   }
   for (const [capability, exercised] of Object.entries(shown)) {
     assert.ok(exercised, `${capability} 를 결과로 보여 주는 설계가 없습니다. 선언만 하고 가르치지 않습니다.`);
+  }
+});
+
+// 링크가 50개를 넘으면 라벨의 절반이 서로를 덮어 하나도 못 읽게 된다. 선은 하나도 지우지 않지만
+// 글자는 같은 자리에 둘을 놓을 수 없다. 노드 카드가 라벨 위에 그려진다는 것도 함께 봐야 한다 —
+// 겹침만 세면 카드 뒤로 숨은 라벨을 자리를 얻은 것으로 잘못 센다.
+test('every link label the canvas draws is a label a person can actually read', () => {
+  const RANK = { overloaded: 0, invalid: 1, disabled: 2, warning: 4, unknown: 5, healthy: 6 };
+  for (const { id } of templates) {
+    const topology = buildTemplate(id);
+    if (!topology.links.length) continue;
+    const result = calculateScenario(topology, { scale: 1 });
+    const position = new Map(topology.devices.map((device) => [device.id, device.position]));
+    const entries = result.links.map((link) => ({
+      id: link.id,
+      text: link.severed ? 'DOWN' : formatNodePercent(link.axes.forwarding_bps?.utilization ?? null),
+      status: link.severed ? 'disabled' : link.primaryStatus,
+      util: link.axes.forwarding_bps?.utilization ?? null,
+      binding: link.id === result.summary.bindingResourceId,
+      from: position.get(link.source), to: position.get(link.target),
+    }));
+    const spots = placeLinkLabels(entries, topology.devices.map(({ position: at }) => at));
+
+    const boxes = [...spots].map(([linkId, spot]) => ({ ...spot, width: entries.find((entry) => entry.id === linkId).text.length * 5.4 + 3 }));
+    for (let a = 0; a < boxes.length; a += 1) for (let b = a + 1; b < boxes.length; b += 1) {
+      assert.ok(Math.abs(boxes[a].x - boxes[b].x) >= (boxes[a].width + boxes[b].width) / 2 || Math.abs(boxes[a].y - boxes[b].y) >= 11,
+        `${id}: 두 라벨이 같은 자리에 놓였습니다.`);
+    }
+    const cards = topology.devices.map(({ position: at }) => ({ x1: at.x - NODE_REACH.left, x2: at.x + NODE_REACH.right, y1: at.y - NODE_REACH.top, y2: at.y + NODE_REACH.bottom }));
+    for (const box of boxes) {
+      assert.ok(!cards.some((card) => box.x > card.x1 && box.x < card.x2 && box.y > card.y1 && box.y < card.y2),
+        `${id}: 라벨이 노드 카드 뒤로 숨었습니다.`);
+    }
+    // 자리가 모자라면 덜 심각한 것부터 밀린다. 넘치거나 끊기거나 미확인인 링크는 밀리면 안 된다.
+    for (const entry of entries) {
+      if ((RANK[entry.status] ?? 9) >= RANK.healthy) continue;
+      assert.ok(spots.has(entry.id), `${id}: ${entry.status} 링크 ${entry.id} 의 라벨이 밀렸습니다.`);
+    }
   }
 });

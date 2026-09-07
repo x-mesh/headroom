@@ -4,7 +4,7 @@ import { acceptEvidence, addDemand, addDevice, addLink, applySpec, clearEvidence
 import { importDeviceDefinition } from './device-import.js';
 import { parseProject, serializeProject } from './project.js';
 import { GLYPHS, GLYPH_SPRITE } from './glyphs.js';
-import { behaviorToken, formatNodeValue, groupBoxes, GROUP_PAD, kindInitial, nodeAxes, nodeAxisLabel, NODE_REACH, nodeView, STATE_TOKEN, symbolFor, zonePath } from './node-view.js';
+import { behaviorToken, formatNodeValue, groupBoxes, GROUP_PAD, kindInitial, nodeAxes, nodeAxisLabel, NODE_REACH, nodeView, placeLinkLabels, STATE_TOKEN, symbolFor, zonePath } from './node-view.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
 import { vendorLogoFor } from './logos.js';
 import { buildTemplate, templateGroups, templates } from './templates.js';
@@ -721,13 +721,23 @@ function renderTopology() {
     const points = [source, ...(connector.waypoints || []), target].map(({ x, y }) => `${x},${y}`).join(' ');
     return `<g class="diagram-connector" data-connector-id="${escapeAttribute(connector.id)}"><polyline points="${points}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4"></polyline></g>`;
   }).join('');
+  // 라벨이 어디에 앉을지 먼저 정한다. 한 링크만 보고는 옆 라벨과 겹치는지 알 수 없다.
+  const linkStatus = (link) => (link.severed ? 'disabled' : severedPathLinks.has(link.id) ? 'on-severed-path' : link.primaryStatus);
+  const labelSpots = placeLinkLabels(current.links.map((link) => ({
+    id: link.id,
+    text: link.severed ? 'DOWN' : formatPercent(link.axes.forwarding_bps?.utilization),
+    status: linkStatus(link),
+    util: link.axes.forwarding_bps?.utilization ?? null,
+    binding: link.id === current.summary.bindingResourceId,
+    from: devices.get(link.source).position,
+    to: devices.get(link.target).position,
+  })), current.devices.map(({ position }) => position));
   element('link-layer').innerHTML = groupMarkup + current.links.map((link) => {
     const source = devices.get(link.source).position;
     const target = devices.get(link.target).position;
     const onSeveredPath = !link.severed && severedPathLinks.has(link.id);
-    const status = link.severed ? 'disabled' : onSeveredPath ? 'on-severed-path' : link.primaryStatus;
-    const middleX = (source.x + target.x) / 2;
-    const middleY = (source.y + target.y) / 2 - 7;
+    const status = linkStatus(link);
+    const spot = labelSpots.get(link.id);
     const utilization = link.axes.forwarding_bps?.utilization;
     const packetCount = !link.severed && !onSeveredPath && utilization > 0 ? Math.min(3, Math.max(1, Math.ceil(utilization * 3))) : 0;
     const packetDuration = Math.max(1.25, 3.4 - Math.min(utilization || 0, 1.5) * 1.25);
@@ -739,7 +749,7 @@ function renderTopology() {
       <line class="link ${status}" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}"></line>
       <line class="link-hit" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}" tabindex="0" role="button" aria-label="${escapeAttribute(`${resourceName(link)} 링크 검사${link.severed ? ' · 끊김' : onSeveredPath ? ' · 경로 단절' : ''}`)}"></line>
       ${packetDots}
-      <text class="link-label"${link.severed ? '' : ` data-live-util="${utilization ?? ''}" data-live-seed="${link.id}"`} x="${middleX}" y="${middleY}" text-anchor="middle">${link.severed ? 'DOWN' : formatPercent(utilization)}</text>
+      ${spot ? `<text class="link-label"${link.severed ? '' : ` data-live-util="${utilization ?? ''}" data-live-seed="${link.id}"`} x="${spot.x}" y="${spot.y}" text-anchor="middle">${link.severed ? 'DOWN' : formatPercent(utilization)}</text>` : ''}
     </g>`;
   }).join('') + diagramConnectors + groupLabels;
   fitGroupTags();

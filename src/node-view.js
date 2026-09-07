@@ -136,3 +136,49 @@ export function groupBoxes(devices) {
       };
     });
 }
+
+// 라벨이 놓이는 자리를 정한다. 화면과 내보내기가 같은 함수를 부른다 — 한쪽에만 보이는 숫자가
+// 있으면 위키에 붙인 그림이 화면과 다른 말을 한다.
+//
+// 선은 하나도 지우지 않는다. 무엇이 무엇에 붙어 있는지가 그림의 절반이기 때문이다. 그런데
+// 글자는 같은 자리에 둘을 놓을 수 없어서, 링크 50개가 넘으면 라벨의 절반이 서로를 덮어 하나도
+// 못 읽게 된다. 그래서 심각한 것부터 자리를 잡고, 밀린 것은 선을 따라 조금 비켜 본다.
+// 그래도 자리가 없으면 그리지 않는다 — 링크를 누르면 인스펙터가 그 값을 그대로 말한다.
+const LABEL_RANK = { overloaded: 0, invalid: 1, disabled: 2, 'severed-path': 3, 'on-severed-path': 3, warning: 4, unknown: 5, healthy: 6 };
+// 선 위 어디에 놓아 볼지. 가운데가 먼저이고, 밀리면 양쪽으로 번갈아 비킨다.
+const LABEL_SPOTS = [0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74, 0.18, 0.82];
+const LABEL_CHAR = 5.4;
+const LABEL_ROW = 11;
+
+/**
+ * @param {{id:string, text:string, status:string, util:number|null, binding:boolean, from:{x,y}, to:{x,y}}[]} entries
+ * @param {{x:number, y:number}[]} nodes 노드 중심. 카드가 라벨을 덮으므로 그 자리는 피한다.
+ * @returns {Map<string, {x:number, y:number}>} 자리를 얻은 라벨만 담는다.
+ */
+export function placeLinkLabels(entries, nodes = []) {
+  // 노드 카드는 라벨보다 위에 그려진다. 카드 안에 놓은 라벨은 자리를 얻은 것처럼 보이지만
+  // 실제로는 가려서 안 보인다 - 겹침만 세면 그 절반을 놓친다.
+  const cards = nodes.map((node) => ({
+    x1: node.x - NODE_REACH.left, x2: node.x + NODE_REACH.right,
+    y1: node.y - NODE_REACH.top, y2: node.y + NODE_REACH.bottom,
+  }));
+  const covered = (x, y) => cards.some((card) => x > card.x1 && x < card.x2 && y > card.y1 && y < card.y2);
+  const placed = [];
+  const spots = new Map();
+  // 제목이 부르는 링크는 반드시 남긴다. 화면이 이름을 말하는데 캔버스에 그 숫자가 없으면 안 된다.
+  const rank = (entry) => (entry.binding ? -1 : LABEL_RANK[entry.status] ?? 9);
+  const ordered = [...entries].sort((a, b) => rank(a) - rank(b) || (b.util ?? -1) - (a.util ?? -1) || a.id.localeCompare(b.id));
+  for (const entry of ordered) {
+    const width = String(entry.text).length * LABEL_CHAR + 3;
+    for (const along of LABEL_SPOTS) {
+      const x = entry.from.x + (entry.to.x - entry.from.x) * along;
+      const y = entry.from.y + (entry.to.y - entry.from.y) * along - 7;
+      if (covered(x, y)) continue;
+      if (placed.some((box) => Math.abs(box.x - x) < (box.width + width) / 2 && Math.abs(box.y - y) < LABEL_ROW)) continue;
+      placed.push({ x, y, width });
+      spots.set(entry.id, { x, y });
+      break;
+    }
+  }
+  return spots;
+}

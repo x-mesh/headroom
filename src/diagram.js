@@ -1,5 +1,5 @@
 import { axisCatalog } from './data.js';
-import { formatNodePercent, groupBoxes, nodeView } from './node-view.js';
+import { formatNodePercent, groupBoxes, nodeView, placeLinkLabels } from './node-view.js';
 const clone = (value) => structuredClone(value);
 const coordinate = (value) => {
   const n = Number(value);
@@ -265,6 +265,21 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
   const groupLabels = groups.map((group) => `<rect x="${fmt(group.x + 6)}" y="${fmt(group.y + 3)}" width="${fmt(group.label.length * 5.4 + 10)}" height="13" fill="${INK.raised}" stroke="${INK.lineSoft}" stroke-width="1"/>`
     + text(group.x + 11, group.y + 13, group.label, { size: 9, weight: 700, fill: INK.muted })).join('');
 
+  // 라벨 자리는 화면과 같은 함수가 정한다. 한쪽에만 보이는 숫자가 있으면 위키에 붙인 그림이
+  // 화면과 다른 말을 한다. 굽은 링크는 가운데 마디 위에서 자리를 찾는다.
+  const edgeLabel = (link, edge) => (!link ? (edge.label || '') : link.severed ? 'DOWN' : formatNodePercent(link.axes?.forwarding_bps?.utilization ?? null));
+  const midSegment = (points) => { const half = Math.max(1, Math.floor(points.length / 2)); return [points[half - 1], points[half]]; };
+  const labelSpots = placeLinkLabels(routes.filter(({ edge }) => edgeLabel(linkStatus.get(edge.id), edge)).map(({ edge, points }) => {
+    const link = linkStatus.get(edge.id);
+    const [from, to] = midSegment(points);
+    return {
+      id: edge.id, text: edgeLabel(link, edge), from, to,
+      status: !link ? 'healthy' : link.severed ? 'disabled' : severed.has(edge.id) ? 'severed-path' : link.primaryStatus,
+      util: link?.axes?.forwarding_bps?.utilization ?? null,
+      binding: edge.id === result?.summary?.bindingResourceId,
+    };
+  }), nodes.filter(({ kind }) => kind === 'node').map(({ device }) => device.position));
+
   const edges = routes.map(({ edge, points }) => {
     const link = linkStatus.get(edge.id);
     // 화면과 같은 판정을 쓴다(src/app.js renderTopology). 끊긴 링크는 DOWN 이고, 살아 있지만
@@ -273,12 +288,10 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
     const status = !link ? null : link.severed ? 'disabled' : onSeveredPath ? 'severed-path' : link.primaryStatus;
     const stroke = status ? (LINK_INK[status] || INK.cyan) : INK.line;
     const dash = LINK_DASH[status] ? ` stroke-dasharray="${LINK_DASH[status]}"` : '';
-    const half = Math.max(1, Math.floor(points.length / 2));
-    const mid = { x: (points[half - 1].x + points[half].x) / 2, y: (points[half - 1].y + points[half].y) / 2 };
-    const label = !link ? (edge.label || '')
-      : link.severed ? 'DOWN' : formatNodePercent(link.axes?.forwarding_bps?.utilization ?? null);
+    const spot = labelSpots.get(edge.id);
+    const label = edgeLabel(link, edge);
     return `<polyline points="${points.map((p) => `${fmt(p.x)},${fmt(p.y)}`).join(' ')}" fill="none" stroke="${stroke}" stroke-width="${LINK_WIDTH[status] ?? 1}"${dash}/>`
-      + (label ? text(mid.x, mid.y - 7, label, { size: 9, fill: status && status !== 'healthy' ? stroke : INK.muted, anchor: 'middle', halo: true }) : '');
+      + (label && spot ? text(spot.x, spot.y, label, { size: 9, fill: status && status !== 'healthy' ? stroke : INK.muted, anchor: 'middle', halo: true }) : '');
   }).join('');
 
   const elements = nodes.map((n) => {
