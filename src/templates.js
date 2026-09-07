@@ -1,17 +1,80 @@
 // 아키텍처 템플릿. 각 템플릿은 서로 다른 축이 먼저 차는 구성을 보여준다.
 // PRD 5.3 은 프리셋 자체를 이 도구의 교육 콘텐츠로 규정한다.
 import { cloneTopology } from './data.js';
-import { addDemand, addDevice, addLink, createEmptyTopology } from './editor.js';
+import { acceptEvidence, addDemand, addDevice, addLink, applySpec, createEmptyTopology } from './editor.js';
+import { buildSpec, catalogEntry, catalogProfile } from './devices/catalog.js';
+
+// 8-튜플은 짧아서 설계 하나가 한눈에 읽힌다. 그 성질을 버리지 않는다. 튜플에 담기지 않는 것
+// (랙 metadata, 외부망 표시, 데이터시트 근거, 포트)을 적어야 하는 장비만 객체로 쓰고, 한 함수가
+// 둘 다 받으므로 한 설계 안에서 어휘가 갈리지 않는다.
+function deviceInput(entry) {
+  if (!Array.isArray(entry)) return entry;
+  const [id, name, kind, zone, x, y, limits, behavior] = entry;
+  return { id, name, kind, zone, position: { x, y }, limits, ...(behavior ? { behavior } : {}) };
+}
 
 function place(topology, entries) {
-  for (const [id, name, kind, zone, x, y, limits, behavior] of entries) {
-    addDevice(topology, { id, name, kind, zone, position: { x, y }, limits, ...(behavior ? { behavior } : {}) });
+  for (const entry of entries) {
+    const { spec, accept, ...input } = deviceInput(entry);
+    addDevice(topology, input);
+    if (spec) equip(topology, input.id, spec, accept);
   }
 }
 
-function connect(topology, pairs) {
-  for (const [source, target, capacityBps] of pairs) addLink(topology, { source, target, capacityBps });
+/**
+ * 데이터시트 값은 카탈로그에서만 온다(PRD 8절: 엔진 코드에 벤더 데이터를 두지 않는다).
+ * 템플릿에 숫자를 다시 적으면 두 곳이 갈라지고, records 의 digest 가 맞지 않아 프로젝트
+ * 저장이 막힌다(src/project.js validateProject).
+ */
+function equip(topology, id, [catalogId, profileId], accept = []) {
+  const entry = catalogEntry(catalogId);
+  const profile = catalogProfile(catalogId, profileId);
+  // catalogProfile 은 모르는 id 에 profiles[0] 을 돌려준다. 오타가 조용히 다른 값으로 바뀌는 것을 막는다.
+  if (!entry || profile?.id !== profileId) throw new Error(`Unknown catalog profile ${catalogId}/${profileId}`);
+  applySpec(topology, id, { ...buildSpec(entry, profile), vendor: entry.vendor, model: entry.model });
+  // 데이터시트가 조건을 밝히지 않은 축은 어떤 워크로드를 적어도 applicable 이 되지 않는다.
+  // 그 축의 숫자를 이 설계에서 쓰겠다면, 사용자가 누를 그 버튼을 미리 눌러 둔 것으로 남긴다.
+  for (const axis of accept) acceptEvidence(topology, id, axis);
 }
+
+function connect(topology, entries) {
+  for (const entry of entries) {
+    if (!Array.isArray(entry)) { addLink(topology, entry); continue; }
+    const [source, target, capacityBps] = entry;
+    addLink(topology, { source, target, capacityBps });
+  }
+}
+
+/**
+ * 랙·서비스·장애 도메인·HA 쌍은 장비와 수요를 id 로 가리킨다. 가리키는 것이 없으면 엔진이
+ * 설계 전체를 invalid 로 판정하므로, 반드시 place/connect/수요 다음에 부르고 여기서 확인한다.
+ * 엔진에는 전부 선택 사항이라 비어 있는 것은 아예 만들지 않는다.
+ */
+function declare(topology, collections) {
+  const devices = new Set(topology.devices.map(({ id }) => id));
+  const links = new Set(topology.links.map(({ id }) => id));
+  const demands = new Set(topology.demands.map(({ id }) => id));
+  const check = (ids, known, label) => {
+    for (const id of ids || []) if (!known.has(id)) throw new Error(`${label} ${id} does not exist`);
+  };
+  for (const [key, items] of Object.entries(collections)) {
+    if (!items?.length) continue;
+    for (const item of items) {
+      check(item.members ?? item.deviceIds, devices, 'Device');
+      check(item.linkIds, links, 'Link');
+      check(item.demandIds, demands, 'Demand');
+      for (const group of item.endpointGroups || []) check(group.members, devices, 'Device');
+    }
+    topology[key] = structuredClone(items);
+  }
+  return topology;
+}
+
+// 같은 것을 여러 벌 놓을 때. id 는 사라지지 않고 부르는 자리에 그대로 적힌다 —
+// 생성기가 id 를 만들어 버리면 experiment.action.id 가 무엇을 가리키는지 읽을 수 없다.
+const repeat = (count, make) => Array.from({ length: count }, (unused, index) => make(index + 1, index));
+// 두 층을 전부 잇는다. connect(topology, mesh(spines, leaves, 100e9)) 로 쓴다.
+const mesh = (sources, targets, capacityBps) => sources.flatMap((source) => targets.map((target) => [source, target, capacityBps]));
 
 function balancedFarm(mode) {
   const topology = createEmptyTopology(mode === 'dsr' ? 'DSR 로드밸런싱' : '인라인 로드밸런싱');
@@ -27,8 +90,8 @@ function balancedFarm(mode) {
   connect(topology, [['internet', 'edge', 40e9], ['edge', 'lb', 20e9], ['lb', 'web-a', 25e9], ['lb', 'web-b', 25e9]]);
   for (const [id, target] of [['web-a-traffic', 'web-a'], ['web-b-traffic', 'web-b']]) {
     addDemand(topology, { id, name: `${target.toUpperCase()} 트래픽`, source: 'internet', target,
-      load: { forwarding_bps: 4e9, new_sessions_per_sec: 20e3, concurrent_sessions: 400e3, tls_full_handshakes_per_sec: 2e3, tls_resumed_handshakes_per_sec: 18e3, nic_bps: 4e9 } });
-    topology.demands.at(-1).directionality = { responseShare: 0.9, origin: 'estimate' };
+      load: { forwarding_bps: 4e9, new_sessions_per_sec: 20e3, concurrent_sessions: 400e3, tls_full_handshakes_per_sec: 2e3, tls_resumed_handshakes_per_sec: 18e3, nic_bps: 4e9 },
+      directionality: { responseShare: 0.9, origin: 'estimate' } });
   }
   return topology;
 }
@@ -344,10 +407,6 @@ function singleStack() {
 
 function dualStack() {
   const topology = createEmptyTopology('이중화 웹 서비스');
-  topology.haGroups = [
-    { id: 'fw-pair', name: 'Perimeter firewalls', members: ['fw-a', 'fw-b'], sessionSync: 'none', reestablishWindowSec: 30 },
-    { id: 'lb-pair', name: 'Load balancers', members: ['lb-a', 'lb-b'], sessionSync: 'stateful', reestablishWindowSec: 30 },
-  ];
   place(topology, [
     ['internet', 'INTERNET', 'cloud', 'EDGE', 110, 290, { forwarding_bps: 40e9, forwarding_pps: 8e6 }],
     ['fw-a', 'FW A', 'firewall', 'SECURITY', 340, 180, { forwarding_bps: 8e9, forwarding_pps: 1.2e6, new_sessions_per_sec: 30e3, concurrent_sessions: 600e3 }],
@@ -364,12 +423,20 @@ function dualStack() {
     ['fw-a', 'lb-a', 10e9], ['fw-a', 'lb-b', 10e9], ['fw-b', 'lb-a', 10e9], ['fw-b', 'lb-b', 10e9],
     ['lb-a', 'web-a', 10e9], ['lb-a', 'web-b', 10e9], ['lb-b', 'web-a', 10e9], ['lb-b', 'web-b', 10e9],
   ]);
-  return stackDemands(topology);
+  return declare(stackDemands(topology), {
+    haGroups: [
+      { id: 'fw-pair', name: 'Perimeter firewalls', members: ['fw-a', 'fw-b'], sessionSync: 'none', reestablishWindowSec: 30 },
+      { id: 'lb-pair', name: 'Load balancers', members: ['lb-a', 'lb-b'], sessionSync: 'stateful', reestablishWindowSec: 30 },
+    ],
+  });
 }
 
 export const templates = [
   {
     id: 'dual-fabric', name: '이중 팹릭 API 클러스터',
+    // 등급은 이 파일 안의 리터럴에서 나오는 설계의 성질이지, 열 때마다 알아내야 하는 값이 아니다.
+    // experiment.observe 의 퍼센트와 같은 규율로 tests/templates.test.js 가 계산과 대조한다.
+    grade: { verdict: 'single-point', severs: 4 },
     summary: 'ECMP 2경로에 방화벽과 리프 스위치를 둔 구성입니다.',
     teaches: '대역폭은 넉넉한데 방화벽의 신규 세션이 먼저 찹니다. 방화벽 하나를 끄면 남은 쪽이 두 배를 받습니다.',
     tags: ['ECMP', '방화벽', '세션', '이중화'],
@@ -382,6 +449,7 @@ export const templates = [
   },
   {
     id: 'single-stack', name: '단일 경로 웹 서비스',
+    grade: { verdict: 'single-point', severs: 4 },
     summary: '방화벽과 로드밸런서를 각각 한 대로 세운 구성입니다.',
     teaches: '무장애일 때는 모든 축이 75%로 아래 이중화 구성과 똑같습니다. 방화벽 한 대가 죽는 순간 트래픽 전부가 끊깁니다. 둘을 나란히 열어 비교하세요. 웹 서버는 로드밸런서가 한 풀로 묶어 나눠 보내므로 한 대가 죽어도 끊기지는 않지만, 남은 쪽이 150%가 되어 전달률이 67%로 내려갑니다.',
     tags: ['단일 장애점', '이중화', '비교', '방화벽', '백엔드 풀'],
@@ -390,6 +458,7 @@ export const templates = [
   },
   {
     id: 'dual-stack', name: '이중화 웹 서비스',
+    grade: { verdict: 'partial' },
     summary: '같은 부하를 같은 총용량으로 받되 절반짜리 장비 두 대로 나눈 구성입니다.',
     teaches: '방화벽 한 대가 죽어도 끊기지 않습니다. 대신 남은 쪽 대역폭이 150%가 되고, 세션 동기화가 없어 재수립 폭증까지 겹친 신규 세션은 178%가 됩니다. 이중화했다고 용량이 따라오는 것은 아닙니다. 웹 서버 쪽도 마찬가지로 한 대가 죽으면 풀이 흡수하지만 남은 쪽이 150%가 됩니다.',
     tags: ['이중화', '단일 장애점', '비교', 'ECMP', '백엔드 풀'],
@@ -398,6 +467,7 @@ export const templates = [
   },
   {
     id: 'inline-lb', name: '인라인 로드밸런싱',
+    grade: { verdict: 'single-point', severs: 4 },
     summary: '요청과 응답이 모두 로드밸런서를 지나는 풀 프록시 구성입니다.',
     teaches: '로드밸런서가 양방향 바이트를 전부 부담해 처리량이 94%로 먼저 찹니다. 아래 DSR 구성과 같은 토폴로지이니 나란히 열어 비교하세요. 웹 서버 두 대는 로드밸런서가 묶은 한 백엔드 풀이라, 서버를 더 붙이면 demand를 손으로 나누지 않아도 부하가 나뉩니다.',
     tags: ['로드밸런서', '프록시', '처리량', 'DSR', '백엔드 풀'],
@@ -406,6 +476,7 @@ export const templates = [
   },
   {
     id: 'dsr-farm', name: 'DSR 로드밸런싱',
+    grade: { verdict: 'single-point', severs: 4 },
     summary: '응답이 로드밸런서를 거치지 않고 서버에서 클라이언트로 직행합니다.',
     teaches: '같은 부하인데 로드밸런서 처리량이 9%로 떨어집니다. 연결 추적 부담은 그대로라 제한 축이 TLS 재개 핸드셰이크로 옮겨갑니다. 백엔드 풀은 인라인 구성과 똑같이 동작합니다 — 응답이 로드밸런서를 건너뛴다고 분배가 달라지지는 않습니다.',
     tags: ['로드밸런서', 'DSR', 'TLS', '세션', '백엔드 풀'],
@@ -418,6 +489,7 @@ export const templates = [
   },
   {
     id: 'three-tier', name: '3-tier 웹 서비스',
+    grade: { verdict: 'single-point', severs: 4 },
     summary: '웹·앱·데이터 계층을 직렬로 지나는 구성입니다.',
     teaches: '계층마다 보는 축이 다릅니다. 웹은 세션, 앱은 NIC 패킷, 데이터는 NIC 대역폭으로 판정됩니다.',
     tags: ['웹', '계층', '데이터베이스'],
@@ -430,6 +502,7 @@ export const templates = [
   },
   {
     id: 'spine-leaf', name: '스파인-리프 팹릭',
+    grade: { verdict: 'single-point', severs: 6 },
     summary: '스파인 2대와 리프 3대를 모두 연결한 클로스 구성입니다.',
     teaches: 'East-West 트래픽이 두 스파인으로 갈립니다. 스파인 하나를 끄면 남은 쪽이 전부 받는 것을 볼 수 있습니다.',
     tags: ['ECMP', '팹릭', '스위치', 'East-West'],
@@ -442,6 +515,7 @@ export const templates = [
   },
   {
     id: 'security-chain', name: '인라인 보안 체인',
+    grade: { verdict: 'single-point', severs: 8 },
     summary: '방화벽과 WAF를 직렬로 지나는 구성입니다.',
     teaches: '대역폭이 아니라 WAF의 TLS 신규 핸드셰이크가 먼저 찹니다. 방화벽은 세션 동기화가 없어 장애 시 재수립 폭증이 계산됩니다.',
     tags: ['방화벽', 'WAF', 'TLS', '보안'],
@@ -454,6 +528,7 @@ export const templates = [
   },
   {
     id: 'remote-access', name: '원격 접속 VPN',
+    grade: { verdict: 'single-point', severs: 10 },
     summary: '원격 근무자가 SSL VPN 게이트웨이를 지나 내부 자원에 닿는 구성입니다.',
     teaches: '대역폭과 세션은 절반도 안 찼는데 동시 VPN 터널이 먼저 한계에 닿습니다. VPN 장비는 바이트보다 터널 수로 규격이 정해집니다.',
     tags: ['VPN', 'SSL', '원격 근무', '터널'],
@@ -466,6 +541,7 @@ export const templates = [
   },
   {
     id: 'branch-vpn', name: '지사 IPsec 연결',
+    grade: { verdict: 'single-point', severs: 9 },
     summary: '지사를 WAN 회선과 IPsec 게이트웨이로 본사에 잇는 구성입니다.',
     teaches: '암호화 처리량이 회선보다 먼저 찹니다. 회선을 늘려도 게이트웨이를 바꾸지 않으면 그대로입니다.',
     tags: ['VPN', 'IPsec', '지사', '암호화'],
@@ -478,6 +554,7 @@ export const templates = [
   },
   {
     id: 'dmz', name: 'DMZ 이중 방화벽',
+    grade: { verdict: 'single-point', severs: 7 },
     summary: '외부 방화벽과 내부 방화벽 사이에 DMZ를 둔 구성입니다.',
     teaches: '같은 트래픽이 방화벽 두 대를 지납니다. 용량이 작은 내부 방화벽이 먼저 찹니다.',
     tags: ['방화벽', 'DMZ', 'WAF', '보안'],
@@ -490,6 +567,7 @@ export const templates = [
   },
   {
     id: 'hybrid-cloud', name: '하이브리드 클라우드 연결',
+    grade: { verdict: 'single-point', severs: 7 },
     summary: '온프레미스와 클라우드를 WAN 회선으로 잇는 구성입니다.',
     teaches: '사이트 안은 넉넉한데 WAN 회선 하나가 전체를 결정합니다. 좁은 구간을 찾는 연습입니다.',
     tags: ['WAN', '클라우드', '회선', '하이브리드'],
@@ -502,6 +580,7 @@ export const templates = [
   },
   {
     id: 'cdn-origin', name: 'CDN 오리진',
+    grade: { verdict: 'single-point', severs: 2 },
     summary: '엣지 캐시가 앞에 있고 미스만 오리진으로 가는 구성입니다.',
     teaches: '오리진으로 가는 양은 적은데 오리진의 신규 세션이 먼저 찹니다. 캐시 적중률이 왜 용량 문제인지 보여줍니다.',
     tags: ['CDN', '캐시', '오리진', '세션'],
@@ -514,6 +593,7 @@ export const templates = [
   },
   {
     id: 'microservices', name: 'East-West 마이크로서비스',
+    grade: { verdict: 'single-point', severs: 7 },
     summary: '서비스끼리 서로 호출하는 다대다 구성입니다.',
     teaches: '작은 패킷이 아주 많습니다. 대역폭은 남는데 스위치의 패킷 처리량이 먼저 찹니다.',
     tags: ['마이크로서비스', 'East-West', 'PPS', '스위치'],
@@ -522,6 +602,7 @@ export const templates = [
   },
   {
     id: 'backup', name: '백업 네트워크',
+    grade: { verdict: 'single-point', severs: 5 },
     summary: '야간 백업과 아카이브가 스토리지로 몰리는 구성입니다.',
     teaches: '세션은 몇 개 없는데 NIC 대역폭이 먼저 찹니다. 소수 대용량 플로우의 모습입니다.',
     tags: ['백업', '스토리지', 'NAS', '대역폭'],
@@ -534,6 +615,7 @@ export const templates = [
   },
   {
     id: 'vdi', name: 'VDI 데스크톱 풀',
+    grade: { verdict: 'single-point', severs: 2 },
     summary: '가상 데스크톱을 브로커 뒤에 둔 구성입니다.',
     teaches: '데스크톱 세션은 오래 붙어 있습니다. 신규 세션보다 동시 세션이 먼저 찹니다.',
     tags: ['VDI', '가상화', '동시 세션', '브로커'],
@@ -546,6 +628,7 @@ export const templates = [
   },
   {
     id: 'payment', name: '결제 처리',
+    grade: { verdict: 'single-point', severs: 2 },
     summary: 'WAF 뒤에 결제 애플리케이션과 원장을 둔 구성입니다.',
     teaches: '연결 재사용이 낮아 대역폭은 한가한데 TLS 신규 핸드셰이크가 먼저 찹니다.',
     tags: ['결제', 'TLS', 'WAF', '보안'],
@@ -558,6 +641,7 @@ export const templates = [
   },
   {
     id: 'streaming', name: '스트리밍 배포',
+    grade: { verdict: 'single-point', severs: 2 },
     summary: '오리진에서 엣지를 거쳐 시청자로 내보내는 구성입니다.',
     teaches: '세션은 적고 바이트는 많습니다. 순수 대역폭이 병목인 드문 경우입니다.',
     tags: ['스트리밍', '대역폭', '엣지', 'CDN'],
@@ -570,6 +654,7 @@ export const templates = [
   },
   {
     id: 'iot', name: 'IoT 게이트웨이',
+    grade: { verdict: 'single-point', severs: 2 },
     summary: '현장 센서를 게이트웨이로 모아 수집 플랫폼에 넣는 구성입니다.',
     teaches: '작은 패킷이 대량입니다. 대역폭은 9%인데 게이트웨이의 패킷 처리량이 먼저 찹니다.',
     tags: ['IoT', 'PPS', '게이트웨이', '센서'],
@@ -582,6 +667,7 @@ export const templates = [
   },
   {
     id: 'disaster-recovery', name: '재해복구 이중 사이트',
+    grade: { verdict: 'single-point', severs: 7 },
     summary: '주 사이트와 보조 사이트를 좁은 회선으로 잇고 복제하는 구성입니다.',
     teaches: '사이트 안은 넉넉한데 사이트 간 회선이 복제로 가득 찹니다.',
     tags: ['DR', '복제', '회선', '이중 사이트'],
