@@ -373,6 +373,11 @@ export const templates = [
     summary: 'ECMP 2경로에 방화벽과 리프 스위치를 둔 구성입니다.',
     teaches: '대역폭은 넉넉한데 방화벽의 신규 세션이 먼저 찹니다. 방화벽 하나를 끄면 남은 쪽이 두 배를 받습니다.',
     tags: ['ECMP', '방화벽', '세션', '이중화'],
+    experiment: {
+      prompt: '방화벽 한 대가 멈추면 남은 쪽은 어느 축에서 먼저 무너질까요?',
+      action: { type: 'fault-device', id: 'fw-a', label: 'FW A 장애 실험' },
+      observe: 'FW B의 대역폭은 72%로 여유가 있는데 신규 세션이 171%가 됩니다. 넘치는 축은 대역폭이 아닙니다.',
+    },
     build: () => cloneTopology(),
   },
   {
@@ -404,6 +409,11 @@ export const templates = [
     summary: '응답이 로드밸런서를 거치지 않고 서버에서 클라이언트로 직행합니다.',
     teaches: '같은 부하인데 로드밸런서 처리량이 9%로 떨어집니다. 연결 추적 부담은 그대로라 제한 축이 TLS 재개 핸드셰이크로 옮겨갑니다. 백엔드 풀은 인라인 구성과 똑같이 동작합니다 — 응답이 로드밸런서를 건너뛴다고 분배가 달라지지는 않습니다.',
     tags: ['로드밸런서', 'DSR', 'TLS', '세션', '백엔드 풀'],
+    experiment: {
+      prompt: '부하가 20% 늘면 DSR 구성은 어디서 먼저 넘을까요?',
+      action: { type: 'scale', value: 1.2, label: '배율 1.20배' },
+      observe: '처리량은 여전히 한가한데 LB의 TLS 재개 핸드셰이크가 108%가 됩니다. 응답을 우회해도 연결 추적은 남습니다.',
+    },
     build: () => balancedFarm('dsr'),
   },
   {
@@ -411,6 +421,11 @@ export const templates = [
     summary: '웹·앱·데이터 계층을 직렬로 지나는 구성입니다.',
     teaches: '계층마다 보는 축이 다릅니다. 웹은 세션, 앱은 NIC 패킷, 데이터는 NIC 대역폭으로 판정됩니다.',
     tags: ['웹', '계층', '데이터베이스'],
+    experiment: {
+      prompt: '부하가 40% 늘면 세 계층 중 어디가 먼저 찰까요?',
+      action: { type: 'scale', value: 1.4, label: '배율 1.40배' },
+      observe: '웹의 세션도 앱의 패킷도 아닌 DB의 NIC 대역폭이 105%로 먼저 넘습니다.',
+    },
     build: threeTier,
   },
   {
@@ -418,6 +433,11 @@ export const templates = [
     summary: '스파인 2대와 리프 3대를 모두 연결한 클로스 구성입니다.',
     teaches: 'East-West 트래픽이 두 스파인으로 갈립니다. 스파인 하나를 끄면 남은 쪽이 전부 받는 것을 볼 수 있습니다.',
     tags: ['ECMP', '팹릭', '스위치', 'East-West'],
+    experiment: {
+      prompt: '스파인 한 대가 멈추면 남은 쪽이 얼마를 받을까요?',
+      action: { type: 'fault-device', id: 'spine-a', label: 'SPINE A 장애 실험' },
+      observe: '끊기는 것은 없습니다. 남은 스파인이 East-West 전부를 받아 패킷 처리량이 60%가 됩니다.',
+    },
     build: spineLeaf,
   },
   {
@@ -425,6 +445,11 @@ export const templates = [
     summary: '방화벽과 WAF를 직렬로 지나는 구성입니다.',
     teaches: '대역폭이 아니라 WAF의 TLS 신규 핸드셰이크가 먼저 찹니다. 방화벽은 세션 동기화가 없어 장애 시 재수립 폭증이 계산됩니다.',
     tags: ['방화벽', 'WAF', 'TLS', '보안'],
+    experiment: {
+      prompt: '부하가 15% 늘면 체인의 어느 장비가 먼저 넘을까요?',
+      action: { type: 'scale', value: 1.15, label: '배율 1.15배' },
+      observe: '대역폭은 아직 한가한데 WAF의 TLS 신규 핸드셰이크가 105%가 됩니다.',
+    },
     build: securityChain,
   },
   {
@@ -432,6 +457,11 @@ export const templates = [
     summary: '원격 근무자가 SSL VPN 게이트웨이를 지나 내부 자원에 닿는 구성입니다.',
     teaches: '대역폭과 세션은 절반도 안 찼는데 동시 VPN 터널이 먼저 한계에 닿습니다. VPN 장비는 바이트보다 터널 수로 규격이 정해집니다.',
     tags: ['VPN', 'SSL', '원격 근무', '터널'],
+    experiment: {
+      prompt: '접속자가 55% 늘면 무엇이 먼저 한계에 닿을까요?',
+      action: { type: 'scale', value: 1.55, label: '배율 1.55배' },
+      observe: '대역폭이 아니라 SSL VPN의 동시 세션이 104%가 됩니다. VPN 장비는 바이트보다 터널 수로 규격이 정해집니다.',
+    },
     build: remoteAccess,
   },
   {
@@ -439,6 +469,11 @@ export const templates = [
     summary: '지사를 WAN 회선과 IPsec 게이트웨이로 본사에 잇는 구성입니다.',
     teaches: '암호화 처리량이 회선보다 먼저 찹니다. 회선을 늘려도 게이트웨이를 바꾸지 않으면 그대로입니다.',
     tags: ['VPN', 'IPsec', '지사', '암호화'],
+    experiment: {
+      prompt: '지사 트래픽이 15% 늘면 회선과 게이트웨이 중 어디가 먼저 찰까요?',
+      action: { type: 'scale', value: 1.15, label: '배율 1.15배' },
+      observe: '회선이 아니라 IPsec 게이트웨이의 암호화 처리량이 106%가 됩니다. 회선을 늘려도 이 값은 그대로입니다.',
+    },
     build: branchVpn,
   },
   {
@@ -446,6 +481,11 @@ export const templates = [
     summary: '외부 방화벽과 내부 방화벽 사이에 DMZ를 둔 구성입니다.',
     teaches: '같은 트래픽이 방화벽 두 대를 지납니다. 용량이 작은 내부 방화벽이 먼저 찹니다.',
     tags: ['방화벽', 'DMZ', 'WAF', '보안'],
+    experiment: {
+      prompt: '부하가 25% 늘면 두 방화벽 중 어느 쪽이 먼저 넘을까요?',
+      action: { type: 'scale', value: 1.25, label: '배율 1.25배' },
+      observe: '같은 트래픽을 받지만 용량이 작은 내부 방화벽의 신규 세션이 108%가 됩니다.',
+    },
     build: dmzTiers,
   },
   {
@@ -453,6 +493,11 @@ export const templates = [
     summary: '온프레미스와 클라우드를 WAN 회선으로 잇는 구성입니다.',
     teaches: '사이트 안은 넉넉한데 WAN 회선 하나가 전체를 결정합니다. 좁은 구간을 찾는 연습입니다.',
     tags: ['WAN', '클라우드', '회선', '하이브리드'],
+    experiment: {
+      prompt: '부하가 25% 늘면 사이트 안과 WAN 중 어디가 먼저 찰까요?',
+      action: { type: 'scale', value: 1.25, label: '배율 1.25배' },
+      observe: '사이트 안은 여유가 남는데 클라우드로 가는 회선이 106%가 됩니다. 좁은 구간 하나가 전체를 정합니다.',
+    },
     build: hybridCloud,
   },
   {
@@ -460,6 +505,11 @@ export const templates = [
     summary: '엣지 캐시가 앞에 있고 미스만 오리진으로 가는 구성입니다.',
     teaches: '오리진으로 가는 양은 적은데 오리진의 신규 세션이 먼저 찹니다. 캐시 적중률이 왜 용량 문제인지 보여줍니다.',
     tags: ['CDN', '캐시', '오리진', '세션'],
+    experiment: {
+      prompt: '부하가 20% 늘면 엣지와 오리진 중 어디가 먼저 찰까요?',
+      action: { type: 'scale', value: 1.2, label: '배율 1.20배' },
+      observe: '오리진으로 가는 양은 적은데 오리진의 신규 세션이 108%가 됩니다. 캐시 적중률이 용량 문제인 이유입니다.',
+    },
     build: cdnOrigin,
   },
   {
@@ -475,6 +525,11 @@ export const templates = [
     summary: '야간 백업과 아카이브가 스토리지로 몰리는 구성입니다.',
     teaches: '세션은 몇 개 없는데 NIC 대역폭이 먼저 찹니다. 소수 대용량 플로우의 모습입니다.',
     tags: ['백업', '스토리지', 'NAS', '대역폭'],
+    experiment: {
+      prompt: '백업 양이 30% 늘면 무엇이 먼저 찰까요?',
+      action: { type: 'scale', value: 1.3, label: '배율 1.30배' },
+      observe: '세션은 몇 개 없는데 NAS의 NIC 대역폭이 104%가 됩니다. 소수 대용량 플로우의 모습입니다.',
+    },
     build: backupNetwork,
   },
   {
@@ -482,6 +537,11 @@ export const templates = [
     summary: '가상 데스크톱을 브로커 뒤에 둔 구성입니다.',
     teaches: '데스크톱 세션은 오래 붙어 있습니다. 신규 세션보다 동시 세션이 먼저 찹니다.',
     tags: ['VDI', '가상화', '동시 세션', '브로커'],
+    experiment: {
+      prompt: '데스크톱이 15% 늘면 무엇이 먼저 한계에 닿을까요?',
+      action: { type: 'scale', value: 1.15, label: '배율 1.15배' },
+      observe: '신규 세션이 아니라 게이트웨이의 동시 세션이 105%가 됩니다. 데스크톱 세션은 오래 붙어 있습니다.',
+    },
     build: vdiPool,
   },
   {
@@ -489,6 +549,11 @@ export const templates = [
     summary: 'WAF 뒤에 결제 애플리케이션과 원장을 둔 구성입니다.',
     teaches: '연결 재사용이 낮아 대역폭은 한가한데 TLS 신규 핸드셰이크가 먼저 찹니다.',
     tags: ['결제', 'TLS', 'WAF', '보안'],
+    experiment: {
+      prompt: '결제가 20% 늘면 어디가 먼저 넘을까요?',
+      action: { type: 'scale', value: 1.2, label: '배율 1.20배' },
+      observe: '대역폭은 한가한데 WAF의 TLS 신규 핸드셰이크가 108%가 됩니다. 연결 재사용이 낮기 때문입니다.',
+    },
     build: paymentGateway,
   },
   {
@@ -496,6 +561,11 @@ export const templates = [
     summary: '오리진에서 엣지를 거쳐 시청자로 내보내는 구성입니다.',
     teaches: '세션은 적고 바이트는 많습니다. 순수 대역폭이 병목인 드문 경우입니다.',
     tags: ['스트리밍', '대역폭', '엣지', 'CDN'],
+    experiment: {
+      prompt: '시청자가 25% 늘면 무엇이 먼저 찰까요?',
+      action: { type: 'scale', value: 1.25, label: '배율 1.25배' },
+      observe: '엣지의 순수 대역폭이 108%가 됩니다. 세션은 적고 바이트가 많은, 대역폭이 병목인 드문 경우입니다.',
+    },
     build: streaming,
   },
   {
@@ -503,6 +573,11 @@ export const templates = [
     summary: '현장 센서를 게이트웨이로 모아 수집 플랫폼에 넣는 구성입니다.',
     teaches: '작은 패킷이 대량입니다. 대역폭은 9%인데 게이트웨이의 패킷 처리량이 먼저 찹니다.',
     tags: ['IoT', 'PPS', '게이트웨이', '센서'],
+    experiment: {
+      prompt: '장치가 15% 늘면 대역폭과 패킷 중 어디가 먼저 찰까요?',
+      action: { type: 'scale', value: 1.15, label: '배율 1.15배' },
+      observe: '대역폭은 여전히 10% 언저리인데 게이트웨이의 패킷 처리량이 107%가 됩니다. 작은 패킷이 대량입니다.',
+    },
     build: iotGateway,
   },
   {
@@ -510,6 +585,11 @@ export const templates = [
     summary: '주 사이트와 보조 사이트를 좁은 회선으로 잇고 복제하는 구성입니다.',
     teaches: '사이트 안은 넉넉한데 사이트 간 회선이 복제로 가득 찹니다.',
     tags: ['DR', '복제', '회선', '이중 사이트'],
+    experiment: {
+      prompt: '복제가 15% 늘면 사이트 안과 사이트 간 중 어디가 먼저 찰까요?',
+      action: { type: 'scale', value: 1.15, label: '배율 1.15배' },
+      observe: '사이트 안은 넉넉한데 사이트 간 회선이 109%가 됩니다.',
+    },
     build: disasterRecovery,
   },
   {

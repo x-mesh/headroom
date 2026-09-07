@@ -273,6 +273,15 @@ async function verify(viewport, screenshot, interact = false) {
   await page.locator('[data-editor-action="undo"]').click();
   await page.waitForFunction((before) => document.querySelector('[data-axis-limit]')?.textContent === before, limitBefore);
 
+  // 처음 오는 사람이 보는 화면에도 설명이 있어야 한다. 답은 실험을 누른 뒤에 편다.
+  assert.match(await page.locator('#learning-panel').textContent(), /독립인 한계를 여럿/, 'the first screen must state what the tool claims');
+  assert.equal(await page.locator('#learning-panel output').isHidden(), true, 'the answer must not sit beside the question');
+  await page.locator('#learning-panel [data-lesson-action="fault-device"]').click();
+  await page.waitForFunction(() => !document.querySelector('#learning-panel output')?.hidden);
+  assert.match(await page.locator('#topology-heading').textContent(), /신규 세션 171%/, 'the experiment must land on the number it promised');
+  await page.locator('[data-failure-type="device"][data-failure-id="fw-a"]').click();
+  await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '00');
+
   // 장비를 바꾸는 것은 인스펙터까지 가지 않고 자리에서 하는 일이다.
   await page.locator('[data-device-id="fw-a"]').click({ button: 'right' });
   await page.waitForFunction(() => !document.querySelector('#context-menu')?.hidden);

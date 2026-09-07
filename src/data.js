@@ -66,6 +66,18 @@ export const demoTopology = {
   schemaVersion: 1,
   name: 'Dual fabric API cluster',
   synthetic: true,
+  // 처음 오는 사람이 보는 화면이다. 이 도구의 주장을 여기서 한 번 말하지 않으면 어디서도
+  // 말하지 않게 된다 — 숫자는 이미 떠 있고, 그 숫자가 무엇을 뜻하는지는 아무 데도 없다.
+  template: {
+    id: 'demo',
+    name: 'Dual fabric API cluster',
+    teaches: '방화벽의 대역폭은 36%인데 신규 세션은 86%입니다. 한 장비가 서로 독립인 한계를 여럿 갖고, 설계의 기술은 어느 축에 먼저 닿는지 아는 것입니다.',
+    experiment: {
+      prompt: '방화벽 한 대가 멈추면 남은 쪽은 어느 축에서 먼저 무너질까요?',
+      action: { type: 'fault-device', id: 'fw-a', label: 'FW A 장애 실험' },
+      observe: '대역폭은 72%로 아직 여유가 있는데 신규 세션이 171%가 됩니다. 넘치는 축은 대역폭이 아닙니다.',
+    },
+  },
   warningThreshold: 0.8,
   haGroups: [
     { id: 'fw-pair', name: 'Perimeter firewalls', members: ['fw-a', 'fw-b'], sessionSync: 'stateful', reestablishWindowSec: 30 },

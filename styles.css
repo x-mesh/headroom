@@ -351,6 +351,8 @@ button { color: inherit; }
 .learning-panel strong { margin-right: 8px; color: var(--signal-deep); }
 .learning-panel button { min-height: 30px; margin: 5px 6px 0 0; border: 1px solid var(--line); background: var(--surface-raised); color: var(--text); cursor: pointer; font: 600 9px/1 var(--font-data); }
 .learning-panel output { display: block; margin-top: 5px; color: var(--muted); }
+/* display:block 이 [hidden] 을 이긴다. 답을 감추려면 여기서 다시 눌러야 한다. */
+.learning-panel output[hidden] { display: none; }
 .evidence-state { display: block; margin-top: 4px; color: var(--text); font-family: var(--font-data); }
 .bottleneck-note { margin: 0; color: var(--text); font: 500 11px/1.5 var(--font-ui); }
 #calculation-note { flex: none; }

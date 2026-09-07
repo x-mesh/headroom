@@ -238,14 +238,40 @@ function renderClassControl() {
     </div>`;
 }
 
+// 데이터시트를 붙였는데 대조할 워크로드 조건이 없으면 모든 축이 미확인이 된다. 그 상태는
+// 도구가 고장 난 것처럼 읽히므로, 앱이 자기 상태를 설명하고 빠져나갈 길을 그 자리에 낸다.
+function evidenceCliff() {
+  const judgement = current.summary.evidenceJudgement;
+  if (!judgement || !judgement.withRecords) return null;
+  if (judgement.judged === judgement.withRecords) return null;
+  const missing = judgement.withRecords - judgement.judged;
+  const conditions = Object.keys(topology.workloadConditions || {}).length;
+  return {
+    text: conditions
+      ? `데이터시트 값 ${missing}개가 아직 이 워크로드와 대조되지 않았습니다. 조건을 더 적거나, 축 하나씩 수락하면 계산에 들어갑니다.`
+      : `데이터시트 값을 붙였지만 대조할 워크로드 조건이 없어 ${missing}개 축이 미확인입니다. 데이터시트 숫자는 특정 조건에서 잰 값이라, 우리 트래픽이 그 조건인지 말하기 전에는 이 설계에 쓸 수 있는지 알 수 없습니다.`,
+    label: conditions ? '워크로드 조건 고치기' : '워크로드 조건 적기',
+  };
+}
+
+// 질문 옆에 답을 함께 띄우면 실험할 이유가 없어진다. 눌러서 결과를 본 뒤에 편다.
+let lessonRevealed = false;
+
 function renderLearningPanel() {
   const panel = element('learning-panel');
+  const cliff = evidenceCliff();
+  if (cliff) {
+    panel.hidden = false;
+    panel.innerHTML = `<strong>다음에 할 일</strong>${escapeText(cliff.text)}
+      <div><button type="button" data-lesson-action="workload">${escapeText(cliff.label)}</button></div>`;
+    return;
+  }
   const lesson = topology.template;
   if (!lesson?.teaches) { panel.hidden = true; panel.innerHTML = ''; return; }
   const experiment = lesson.experiment;
   panel.hidden = false;
   panel.innerHTML = `<strong>이 설계에서 확인할 것</strong>${escapeText(lesson.teaches)}
-    ${experiment ? `<div><span>${escapeText(experiment.prompt)}</span><br><button type="button" data-lesson-action="${escapeAttribute(experiment.action.type)}" data-lesson-id="${escapeAttribute(experiment.action.id || '')}" data-lesson-value="${escapeAttribute(experiment.action.value ?? '')}">${escapeText(experiment.action.label)}</button><output>${escapeText(experiment.observe)}</output></div>` : ''}`;
+    ${experiment ? `<div><span>${escapeText(experiment.prompt)}</span><br><button type="button" data-lesson-action="${escapeAttribute(experiment.action.type)}" data-lesson-id="${escapeAttribute(experiment.action.id || '')}" data-lesson-value="${escapeAttribute(experiment.action.value ?? '')}">${escapeText(experiment.action.label)}</button><output${lessonRevealed ? '' : ' hidden'}>${escapeText(experiment.observe)}</output></div>` : ''}`;
 }
 
 // 헤더는 지금 열려 있는 설계를 말해야 한다. 시작 복원과 undo/redo 는 loadTopology 를 거치지
@@ -1123,6 +1149,7 @@ function loadTopology(next, message, undo = null) {
   state.scale = 1; state.selectedId = topology.devices[0]?.id || null;
   state.selection = state.selectedId ? [{ type: 'device', id: state.selectedId }] : [];
   state.disabledDevices.clear(); state.disabledLinks.clear(); state.disabledDomains.clear(); state.namedScenarios = [];
+  lessonRevealed = false;
   element('scale-input').value = '100';
   closeEditorPanel();
   documentHistory.reset(topology);
@@ -2034,8 +2061,12 @@ document.querySelector('.zoom-control').addEventListener('click', (event) => {
 });
 element('learning-panel').addEventListener('click', (event) => {
   const button = event.target.closest('[data-lesson-action]'); if (!button) return;
+  if (['fault-device', 'fault-link', 'scale'].includes(button.dataset.lessonAction)) lessonRevealed = true;
   if (button.dataset.lessonAction === 'fault-device') { state.disabledDevices.add(button.dataset.lessonId); setLeftPanel('failure'); recalculate(); }
   if (button.dataset.lessonAction === 'scale') { state.scale = Number(button.dataset.lessonValue); element('scale-input').value = String(state.scale * 100); recalculate(); }
+  if (button.dataset.lessonAction === 'workload') openWorkloadForm();
+  if (button.dataset.lessonAction === 'select-device') { state.selectedId = button.dataset.lessonId; renderTopology(); renderInspector(); }
+  if (button.dataset.lessonAction === 'fault-link') { state.disabledLinks.add(button.dataset.lessonId); setLeftPanel('failure'); recalculate(); }
 });
 // 트랙패드 핀치와 Ctrl+휠은 같은 이벤트로 온다. 포인터 자리를 기준으로 확대한다.
 document.querySelector('.topology-scroll').addEventListener('wheel', (event) => {
