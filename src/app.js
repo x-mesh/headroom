@@ -1117,11 +1117,13 @@ function updateTelemetry() {
   element('summary-headroom').dataset.liveValue = liveHeadroom == null ? '' : liveHeadroom.toFixed(6);
   // 최소 headroom 을 모르면 표본을 만들지 않는다. 0 은 위험으로, 0% 는 안전으로 읽혀
   // 두 계열이 반대 방향으로 없는 값을 지어낸다. 모르는 것은 선을 잇지 않고 그렇게 표시한다.
+  // 칸마다 자기 숫자를 그린다. 예전에는 활성 장애 칸이 배율을, 과부하 칸이 헤드룸의 역수를
+  // 그렸다. 선이 그 칸의 숫자와 다른 것을 말하면, 읽는 사람은 선을 믿고 잘못 읽는다.
   const seriesValues = {
     headroom: liveHeadroom,
-    utilization: liveHeadroom == null ? null : 1 - liveHeadroom,
-    delivery: Math.max(0, 1 - current.summary.unreachableCount / Math.max(current.demands.length, 1)),
-    traffic: current.scale,
+    overloaded: current.summary.overloadedCount,
+    unreachable: current.summary.unreachableCount,
+    faults: current.summary.activeFaults,
   };
   document.querySelectorAll('.metric-sparkline').forEach((svg) => {
     const value = seriesValues[svg.dataset.series];

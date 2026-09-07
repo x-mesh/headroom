@@ -307,7 +307,7 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 ### Summary Metrics and Sparklines
 
 - **Structure:** Present four equal summary cells. Keep 28 recent samples in each SVG sparkline.
-- **Series:** Show headroom, maximum utilization, delivery, and total traffic.
+- **Series:** Plot the figure the cell itself states, never a related one. A cell that counts overloaded resources plots that count; a line showing utilization beside it reads as the same fact and it is not.
 - **Legend:** Name every capacity state the canvas can paint, disabled included. A state the canvas draws but the legend omits is unreadable.
 - **One Name Per State:** The legend and the inspector must call a state the same thing. Two names for one state read as two states.
 - **Color:** Use cyan, amber, red, and deep signal green in that order.

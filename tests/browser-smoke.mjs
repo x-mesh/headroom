@@ -221,6 +221,15 @@ async function verify(viewport, screenshot, interact = false) {
   assert.doesNotMatch(unknownAxis, /\d%/, 'an unknown limit must never read as a percentage');
   assert.equal(await page.locator('#tab-palette').getAttribute('aria-selected'), 'true', 'the component tab opens first');
   await page.locator('#tab-failure').click();
+  // 칸의 선은 그 칸의 숫자를 그려야 한다. 예전에는 활성 장애 칸이 배율을, 과부하 칸이
+  // 헤드룸의 역수를 그렸다. 선이 다른 것을 말하면 읽는 사람은 선을 믿고 잘못 읽는다.
+  const paired = await page.evaluate(() => [...document.querySelectorAll('.summary-metric')].map((cell) => ({
+    figure: cell.querySelector('strong[id^="summary-"]')?.id.replace('summary-', '') ?? '',
+    series: cell.querySelector('.metric-sparkline')?.dataset.series ?? '',
+  })));
+  assert.equal(paired.length, 4);
+  for (const cell of paired) assert.equal(cell.series, cell.figure, `${cell.figure} 칸이 ${cell.series} 를 그립니다`);
+
   assert.ok(await page.locator('.topology-group').count() > 0, 'zones must draw as group boxes');
   assert.ok(await page.locator('.topology-group[data-depth="2"]').count() > 0, 'a slash in a zone nests one box inside another');
   // 이름표는 선 위에 뜨지만 배경이 없으면 선이 글자 사이를 지난다. 상자는 글자를 실제로 재서
@@ -545,7 +554,8 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForFunction(() => document.querySelector('#scenario-subtitle')?.textContent.startsWith('사용자 설계'));
     assert.equal(await page.locator('#scenario-title').textContent(), '빈 설계', 'the header must name the design that is open');
     // 한계를 모르면 스파크라인이 선을 그리지 않는다. 0 은 위험, 0% 는 안전으로 읽혀 둘 다 거짓말이다.
-    for (const series of ['headroom', 'utilization']) {
+    // 개수를 세는 칸은 다르다 - 자원이 없으면 과부하 0개는 모르는 것이 아니라 사실이다.
+    for (const series of ['headroom']) {
       assert.equal(await page.locator(`.metric-sparkline[data-series="${series}"]`).getAttribute('data-unknown'), '',
         `the ${series} sparkline must show unknown instead of inventing a value`);
       assert.equal(await page.locator(`.metric-sparkline[data-series="${series}"] path`).getAttribute('d'), null,
