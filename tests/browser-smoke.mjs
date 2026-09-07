@@ -18,7 +18,7 @@ async function verifyCanvasEditing() {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } });
   await page.addInitScript(() => localStorage.clear());
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
-  page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
+  page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}\n${String(error.stack).split("\n").slice(1, 4).join("\n")}`));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   await page.evaluate(() => document.fonts.ready);
 
@@ -157,7 +157,7 @@ async function verify(viewport, screenshot, interact = false) {
   const page = await browser.newPage({ viewport });
   await page.addInitScript(() => localStorage.clear());
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
-  page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
+  page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}\n${String(error.stack).split("\n").slice(1, 4).join("\n")}`));
   page.on('requestfailed', (request) => failures.push(`request: ${request.url()} ${request.failure()?.errorText}`));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   await page.evaluate(() => document.fonts.ready);
@@ -580,6 +580,21 @@ async function verify(viewport, screenshot, interact = false) {
     assert.notEqual(await preset.locator('[name="source"]').inputValue(), 'target-a', '출발지가 목적지와 같으면 만들 수 없다');
     await page.keyboard.press('Escape');
 
+    // 복제는 장비만이 아니라 그 장비가 물려 있던 자리까지 옮긴다. 이어 놓지 않고 떨어뜨려 두면
+    // 지나는 수요가 없어 아무것도 계산되지 않고, 사용자는 왜 0인지 알 길이 없다.
+    await page.locator('[data-device-id="target-a"]').click();
+    await page.keyboard.press('ControlOrMeta+c');
+    await page.keyboard.press('ControlOrMeta+v');
+    await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 3);
+    const copied = await page.evaluate(() => [...document.querySelectorAll('.mesh-node .node-name')].map((node) => node.textContent));
+    assert.ok(copied.some((name) => /복제/.test(name)), `붙여넣은 장비의 이름에 복제가 붙어야 원본과 구분된다: ${copied.join(' / ')}`);
+    assert.equal(await page.locator('.link-group').count(), 2, '원본이 물려 있던 상대에 그대로 이어져야 한다');
+    assert.equal(await page.locator('.mesh-node .node-name').evaluateAll((nodes) => new Set(nodes.map((n) => n.textContent)).size), 3, '같은 이름이 둘이면 캔버스에서 구분할 수 없다');
+    // 뒤 흐름은 장비 두 대를 전제하므로 복제를 되돌려 이 검사만 떼어 둔다.
+    await page.keyboard.press('ControlOrMeta+z');
+    await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 2);
+    assert.equal(await page.locator('.link-group').count(), 1);
+
     await page.locator('[data-editor-action="demand"]').click();
     await page.locator('[data-new-demand]').click();
     const demandForm = page.locator('[data-editor-form="demand"]');
@@ -899,7 +914,7 @@ async function verifyNumberMotion() {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } });
   await page.addInitScript(() => localStorage.clear());
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
-  page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
+  page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}\n${String(error.stack).split("\n").slice(1, 4).join("\n")}`));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
 
   assert.equal(await page.locator('[data-number-motion="off"]').getAttribute('aria-pressed'), 'true',

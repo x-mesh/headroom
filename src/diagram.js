@@ -106,10 +106,18 @@ export function removeDiagramElements(topology, selection) {
   next.diagram.groups = next.diagram.groups.map((g) => ({ ...g, memberIds: g.memberIds.filter((id) => !ids.has(id)) })).filter((g) => g.memberIds.length && !selection.some((s) => s.type === 'group' && s.id === g.id));
   return next;
 }
-/** Clipboard duplicates model objects and internal edges, never service traffic demands. */
+/**
+ * 복제는 장비만이 아니라 그 장비가 물려 있던 자리까지 옮긴다. 안쪽 링크(양 끝이 다 선택 안)는
+ * 통째로 따라오고, 바깥 링크(한 끝만 선택 안)는 edges 로 따로 담아 붙여넣을 때 원본이 물려
+ * 있던 상대에 다시 잇는다. 이어 놓지 않으면 지나는 수요가 없어 아무것도 계산되지 않는다.
+ * 트래픽 수요는 복제하지 않는다 — 그것은 설계가 아니라 그 설계에 무엇을 흘릴지에 대한
+ * 선언이라, 복제하면 사용자가 적지 않은 부하가 생긴다.
+ */
 export function copySelection(topology, selection) {
   const ids = expanded(topology, selection);
-  return clone({ devices: (topology.devices || []).filter((d) => ids.has(d.id)), links: (topology.links || []).filter((l) => ids.has(l.source) && ids.has(l.target)), diagram: { shapes: (topology.diagram?.shapes || []).filter((s) => ids.has(s.id)), connectors: (topology.diagram?.connectors || []).filter((c) => ids.has(c.source) && ids.has(c.target)), groups: (topology.diagram?.groups || []).filter((g) => g.memberIds.every((id) => ids.has(id))) } });
+  const inside = (link) => ids.has(link.source) && ids.has(link.target);
+  const touching = (link) => ids.has(link.source) !== ids.has(link.target);
+  return clone({ devices: (topology.devices || []).filter((d) => ids.has(d.id)), links: (topology.links || []).filter(inside), edges: (topology.links || []).filter(touching), diagram: { shapes: (topology.diagram?.shapes || []).filter((s) => ids.has(s.id)), connectors: (topology.diagram?.connectors || []).filter((c) => ids.has(c.source) && ids.has(c.target)), groups: (topology.diagram?.groups || []).filter((g) => g.memberIds.every((id) => ids.has(id))) } });
 }
 export function pasteSelection(topology, clipboard, { dx = 24, dy = 24 } = {}) {
   coordinate(dx); coordinate(dy); const next = draft(topology), copy = draft(clipboard), ids = allIds(next), map = new Map(), selection = [];
@@ -119,12 +127,25 @@ export function pasteSelection(topology, clipboard, { dx = 24, dy = 24 } = {}) {
     item.id = map.get(item.id);
     if (type === 'device') { item.position.x = coordinate(item.position.x + Number(dx)); item.position.y = coordinate(item.position.y + Number(dy)); }
     if (type === 'shape') { item.x = coordinate(item.x + Number(dx)); item.y = coordinate(item.y + Number(dy)); }
-    if (item.source) item.source = map.get(item.source);
-    if (item.target) item.target = map.get(item.target);
+    // 링크와 커넥터의 source/target 만 끝점이다. 장비의 source 는 그 값을 어디서 얻었는지를
+    // 적은 출처 객체라, 여기서 함께 다시 가리키면 출처가 통째로 사라지고 인스펙터가 멈춘다.
+    if (type === 'link' || type === 'connector') {
+      if (item.source) item.source = map.get(item.source) ?? item.source;
+      if (item.target) item.target = map.get(item.target) ?? item.target;
+    }
     if (item.groupId) item.groupId = map.get(item.groupId);
     if (item.memberIds) item.memberIds = item.memberIds.map((id) => map.get(id));
     if (item.waypoints) item.waypoints = item.waypoints.map((p) => ({ x: coordinate(p.x + Number(dx)), y: coordinate(p.y + Number(dy)) }));
     target.push(item); if (type === 'device' || type === 'shape') selection.push({ type, id: item.id });
+  }
+  // 바깥 링크는 선택 밖의 상대를 가리킨다. 그 상대는 새로 만들지 않고 원래 있던 장비에 그대로
+  // 잇는다. 그 사이에 지워졌으면 만들지 않는다 — 없는 장비를 가리키는 링크는 계산 전체를 멈춘다.
+  const devices = new Set((next.devices || []).map(({ id }) => id));
+  for (const edge of copy.edges || []) {
+    const source = map.get(edge.source) ?? edge.source;
+    const target = map.get(edge.target) ?? edge.target;
+    if (source === target || !devices.has(source) || !devices.has(target)) continue;
+    next.links.push({ ...edge, id: fresh(ids, 'link'), source, target });
   }
   return { topology: next, selection };
 }

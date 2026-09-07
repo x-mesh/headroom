@@ -1719,6 +1719,28 @@ function endLinkDraft() {
   linkDraft = null;
 }
 
+/**
+ * 복제한 장비의 이름. 같은 이름이 둘이면 캔버스에서 구분이 안 되고, 인스펙터 제목도 어느
+ * 쪽인지 말하지 못한다. 이미 복제가 있으면 번호를 올리고, 접미사는 한 번만 붙인다 —
+ * 세 번 복제해서 "복제 복제 복제"가 되지 않게 한다.
+ */
+function duplicateName(name, selfId) {
+  const base = String(name || '').replace(/\s*복제(\s*\d+)?$/, '').trim() || '장비';
+  const taken = new Set(topology.devices.filter(({ id }) => id !== selfId).map((device) => device.name));
+  if (!taken.has(`${base} 복제`)) return `${base} 복제`;
+  for (let n = 2; n <= 99; n += 1) if (!taken.has(`${base} 복제 ${n}`)) return `${base} 복제 ${n}`;
+  return `${base} 복제`;
+}
+
+/** 붙여넣은 장비에 이름을 준다. 클립보드와 오른쪽 버튼 메뉴가 같은 규칙을 쓰게 하는 자리다. */
+function nameDuplicates(selection) {
+  for (const { type, id } of selection) {
+    if (type !== 'device') continue;
+    const device = topology.devices.find((item) => item.id === id);
+    if (device) device.name = duplicateName(device.name, id);
+  }
+}
+
 // 오른쪽 버튼 메뉴. 항목은 이 도구가 실제로 하는 일만 담는다.
 function contextItemsFor(resource, type) {
   const failed = type === 'device' ? state.disabledDevices.has(resource.id) : state.disabledLinks.has(resource.id);
@@ -1779,15 +1801,15 @@ function runContextAction(action) {
       return;
     }
     if (action === 'duplicate') {
-      const copy = addDevice(topology, {
-        id: normalizeId(`${resource.name || resource.id} copy`), name: `${resource.name} 복제`, kind: resource.kind, zone: resource.zone,
-        position: { x: resource.position.x + 150, y: resource.position.y + 60 },
-        limits: { ...resource.limits }, vendor: resource.vendor, model: resource.model,
-        ...(resource.behavior ? { behavior: resource.behavior } : {}),
-      });
-      if (resource.spec) applySpec(topology, copy.id, { ...resource.spec, source: resource.source, vendor: resource.vendor, model: resource.model });
-      state.selectedId = copy.id;
-      commitTopology(`${copy.name}을 만들었습니다.`, undo('복제를 되돌렸습니다.'));
+      // 클립보드와 같은 길을 쓴다. 손으로 필드를 옮기면 metadata·ports 처럼 빠뜨린 것이 생기고,
+      // 두 번 복제할 때 id 가 겹쳐 실패했다. 물려 있던 자리도 여기서 함께 따라온다.
+      const pasted = pasteSelection(topology, copySelection(topology, [{ type: 'device', id }]), { dx: 150, dy: 60 });
+      topology = pasted.topology;
+      nameDuplicates(pasted.selection);
+      const copy = topology.devices.find((device) => device.id === pasted.selection[0]?.id);
+      state.selectedId = copy?.id || id;
+      state.selection = copy ? [{ type: 'device', id: copy.id }] : state.selection;
+      commitTopology(`${copy?.name || '복제'}을 만들었습니다.`, undo('복제를 되돌렸습니다.'));
     }
   } catch (error) { showToast(error.message); }
 }
@@ -2388,6 +2410,7 @@ document.addEventListener('keydown', (event) => {
   if (command && event.key.toLowerCase() === 'c' && state.selection.length) { event.preventDefault(); clipboard = copySelection(topology, state.selection); showToast(`${state.selection.length}개 요소를 복사했습니다.`); }
   if (command && event.key.toLowerCase() === 'v' && clipboard) {
     event.preventDefault(); const pasted = pasteSelection(topology, clipboard); topology = pasted.topology; state.selection = pasted.selection;
+    nameDuplicates(pasted.selection);
     state.selectedId = pasted.selection.find(({ type }) => type === 'device')?.id || state.selectedId; commitTopology('복사한 요소를 붙여넣었습니다.');
   }
   if ((event.key === 'Delete' || event.key === 'Backspace') && state.selection.length) {

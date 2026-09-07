@@ -64,6 +64,33 @@ test('clipboard remaps only internal references and does not duplicate service d
   assert.equal(copySelection(original, [{ type: 'device', id: 'a' }]).links.length, 0);
 });
 
+test('a duplicated device lands where the original was wired, not floating beside it', () => {
+  const original = topology();
+  // 장비의 source 는 그 한계값을 어디서 얻었는지다. 링크의 끝점과 이름만 같다.
+  original.devices[0].source = { type: 'datasheet', label: '어느 데이터시트', condition: '1518바이트' };
+  const clip = copySelection(original, [{ type: 'device', id: 'a' }]);
+  // 안쪽 링크(양 끝이 다 선택 안)와 바깥 링크(한 끝만)를 나눠 담는다. 한 대만 고르면 안쪽은 없다.
+  assert.equal(clip.links.length, 0);
+  assert.deepEqual(clip.edges.map(({ source, target }) => `${source}-${target}`), ['a-b']);
+
+  const pasted = pasteSelection(original, clip);
+  const copyId = pasted.selection[0].id;
+  const wired = pasted.topology.links.filter((link) => link.source === copyId || link.target === copyId);
+  // 이어 놓지 않으면 지나는 수요가 없어 아무것도 계산되지 않는다. 원본이 물려 있던 상대에 잇는다.
+  assert.equal(wired.length, 1);
+  assert.equal(wired[0].target, 'b', '바깥 끝은 새로 만들지 않고 원래 장비를 그대로 가리킨다');
+  assert.equal(new Set(pasted.topology.links.map(({ id }) => id)).size, pasted.topology.links.length);
+
+  // 장비의 source 는 끝점이 아니라 그 값을 어디서 얻었는지다. 링크와 함께 다시 가리키면
+  // 출처가 통째로 사라지고, 그 장비를 고르는 순간 인스펙터가 멈춘다.
+  const copied = pasted.topology.devices.find(({ id }) => id === copyId);
+  assert.deepEqual(copied.source, { type: 'datasheet', label: '어느 데이터시트', condition: '1518바이트' });
+
+  // 상대가 사라졌으면 만들지 않는다. 없는 장비를 가리키는 링크는 계산 전체를 invalid 로 만든다.
+  const gone = { ...original, devices: original.devices.filter(({ id }) => id !== 'b'), links: [] };
+  assert.equal(pasteSelection(gone, clip).topology.links.length, 0);
+});
+
 test('groups move members together and removal cleans visual references', () => {
   let t = addShape(topology(), 'text'); const id = t.diagram.shapes[0].id;
   t.diagram.connectors.push({ id: 'c', source: 'a', target: id });
