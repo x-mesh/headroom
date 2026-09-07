@@ -768,3 +768,9 @@ button { color: inherit; }
 /* display 를 선언하면 [hidden] 의 기본 display:none 을 이긴다. 검색으로 비워진 섹션이 남는다. */
 .template-section[hidden] { display: none; }
 .template-section h3 { margin: 0; font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+
+/* 축이 전부 0인 이유를 그 자리에서 말하고 고칠 길을 낸다. 근거 절벽 배너와 같은 결이다. */
+.idle-note { display: grid; gap: 8px; padding: 11px 12px; border: 1px solid var(--amber); background: color-mix(in srgb, var(--amber) 8%, transparent); }
+.idle-note p { margin: 0; font-size: 11px; line-height: 1.5; color: var(--text); }
+.idle-note button { justify-self: start; padding: 5px 10px; border: 1px solid var(--line); background: var(--surface-raised); color: var(--text); font: 600 11px/1 var(--font-data); cursor: pointer; }
+.idle-note button:hover { border-color: var(--cyan); color: var(--cyan); }

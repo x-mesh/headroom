@@ -75,7 +75,7 @@ export function nodeView(device, { verdict = null, poolNote = '' } = {}) {
   const status = device.active ? device.primaryStatus : 'disabled';
   const { rows, hidden } = nodeAxes(device);
   const spof = Boolean(device.active && verdict?.verdict === 'severs' && !verdict.endpoint);
-  const idle = device.active && !poolNote && !device.carriesDemand ? '지나는 수요 없음' : '';
+  const idle = device.active && !poolNote && !device.carriesDemand ? '트래픽 수요 없음' : '';
   return {
     id: device.id,
     name: device.name || device.id,

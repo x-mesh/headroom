@@ -459,7 +459,7 @@ function poolNote(entry) {
 
 function nodeAccessibleName(device) {
   const head = [device.name, [device.vendor, device.model].filter(Boolean).join(' '), device.kind, device.zone,
-    poolNote(backendPoolIndex(current.demands).get(device.id)), device.carriesDemand === false ? '지나는 수요 없음' : ''].filter(Boolean).join(' \u00b7 ');
+    poolNote(backendPoolIndex(current.demands).get(device.id)), device.carriesDemand === false ? '트래픽 수요 없음' : ''].filter(Boolean).join(' \u00b7 ');
   if (!device.active) return `${head} \u00b7 비활성`;
   const binding = device.axes[device.bindingAxis];
   const bindingText = binding ? `제한 축 ${axisCatalog[device.bindingAxis]?.label || device.bindingAxis} ${formatPercent(binding.utilization)}` : '한계 미확인';
@@ -729,7 +729,7 @@ function renderTopology() {
   element('node-layer').innerHTML = current.devices.map((device) => {
     const status = device.active ? device.primaryStatus : 'disabled';
     const pool = device.active ? poolNote(pools.get(device.id)) : '';
-    const idle = device.active && !pool && !device.carriesDemand ? '지나는 수요 없음' : '';
+    const idle = device.active && !pool && !device.carriesDemand ? '트래픽 수요 없음' : '';
     const { rows, hidden } = nodeAxes(device);
     const verdict = sweep.resources.find(({ id }) => id === device.id);
     // 이미 죽은 장비에 "이게 죽으면 끊긴다"와 숨긴 축 개수를 붙이는 것은 소음이다.
@@ -760,12 +760,24 @@ function renderInspector() {
   element('inspector-content').innerHTML = `
     <div class="resource-identity"><strong>${escapeText(resourceName(resource))}</strong><span>${escapeText(isDevice ? [[resource.vendor, resource.model].filter(Boolean).join(' '), resource.kind.toUpperCase(), resource.zone].filter(Boolean).join(' · ') : `링크 · ${formatCompact(resource.capacity?.forwarding_bps, 'bps')} 방향별`)}</span></div>
     <div class="binding-callout"><span>BINDING AXIS</span><strong><span>${axisCatalog[resource.bindingAxis]?.label || resource.bindingAxis || '알려진 축 없음'}</span><span data-live-util="${binding?.utilization ?? ''}" data-live-seed="${resource.id}-binding">${binding ? formatPercent(binding.utilization) : '—'}</span></strong></div>
+    ${isDevice ? renderIdleNote(resource) : ''}
     <div class="axis-list">${Object.entries(resource.axes).map(([axis, result]) => renderAxis(axis, result, resource.id, resource)).join('')}</div>
     ${isDevice ? '' : renderLinkDirections(resource)}
     ${isDevice ? renderBehavior(resource) : ''}
     ${isDevice ? renderSpecBlock(resource) : ''}
     ${renderSourceNote(source, isDevice ? resource : null)}
     ${isDevice ? renderDeviceEditor(resource) : renderLinkEditor(resource)}`;
+}
+
+// 축이 전부 0인 장비를 앞에 두고 "왜 0인가"를 스스로 알아내게 두지 않는다. 한계값이 비어서
+// 0인 것과, 지나는 수요가 없어서 0인 것은 화면에서 똑같이 0 으로 보이기 때문이다. 계산이 이미
+// 아는 것(carriesDemand)을 그대로 말하고, 그 자리에서 고칠 길을 함께 낸다.
+function renderIdleNote(resource) {
+  if (resource.carriesDemand !== false || !resource.active) return '';
+  return `<div class="idle-note">
+    <p>이 장비를 지나는 트래픽 수요가 없습니다. 어느 수요의 경로에도 들어 있지 않아 실린 부하가 0입니다.</p>
+    <button type="button" data-demand-target="${escapeAttribute(resource.id)}">이 장비로 수요 추가</button>
+  </div>`;
 }
 
 // 링크의 평면 축은 바쁜 쪽 방향 하나만 말한다. 방향마다 용량이 다른 회선에서는 그것으로 부족하다
@@ -1518,13 +1530,16 @@ function renderDeviceLimitFields(form) {
   fields.innerHTML = deviceLimitFields(form.querySelector('select[name="kind"]').value, { ...(form._deviceTemplate?.limits || {}), ...kept });
 }
 
-function openDemandForm() {
-  if (topology.devices.length < 2) { showToast('Traffic demand에는 장비가 두 개 이상 필요합니다.'); return; }
-  openEditorPanel('Traffic demand 추가', `<p class="editor-hint">source와 target 사이의 모든 최단 ECMP 경로를 자동 계산합니다. target이 로드밸런서 뒤에 있으면 같은 클래스 서버를 한 백엔드 풀로 묶어 나눠 보냅니다.</p><form class="editor-form" data-editor-form="demand">
-    <label>이름<input name="name" maxlength="80" required></label><label>Source<select name="source">${deviceOptions()}</select></label><label>Target<select name="target">${deviceOptions(topology.devices[1]?.id)}</select></label>
-    <label>Traffic (bps)<input name="forwarding_bps" type="number" min="0" step="any" value="1000000000" required></label><label>Packets (pps)<input name="forwarding_pps" type="number" min="0" step="any" value="100000"></label>
+function openDemandForm(targetId = null) {
+  if (topology.devices.length < 2) { showToast('수요를 만들려면 장비가 두 대 이상 있어야 합니다.'); return; }
+  // 노드에서 열면 그 장비가 목적지다. 출발지는 목적지와 달라야 하므로 겹치지 않는 첫 장비를 고른다.
+  const target = topology.devices.some(({ id }) => id === targetId) ? targetId : topology.devices[1]?.id;
+  const from = topology.devices.find(({ id }) => id !== target)?.id;
+  openEditorPanel('트래픽 수요 추가', `<p class="editor-hint">출발지와 목적지 사이의 최단 ECMP 경로를 모두 찾아 계산합니다. 목적지가 로드밸런서 뒤에 있으면 같은 종류의 서버를 한 풀로 묶어 나눠 보냅니다.</p><form class="editor-form" data-editor-form="demand">
+    <label>이름<input name="name" maxlength="80" required></label><label>출발지<select name="source">${deviceOptions(from)}</select></label><label>목적지<select name="target">${deviceOptions(target)}</select></label>
+    <label>처리량 (bps)<input name="forwarding_bps" type="number" min="0" step="any" value="1000000000" required></label><label>패킷 처리량 (pps)<input name="forwarding_pps" type="number" min="0" step="any" value="100000"></label>
     <label>신규 세션 (CPS)<input name="new_sessions_per_sec" type="number" min="0" step="any" value="0"></label><label>동시 세션<input name="concurrent_sessions" type="number" min="0" step="any" value="0"></label>
-    <div class="form-actions"><button type="submit">Demand 생성</button></div><p class="editor-error"></p></form>`);
+    <div class="form-actions"><button type="submit">추가</button></div><p class="editor-error"></p></form>`);
 }
 
 function demandEndpoint(demand, side) {
@@ -1550,16 +1565,16 @@ function openDemandManager() {
     const target = demandEndpoint(demand, 'target') || topology.devices[1]?.id || '';
     return `<form class="demand-editor-row" data-editor-form="demand-edit" data-demand-id="${escapeAttribute(demand.id)}">
       <label>이름<input name="name" maxlength="80" required value="${escapeAttribute(demand.name)}"></label>
-      <label>Source<select name="source">${deviceOptions(source)}</select></label><label>Target<select name="target">${deviceOptions(target)}</select></label>
-      <label>Traffic (bps)<input name="forwarding_bps" type="number" min="0" step="any" required value="${demand.load.forwarding_bps ?? 0}"></label>
-      <label>Packets (pps)<input name="forwarding_pps" type="number" min="0" step="any" value="${demand.load.forwarding_pps ?? 0}"></label>
+      <label>출발지<select name="source">${deviceOptions(source)}</select></label><label>목적지<select name="target">${deviceOptions(target)}</select></label>
+      <label>처리량 (bps)<input name="forwarding_bps" type="number" min="0" step="any" required value="${demand.load.forwarding_bps ?? 0}"></label>
+      <label>패킷 처리량 (pps)<input name="forwarding_pps" type="number" min="0" step="any" value="${demand.load.forwarding_pps ?? 0}"></label>
       <label>CPS<input name="new_sessions_per_sec" type="number" min="0" step="any" value="${demand.load.new_sessions_per_sec ?? 0}"></label>
       <label>동시 세션<input name="concurrent_sessions" type="number" min="0" step="any" value="${demand.load.concurrent_sessions ?? 0}"></label>
       <div class="demand-row-actions"><button type="submit">수정</button><button type="button" data-delete-demand="${escapeAttribute(demand.id)}">삭제</button></div>
       <p class="demand-pool"><label><input type="checkbox" name="single" ${demand.backendPool === 'single' ? 'checked' : ''}> 이 서버만</label><span>${escapeText(backendPoolLine(demand))}</span></p><p class="editor-error"></p>
     </form>`;
-  }).join('') : '<div class="editor-empty"><strong>Traffic demand가 없습니다.</strong><span>새 demand를 추가하면 endpoint 사이의 최단 ECMP 경로를 계산합니다.</span></div>';
-  openEditorPanel('Traffic demand 관리', `<div class="demand-manager-head"><p class="editor-hint">endpoint나 부하를 수정하면 explicit path가 최단 ECMP 경로로 전환됩니다. LB 뒤에 같은 클래스 장비가 여럿이면 한 풀로 묶어 나눠 보냅니다.</p><button type="button" data-new-demand>새 demand</button></div><div class="demand-editor-list">${rows}</div>`);
+  }).join('') : '<div class="editor-empty"><strong>아직 수요가 없습니다.</strong><span>수요를 추가하면 두 끝점 사이의 최단 ECMP 경로를 계산합니다.</span></div>';
+  openEditorPanel('트래픽 수요 관리', `<div class="demand-manager-head"><p class="editor-hint">끝점이나 부하를 고치면 직접 적은 경로가 최단 ECMP 경로로 바뀝니다. 로드밸런서 뒤에 같은 종류의 장비가 여럿이면 한 풀로 묶어 나눠 보냅니다.</p><button type="button" data-new-demand>수요 추가</button></div><div class="demand-editor-list">${rows}</div>`);
 }
 
 function checkList(name, items, label) {
@@ -1575,7 +1590,7 @@ function openVerificationPanel() {
   openEditorPanel('서비스 생존성 검증 설정', `
     <p class="editor-hint">서비스 요구조건과 함께 장애 도메인, 랙 전력·U를 검증합니다. 비어 있는 근거는 통과로 처리하지 않습니다.</p>
     <div class="verification-columns">
-      <section><h3>서비스</h3><ul>${services}</ul><form class="editor-form" data-editor-form="service"><label>이름<input name="name" required maxlength="80"></label><label>최소 전달률 (%)<input name="ratio" type="number" min="1" max="100" value="100"></label>${checkList('demandIds', topology.demands, '검증할 demand')}<button type="submit">서비스 추가</button><p class="editor-error"></p></form></section>
+      <section><h3>서비스</h3><ul>${services}</ul><form class="editor-form" data-editor-form="service"><label>이름<input name="name" required maxlength="80"></label><label>최소 전달률 (%)<input name="ratio" type="number" min="1" max="100" value="100"></label>${checkList('demandIds', topology.demands, '검증할 수요')}<button type="submit">서비스 추가</button><p class="editor-error"></p></form></section>
       <section><h3>장애 도메인</h3><ul>${domains}</ul><form class="editor-form" data-editor-form="failure-domain"><label>이름<input name="name" required maxlength="80"></label>${checkList('deviceIds', topology.devices, '함께 멈출 장비')}${checkList('linkIds', topology.links, '함께 멈출 링크')}<button type="submit">장애 도메인 추가</button><p class="editor-error"></p></form></section>
       <section><h3>랙</h3><ul>${racks}</ul><form class="editor-form" data-editor-form="rack"><label>이름<input name="name" required maxlength="80"></label><label>전력 예산 (W)<input name="power" type="number" min="1" required></label><label>공간 (U)<input name="units" type="number" min="1" required></label><label>전력 기준<select name="basis"><option value="nameplate">nameplate</option><option value="typical">typical</option><option value="measured">measured</option></select></label>${checkList('deviceIds', topology.devices, '랙 장비')}<button type="submit">랙 추가</button><p class="editor-error"></p></form></section>
       <section><h3>시나리오</h3><ul>${scenarios}</ul><form class="editor-form" data-editor-form="scenario"><label>이름<input name="name" required maxlength="80"></label><button type="submit">현재 장애·부하 저장</button><p class="editor-error"></p></form></section>
@@ -2014,7 +2029,7 @@ element('editor-panel-content').addEventListener('submit', (event) => {
       commitTopology(`Demand ${demand.name}을 수정했습니다.`); openDemandManager();
     }
     if (form.dataset.editorForm === 'service') {
-      const demandIds = data.getAll('demandIds'); if (!demandIds.length) throw new Error('서비스에는 demand가 하나 이상 필요합니다.');
+      const demandIds = data.getAll('demandIds'); if (!demandIds.length) throw new Error('서비스에는 수요가 하나 이상 필요합니다.');
       const id = normalizeId(data.get('name')); if ((topology.services || []).some((item) => item.id === id)) throw new Error('같은 이름의 서비스가 있습니다.');
       topology.services = [...(topology.services || []), { id, name: String(data.get('name')), demandIds, requiredDeliveryRatio: Number(data.get('ratio')) / 100 }];
       commitTopology('서비스 생존성 요구조건을 추가했습니다.'); openVerificationPanel();
@@ -2137,6 +2152,8 @@ element('inspector-content').addEventListener('keydown', (event) => {
 });
 
 element('inspector-content').addEventListener('click', (event) => {
+  const demandTarget = event.target.closest('[data-demand-target]')?.dataset.demandTarget;
+  if (demandTarget) { openDemandForm(demandTarget); return; }
   const accept = event.target.closest('[data-evidence-accept]');
   const release = event.target.closest('[data-evidence-release]');
   if (!accept && !release) return;
@@ -2197,7 +2214,7 @@ element('editor-panel-content').addEventListener('click', (event) => {
   const button = event.target.closest('[data-delete-demand]'); if (!button) return;
   const demand = topology.demands.find(({ id }) => id === button.dataset.deleteDemand);
   if (!window.confirm(`${demand?.name || button.dataset.deleteDemand} demand와 해당 부하 정의를 삭제합니다. 계속하시겠습니까?`)) return;
-  try { removeDemand(topology, button.dataset.deleteDemand); commitTopology('Traffic demand를 삭제했습니다.'); openDemandManager(); } catch (error) { showToast(error.message); }
+  try { removeDemand(topology, button.dataset.deleteDemand); commitTopology('트래픽 수요를 삭제했습니다.'); openDemandManager(); } catch (error) { showToast(error.message); }
 });
 element('inspector-content').addEventListener('change', (event) => {
   const spec = event.target.dataset.specField;

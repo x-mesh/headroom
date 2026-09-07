@@ -569,6 +569,17 @@ async function verify(viewport, screenshot, interact = false) {
     await page.locator('[data-device-id="source-a"]').click();
     await page.locator('[data-device-id="target-a"]').click();
     assert.equal(await page.locator('.link-group').count(), 1);
+
+    // 이어 놓기만 해서는 트래픽이 흐르지 않는다. 한계값이 비어서 0인 것과 지나는 수요가 없어서
+    // 0인 것이 화면에서는 똑같이 0 으로 보이므로, 이 자리에서 이유를 말하고 고칠 길을 내야 한다.
+    await page.locator('[data-device-id="target-a"]').click();
+    assert.match(await page.locator('#inspector-content .idle-note').textContent(), /트래픽 수요가 없습니다/);
+    await page.locator('#inspector-content [data-demand-target="target-a"]').click();
+    const preset = page.locator('[data-editor-form="demand"]');
+    assert.equal(await preset.locator('[name="target"]').inputValue(), 'target-a', '노드에서 열면 그 장비가 목적지로 잡혀 있어야 한다');
+    assert.notEqual(await preset.locator('[name="source"]').inputValue(), 'target-a', '출발지가 목적지와 같으면 만들 수 없다');
+    await page.keyboard.press('Escape');
+
     await page.locator('[data-editor-action="demand"]').click();
     await page.locator('[data-new-demand]').click();
     const demandForm = page.locator('[data-editor-form="demand"]');
