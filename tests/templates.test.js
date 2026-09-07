@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { cloneTopology } from '../src/data.js';
 import { calculateScenario } from '../src/engine.js';
 import { buildTemplate, templates } from '../src/templates.js';
+import { serializeProject } from '../src/project.js';
 
 // 화면이 "이 설계에서 확인할 것"으로 내보내는 문장이다. 계산이 실제로 그렇게 나오지 않으면
 // 도구가 스스로 틀린 말을 가르치게 된다. 그래서 문구에 적힌 숫자를 엔진과 대조한다.
@@ -73,4 +74,39 @@ test('the demo everyone lands on teaches the claim the tool is built on', () => 
   const after = runExperiment(topology, topology.template.experiment.action).devices.find(({ id }) => id === 'fw-b');
   assert.equal(after.axes.forwarding_bps.status, 'healthy', '남은 쪽 대역폭은 아직 여유가 있어야 실험이 성립한다');
   assert.equal(after.axes.new_sessions_per_sec.status, 'overloaded', '넘치는 축은 대역폭이 아니라 세션이어야 한다');
+});
+
+// ── 새 설계가 넘지 못할 선 ────────────────────────────────────────────────
+// 아래 셋은 지금 21개가 이미 지키고 있다. 먼저 적어 두는 것은, 앞으로 더 복잡한 설계를
+// 넣을 때 무엇을 잃으면 안 되는지가 사람의 기억이 아니라 테스트에 있어야 하기 때문이다.
+
+// 편집 한 번은 calculateScenario 한 번과 sweepSingleFaults 한 번이다(app.js recalculate).
+// 훑기 비용은 자원 수를 따라 가파르게 붙어 자원 97개에서 99ms 로 PRD 의 100ms 목표에 닿는다.
+// 가르칠 것이 하나 더 있다고 도구를 느리게 만들지는 않는다.
+const RESOURCE_LIMIT = 95;
+
+test('a design the picker can open is a design the file format can hold', () => {
+  for (const { id } of templates) {
+    // 저장 경로가 safeContent 와 id 규칙과 calculateScenario 를 전부 돌린다. 여기서 걸리는
+    // 설계는 화면에서 편집할 때마다 작업 사본 저장이 조용히 실패한다.
+    assert.doesNotThrow(() => serializeProject(buildTemplate(id), { scale: 1, disabledDevices: [], disabledLinks: [] }),
+      `${id} 를 저장할 수 없습니다.`);
+  }
+});
+
+test('no design opens with its numbers already gone', () => {
+  for (const { id } of templates) {
+    // invalid 는 판정 하나가 아니라 설계 전체의 숫자를 지운다. 불러오자마자 그 상태인
+    // 설계는 배울 것이 없다. 컬렉션이 없는 자원을 가리키는 것이 가장 흔한 원인이다.
+    const { summary, validationIssues } = calculateScenario(buildTemplate(id), { scale: 1 });
+    assert.notEqual(summary.evaluationStatus, 'invalid', `${id}: ${JSON.stringify(validationIssues)}`);
+  }
+});
+
+test('a design stays inside the budget one edit has', () => {
+  for (const { id } of templates) {
+    const topology = buildTemplate(id);
+    const resources = topology.devices.length + topology.links.length;
+    assert.ok(resources <= RESOURCE_LIMIT, `${id} 의 자원이 ${resources}개입니다. 상한은 ${RESOURCE_LIMIT}개입니다.`);
+  }
 });
