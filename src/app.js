@@ -31,7 +31,6 @@ let toastTimer;
 let dragState = null;
 let diagramDrag = null;
 let suppressNodeClick = false;
-let telemetryTick = 0;
 let telemetryTimer;
 const telemetryHistory = new Map();
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -951,19 +950,19 @@ function renderAxis(axis, result, resourceId, resource = null) {
   </div>`;
 }
 
-function telemetryWave(seed, amplitude = 0.015) {
+function telemetryWave(seed, phase, amplitude = 0.015) {
   const hash = [...seed].reduce((value, character) => ((value * 31) + character.charCodeAt(0)) % 997, 17);
-  return Math.sin(telemetryTick * 0.72 + hash * 0.13) * amplitude + Math.sin(telemetryTick * 0.23 + hash) * amplitude * 0.35;
+  return Math.sin(phase * 0.72 + hash * 0.13) * amplitude + Math.sin(phase * 0.23 + hash) * amplitude * 0.35;
 }
 
-// 트윈은 260ms, 흔들림 갱신은 820ms(DESIGN.md 의 telemetry cadence). 진폭은 사용률 1.2% 안쪽이라
-// 70% 가 69~71% 사이에서만 흔들린다. 그보다 크면 읽는 사람이 어느 값을 적어야 할지 헷갈린다.
-const MOTION = { tween: 260, driftCadence: 820, amplitude: 0.012 };
+// 트윈은 260ms, 흔들림은 300ms 마다 한 걸음 나아간다. 진폭은 사용률 1.5퍼센트포인트라 70% 가
+// 68.5~71.5% 사이에서만 흔들린다. 그보다 크면 읽는 사람이 어느 값을 적어야 할지 헷갈린다.
+// 백분율에는 곱이 아니라 더하기로 넣는다 - 곱하면 20% 같은 낮은 값은 반올림에 묻혀 얼어붙는다.
+const MOTION = { tween: 260, driftCadence: 300, amplitude: 0.015 };
 // seed 는 자원과 축을 함께 가리킨다. 화면이 통째로 다시 그려져도 같은 숫자를 이어서 따라간다.
 const liveShown = new Map();
 const liveTweens = new Map();
 let motionFrame = null;
-let driftStamp = 0;
 
 const liveNodes = () => document.querySelectorAll('[data-live-util], [data-live-load]');
 function liveTarget(node) {
@@ -972,7 +971,13 @@ function liveTarget(node) {
   return { seed: node.dataset.liveSeed, value, load: node.dataset.liveUnit != null };
 }
 function paintLive(node, value, load) {
-  node.textContent = load ? `${formatCompact(value, node.dataset.liveUnit)} load` : formatPercent(value);
+  const text = load ? `${formatCompact(value, node.dataset.liveUnit)} load` : formatPercent(value);
+  if (node.textContent !== text) node.textContent = text;
+  // 백분율은 1%포인트 단위로만 바뀌어서, 그것만으로는 움직임으로 읽히지 않는다. 막대는 그
+  // 사이를 이어 준다 - 눈이 실제로 잡는 것은 자릿수가 아니라 길이다. 인스펙터 미터는 끌어서
+  // 한계값을 정하는 손잡이라 건드리지 않는다.
+  const row = load ? null : node.closest('.node-axis');
+  if (row) row.style.setProperty('--util', String(Math.min(Math.max(value, 0), 1.5)));
 }
 
 /** 다시 그린 뒤 부른다. 값이 실제로 바뀐 숫자만 이전 값에서 새 값으로 잇는다. */
@@ -996,13 +1001,10 @@ function syncLiveNumbers() {
 function stepMotion(now) {
   motionFrame = null;
   const drifting = motionView.drift === 'on' && !reducedMotion.matches;
-  const ticked = drifting && now - driftStamp >= MOTION.driftCadence;
-  if (ticked) { telemetryTick += 1; driftStamp = now; }
-  // 흔들림은 820ms 마다 한 번만 값이 바뀐다. 그 사이 프레임에 같은 글자를 다시 칠하지 않는다.
-  if (!liveTweens.size && !ticked) {
-    if (drifting) motionFrame = requestAnimationFrame(stepMotion);
-    return;
-  }
+  if (!liveTweens.size && !drifting) return;
+  // 300ms 는 흔들림이 한 걸음 나아가는 속도이지 다시 그리는 간격이 아니다. 계단으로 뛰면
+  // 1%포인트 점프만 남아 움직임으로 읽히지 않으므로, 같은 속도로 매 프레임 이어서 그린다.
+  const phase = now / MOTION.driftCadence;
   let running = false;
   for (const node of liveNodes()) {
     const { seed, value, load } = liveTarget(node);
@@ -1016,8 +1018,9 @@ function stepMotion(now) {
     }
     // 흔들림은 헤드라인 숫자에 걸지 않는다(DESIGN.md). 고정된 비교 패널과 다른 말을 하면
     // 읽는 사람은 어느 쪽을 적어야 할지 알 수 없다.
-    const drifted = drifting && !node.closest('.binding-callout');
-    paintLive(node, drifted ? Math.max(0, value * (1 + telemetryWave(seed, MOTION.amplitude))) : value, load);
+    if (!drifting || node.closest('.binding-callout')) { paintLive(node, value, load); continue; }
+    const wave = telemetryWave(seed, phase, MOTION.amplitude);
+    paintLive(node, Math.max(0, load ? value * (1 + wave) : value + wave), load);
   }
   if (running || drifting) motionFrame = requestAnimationFrame(stepMotion);
 }

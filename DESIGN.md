@@ -313,8 +313,9 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Color:** Use cyan, amber, red, and deep signal green in that order.
 - **Headline Number:** Do not animate the largest number on the page. Synthetic variation belongs in the sparkline; a headline that drifts between two values contradicts the fixed comparison panel and the reader cannot tell which to trust.
 - **Metric Color:** Color the headroom figure by the same threshold the engine judges with. A figure the engine calls warning must not be painted the healthy color.
-- **Telemetry:** Add about ±1–2% synthetic variation to the presentation layer. Keep scenario values unchanged.
-- **Cadence:** Refresh visible motion every 820ms. Pause refresh work while the document is hidden.
+- **Telemetry:** Add about ±1.5 points of synthetic variation to a utilization the presentation layer shows, and about ±1.5% to a load figure. Keep scenario values unchanged. Add the variation, do not multiply it: a multiplied variation leaves a small percentage frozen at its rounded value while a large one moves.
+- **Cadence:** Advance the variation one step every 300ms, and draw every frame between steps. The 300ms is the speed, not the redraw interval. A stepped redraw shows one-point jumps, which the eye reads as a glitch and not as motion.
+- **Meter Follows:** Move the axis meter with the varied value on the canvas node. A percentage changes only in whole points, so the bar carries the motion between them; the eye catches length before it catches digits. Leave the inspector meter alone, because a reader drags it to set a limit.
 - **Opt In:** Keep synthetic variation off by default, and put it behind a control the reader can see. A reader who must quote a figure will turn it off. The control states which mode is active, so the screen says whether a number is drifting.
 - **Change Motion:** When a recalculation changes a value, ease the number from the previous value to the new one over 260ms. This motion has a cause, so it does not compete with the figure it shows. Run it whether or not synthetic variation is on, and skip it when reduced motion is active.
 
