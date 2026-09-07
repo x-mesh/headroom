@@ -236,7 +236,7 @@ function renderClassControl() {
       ${choices.map(([value, text]) => `<button type="button" data-${attribute}="${value}" aria-pressed="${current === value}">${escapeText(text)}</button>`).join('')}
     </div>`;
   element('class-control').innerHTML = group('배지', 'class-badge', classView.badge, [['off', '끔'], ['on', '켬']])
-    + group('흔들림', 'number-motion', motionView.drift, [['off', '끔'], ['on', '켬']]);
+    + group('떨림', 'number-motion', motionView.drift, [['off', '끔'], ['on', '켬']]);
 }
 
 // 데이터시트를 붙였는데 대조할 워크로드 조건이 없으면 모든 축이 미확인이 된다. 그 상태는
@@ -392,7 +392,7 @@ function renderFailures() {
 }
 
 // 심볼은 스텐실, 클래스는 meta 줄로 확정했다. 배지만 취향이 갈려 토글로 남긴다.
-const classView = { badge: 'off' };
+const classView = { badge: 'on' };
 try {
   const saved = localStorage.getItem('rack-mesh-class-badge');
   if (saved === 'on' || saved === 'off') classView.badge = saved;
@@ -400,8 +400,9 @@ try {
 
 // 숫자는 두 가지로 움직인다. 값이 실제로 바뀌었을 때 이전 값에서 새 값으로 잇는 것은 항상
 // 한다 - 원인이 있는 움직임이라 계산을 배신하지 않고, 오히려 무엇 때문에 바뀌었는지 보인다.
-// 미세한 흔들림은 지어낸 값이므로 기본이 꺼짐이고, 켜면 화면이 그렇다고 말한다.
-const motionView = { drift: 'off' };
+// 떨림은 지어낸 값이다. 그래서 끄는 스위치를 늘 화면에 두고, 무엇이 떨리고 있는지 이름으로
+// 밝힌다 - 값을 적어야 하는 사람은 그것을 끄고 적는다.
+const motionView = { drift: 'on' };
 try {
   const saved = localStorage.getItem('rack-mesh-number-motion');
   if (saved === 'on' || saved === 'off') motionView.drift = saved;
@@ -991,7 +992,7 @@ function telemetryWave(seed, phase, amplitude = 0.015) {
   return Math.sin(phase * 0.72 + hash * 0.13) * amplitude + Math.sin(phase * 0.23 + hash) * amplitude * 0.35;
 }
 
-// 트윈은 260ms, 흔들림은 300ms 마다 한 걸음 나아간다. 진폭은 사용률 1.5퍼센트포인트라 70% 가
+// 트윈은 260ms, 떨림은 300ms 마다 한 걸음 나아간다. 진폭은 사용률 1.5퍼센트포인트라 70% 가
 // 68.5~71.5% 사이에서만 흔들린다. 그보다 크면 읽는 사람이 어느 값을 적어야 할지 헷갈린다.
 // 백분율에는 곱이 아니라 더하기로 넣는다 - 곱하면 20% 같은 낮은 값은 반올림에 묻혀 얼어붙는다.
 const MOTION = { tween: 260, driftCadence: 300, amplitude: 0.015 };
@@ -1038,7 +1039,7 @@ function stepMotion(now) {
   motionFrame = null;
   const drifting = motionView.drift === 'on' && !reducedMotion.matches;
   if (!liveTweens.size && !drifting) return;
-  // 300ms 는 흔들림이 한 걸음 나아가는 속도이지 다시 그리는 간격이 아니다. 계단으로 뛰면
+  // 300ms 는 떨림이 한 걸음 나아가는 속도이지 다시 그리는 간격이 아니다. 계단으로 뛰면
   // 1%포인트 점프만 남아 움직임으로 읽히지 않으므로, 같은 속도로 매 프레임 이어서 그린다.
   const phase = now / MOTION.driftCadence;
   let running = false;
@@ -1052,7 +1053,7 @@ function stepMotion(now) {
       if (progress >= 1) liveTweens.delete(seed); else running = true;
       continue;
     }
-    // 흔들림은 헤드라인 숫자에 걸지 않는다(DESIGN.md). 고정된 비교 패널과 다른 말을 하면
+    // 떨림은 헤드라인 숫자에 걸지 않는다(DESIGN.md). 고정된 비교 패널과 다른 말을 하면
     // 읽는 사람은 어느 쪽을 적어야 할지 알 수 없다.
     if (!drifting || node.closest('.binding-callout')) { paintLive(node, value, load); continue; }
     const wave = telemetryWave(seed, phase, MOTION.amplitude);
