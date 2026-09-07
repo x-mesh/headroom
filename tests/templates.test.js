@@ -150,7 +150,7 @@ test('a capability the engine has is a capability some design actually shows', (
   const shown = {
     '랙 전력과 U': false, '서비스 수용 기준': false, '장애 도메인': false,
     '방향별 링크 용량': false, '데이터시트 근거': false, '경로 열거 한계': false,
-    '명시 경로': false, '명시 백엔드 풀': false,
+    '명시 경로': false, '명시 백엔드 풀': false, '응답 반환 경로': false,
   };
   for (const { id } of templates) {
     const topology = buildTemplate(id);
@@ -166,6 +166,9 @@ test('a capability the engine has is a capability some design actually shows', (
     shown['경로 열거 한계'] ||= result.demands.some(({ pathEnumeration }) => pathEnumeration?.complete === false);
     shown['명시 경로'] ||= topology.demands.some(({ pathMode, paths }) => pathMode === 'explicit' && paths?.length);
     shown['명시 백엔드 풀'] ||= topology.demands.some(({ backendPool }) => backendPool != null);
+    // 반환 경로는 되돌아오는 홉에 실제로 부하가 실려야 무언가를 가르친 것이다. 선언만으로는 그림이 그대로다.
+    shown['응답 반환 경로'] ||= result.demands.some(({ returnPaths }) => returnPaths?.length)
+      && result.links.some(({ directions }) => directions?.reverse.axes.forwarding_bps?.load > 0);
     // 도메인은 켜고 끈 결과가 달라야 무언가를 실제로 묶은 것이다.
     for (const { id: domainId } of topology.failureDomains || []) {
       const after = calculateScenario(topology, { scale: 1, disabledDomains: [domainId] });

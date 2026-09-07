@@ -256,20 +256,9 @@ export function resolveDemandPaths(topology, disabledDevices = new Set(), disabl
     return poolTrees.get(source);
   };
   const resolved = new Map();
-  for (const demand of topology.demands) {
-    const explicit = demand.pathMode === 'explicit' || (demand.pathMode !== 'shortest' && demand.paths?.length);
-    let targets = [demand.target];
-    if (!explicit) {
-      poolAdjacency ??= adjacencyFor(topology, new Set(), new Set());
-      targets = backendPoolFor(demand, poolAdjacency, deviceIndex, treeFor);
-    }
-    const cacheKey = JSON.stringify([demand.source, targets]);
-    if (!explicit && shortestCache.has(cacheKey)) { resolved.set(demand.id, shortestCache.get(cacheKey)); continue; }
-    const candidatePaths = explicit
-      ? demand.paths || []
-      : enumerateShortestPaths(adjacency ??= adjacencyFor(topology, disabledDevices, disabledLinks), demand.source, targets, options);
+  // 후보 경로를 살아남은 경로로 거른다. 요청 경로와 반환 경로가 같은 규칙을 쓰게 한 자리다.
+  const activate = (candidatePaths, invalidPaths) => {
     const activePaths = [];
-    const invalidPaths = [];
     for (const path of candidatePaths) {
       if (!Array.isArray(path.devices) || !Array.isArray(path.links) || path.devices.some((id) => !deviceIds.has(id))) { invalidPaths.push({ id: path.id, reason: 'missing-device' }); continue; }
       if (path.devices.some((id) => disabledDevices.has(id)) || path.links.some((id) => disabledLinks.has(id))) continue;
@@ -284,8 +273,28 @@ export function resolveDemandPaths(topology, disabledDevices = new Set(), disabl
     // 몫은 살아남은 경로에서만 다시 정규화한다. 한 갈래가 끊기면 남은 길이 그만큼 더 받는다.
     const totalWeight = activePaths.reduce((sum, path) => sum + path.weight, 0);
     for (const path of activePaths) path.weight = totalWeight > 0 ? path.weight / totalWeight : 1 / activePaths.length;
-    resolved.set(demand.id, { candidatePaths, activePaths, invalidPaths, backends: backendShares(activePaths) });
-    if (!explicit) shortestCache.set(cacheKey, resolved.get(demand.id));
+    return activePaths;
+  };
+  for (const demand of topology.demands) {
+    const explicit = demand.pathMode === 'explicit' || (demand.pathMode !== 'shortest' && demand.paths?.length);
+    let targets = [demand.target];
+    if (!explicit) {
+      poolAdjacency ??= adjacencyFor(topology, new Set(), new Set());
+      targets = backendPoolFor(demand, poolAdjacency, deviceIndex, treeFor);
+    }
+    const cacheKey = JSON.stringify([demand.source, targets]);
+    // 반환 경로는 수요마다 다르다. 출발지·도착지가 같아도 캐시를 나눠 쓰면 남의 반환 경로를 받는다.
+    const cacheable = !explicit && !demand.returnPath;
+    if (cacheable && shortestCache.has(cacheKey)) { resolved.set(demand.id, shortestCache.get(cacheKey)); continue; }
+    const candidatePaths = explicit
+      ? demand.paths || []
+      : enumerateShortestPaths(adjacency ??= adjacencyFor(topology, disabledDevices, disabledLinks), demand.source, targets, options);
+    const invalidPaths = [];
+    const activePaths = activate(candidatePaths, invalidPaths);
+    // 반환 경로를 적지 않은 수요는 오늘 그대로다 — 응답 몫까지 요청 홉에 실린다.
+    const returnPaths = demand.returnPath ? activate(demand.returnPath, invalidPaths) : null;
+    resolved.set(demand.id, { candidatePaths, activePaths, returnPaths, invalidPaths, backends: backendShares(activePaths) });
+    if (cacheable) shortestCache.set(cacheKey, resolved.get(demand.id));
   }
   return resolved;
 }
@@ -401,9 +410,10 @@ export function calculateScenario(topology, options = {}) {
   };
 
   for (const demand of topology.demands) {
-    const { activePaths, invalidPaths } = resolvedPaths.get(demand.id);
+    const { activePaths, returnPaths, invalidPaths } = resolvedPaths.get(demand.id);
     const validity = invalidPaths.length || validationIssues.some(({ resourceId }) => resourceId === demand.id) ? 'invalid' : 'valid';
-    if (!activePaths.length) {
+    // 반환 경로를 적었는데 남은 길이 하나도 없으면 응답이 돌아오지 못한다. 요청만 가는 것은 전달이 아니다.
+    if (!activePaths.length || (demand.returnPath?.length && !returnPaths?.length)) {
       demandResults.push({ id: demand.id, name: demand.name, status: 'unreachable', validity, invalidPaths, deliveredRatio: 0, paths: [], backends: [],
         severedPaths: (noFaultPaths?.get(demand.id)?.activePaths || []).map(({ id, devices, links }) => ({ id, devices, links })),
         load: scaledLoad(demand.load, scale) });
@@ -413,19 +423,31 @@ export function calculateScenario(topology, options = {}) {
     const entries = Object.entries(demand.load).filter(([, value]) => Number.isFinite(value) && value >= 0)
       .map(([axis, value]) => [axis, value, deliveryRoleOf(axis) === 'throughput']);
     const linkEntries = entries.filter(([axis]) => linkCarriesAxis(axis));
-    const footprint = footprintFor(activePaths);
-    for (const [deviceId, weight] of footprint.devices) {
+    const split = returnPaths?.length ? (demand.directionality?.responseShare ?? DEFAULT_RESPONSE_SHARE) : null;
+    // 반환 경로를 적으면 그것이 응답 바이트가 어디로 가는지에 대한 답이다. 장비의 동작 모드로 한 번 더 깎지 않는다.
+    // 세션 수는 요청 다리에만 싣는다. 응답만 지나가는 장비가 연결을 새로 받는 것은 아니고,
+    // 두 다리에 다 실으면 양쪽에 걸친 장비가 세션을 두 번 센다.
+    const legs = split == null
+      ? [[activePaths, entries, linkEntries, 1, true]]
+      : [[activePaths, entries, linkEntries, 1 - split, false],
+         [returnPaths, entries.filter(([, , throughput]) => throughput), linkEntries, split, false]];
+    for (const [paths, deviceEntries, hopEntries, share, byBehavior] of legs) {
+      const footprint = footprintFor(paths);
+      for (const [deviceId, weight] of footprint.devices) {
         demandTouched.add(deviceId);
-        addLoad(deviceLoads[deviceId], entries, scale * weight, carriedFraction(deviceIndex.get(deviceId), demand));
+        const carried = byBehavior ? carriedFraction(deviceIndex.get(deviceId), demand) : share;
+        addLoad(deviceLoads[deviceId], deviceEntries, scale * weight, carried);
         for (const axis of deviceAxes.get(deviceId)) if (!Number.isFinite(demand.load[axis])) missingDeviceLoads[deviceId].add(axis);
-    }
-    for (const hop of footprint.hops) {
-        addLoad(linkLoads[hop.linkId][hop.direction], linkEntries, scale * hop.weight);
+      }
+      for (const hop of footprint.hops) {
+        addLoad(linkLoads[hop.linkId][hop.direction], hopEntries, scale * hop.weight * share);
         for (const axis of linkAxes.get(hop.linkId)) if (!Number.isFinite(demand.load[axis])) missingLinkLoads[hop.linkId][hop.direction].add(axis);
+      }
     }
     demandResults.push({
       id: demand.id, name: demand.name, status: 'delivered', validity, invalidPaths, load: scaledLoad(demand.load, scale),
       paths: activePaths.map(({ id, weight }) => ({ id, share: weight })),
+      ...(returnPaths?.length ? { returnPaths: returnPaths.map(({ id, weight }) => ({ id, share: weight })) } : {}),
       backends: resolvedPaths.get(demand.id).backends,
     });
   }

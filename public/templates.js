@@ -88,9 +88,20 @@ function balancedFarm(mode) {
     ['web-b', 'WEB 02', 'web', 'RACK 02', 740, 400, { nic_bps: 25e9, nic_pps: null, new_sessions_per_sec: 40e3 }],
   ]);
   connect(topology, [['internet', 'edge', 40e9], ['edge', 'lb', 20e9], ['lb', 'web-a', 25e9], ['lb', 'web-b', 25e9]]);
+  // DSR 은 서버가 클라이언트에게 직접 답한다. 그 길이 실제로 있어야 응답 바이트를 어디에 실을지 적을 수 있다.
+  const direct = mode === 'dsr';
+  const backends = ['web-a', 'web-b'];
+  if (direct) connect(topology, backends.map((backend) => [backend, 'edge', 25e9]));
   for (const [id, target] of [['web-a-traffic', 'web-a'], ['web-b-traffic', 'web-b']]) {
     addDemand(topology, { id, name: `${target.toUpperCase()} 트래픽`, source: 'internet', target,
       load: { forwarding_bps: 4e9, new_sessions_per_sec: 20e3, concurrent_sessions: 400e3, tls_full_handshakes_per_sec: 2e3, tls_resumed_handshakes_per_sec: 18e3, nic_bps: 4e9 },
+      // 반환 링크가 더 짧아 최단 경로가 LB 를 건너뛴다. DSR 은 정책 라우팅이므로 요청 경로를 못 박는다.
+      // 두 백엔드를 다 적는 것은 자동 풀 추론이 하던 일 그대로다 — 응답이 LB 를 건너뛴다고 분배가 달라지지는 않는다.
+      ...(direct ? {
+        pathMode: 'explicit',
+        paths: backends.map((backend) => ({ id: `${id}-request-${backend}`, devices: ['internet', 'edge', 'lb', backend], links: ['internet-edge', 'edge-lb', `lb-${backend}`] })),
+        returnPath: backends.map((backend) => ({ id: `${id}-return-${backend}`, devices: [backend, 'edge', 'internet'], links: [`${backend}-edge`, 'internet-edge'] })),
+      } : {}),
       directionality: { responseShare: 0.9, origin: 'estimate' } });
   }
   return topology;
@@ -699,7 +710,7 @@ export const templates = [
     group: 'balance',
     grade: { verdict: 'single-point', severs: 4 },
     summary: '응답이 로드밸런서를 거치지 않고 서버에서 클라이언트로 직행합니다.',
-    teaches: '같은 부하인데 로드밸런서 처리량이 9%로 떨어집니다. 연결 추적 부담은 그대로라 제한 축이 TLS 재개 핸드셰이크로 옮겨갑니다. 백엔드 풀은 인라인 구성과 똑같이 동작합니다 — 응답이 로드밸런서를 건너뛴다고 분배가 달라지지는 않습니다.',
+    teaches: '같은 부하인데 로드밸런서 처리량이 9%로 떨어집니다. 응답 9할이 서버에서 EDGE로 직행해, 로드밸런서를 지나는 링크는 2%인데 되돌아오는 링크는 14%입니다. 연결 추적 부담은 그대로라 제한 축이 TLS 재개 핸드셰이크로 옮겨갑니다. 백엔드 분배는 인라인 구성과 같습니다.',
     tags: ['로드밸런서', 'DSR', 'TLS', '세션', '백엔드 풀'],
     experiment: {
       prompt: '부하가 20% 늘면 DSR 구성은 어디서 먼저 넘을까요?',

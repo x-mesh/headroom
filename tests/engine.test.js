@@ -252,7 +252,7 @@ test('leaves link load alone when a balancer runs DSR', () => {
     addDemand(topology, { id: 'web', source: 'client', target: 'app', load: { forwarding_bps: 9.2e9 } });
     return calculateScenario(topology).links.find(({ id }) => id === 'client-lb').axes.forwarding_bps.load;
   };
-  // v1 은 장비에서만 응답분을 뺀다. 인접 링크 보정은 arm 모델과 함께 다룬다.
+  // 동작 모드는 장비에서만 응답분을 뺀다. 링크까지 옮기려면 수요가 returnPath 로 되돌아오는 홉을 적어야 한다.
   assert.equal(build('dsr'), build('inline'));
 });
 
@@ -751,4 +751,74 @@ test('ECMP shares split per hop branch, not per enumerated path', () => {
   assert.equal(Math.round(lbA.axes.forwarding_bps.load), 6e9);
   assert.equal(Math.round(lbB.axes.forwarding_bps.load), 6e9);
   assert.equal(result.demands[0].paths.reduce((sum, { share }) => sum + share, 0).toFixed(9), '1.000000000');
+});
+
+// 응답이 어디로 돌아가는지 적는 자리. 적지 않으면 응답 몫까지 요청 홉에 실리는 오늘 모델 그대로다.
+const returnPathFixture = (options = {}) => {
+  const topology = createEmptyTopology();
+  addDevice(topology, { id: 'client', kind: 'router', limits: { forwarding_bps: 100e9 } });
+  addDevice(topology, { id: 'edge', kind: 'router', limits: { forwarding_bps: 100e9 } });
+  addDevice(topology, { id: 'lb', kind: 'lb', behavior: { mode: 'dsr' }, limits: { forwarding_bps: 100e9 } });
+  addDevice(topology, { id: 'app', kind: 'server', limits: { nic_bps: 100e9 } });
+  addLink(topology, { source: 'client', target: 'edge', capacityBps: 100e9 });
+  addLink(topology, { source: 'edge', target: 'lb', capacityBps: 100e9 });
+  addLink(topology, { source: 'lb', target: 'app', capacityBps: 100e9 });
+  addLink(topology, { source: 'app', target: 'edge', capacityBps: 100e9 });
+  addDemand(topology, {
+    id: 'web', source: 'client', target: 'app', load: { forwarding_bps: 10e9, nic_bps: 10e9 },
+    pathMode: 'explicit',
+    paths: [{ id: 'request', devices: ['client', 'edge', 'lb', 'app'], links: ['client-edge', 'edge-lb', 'lb-app'] }],
+    ...(options.declared === false ? {} : { returnPath: [{ id: 'response', devices: ['app', 'edge', 'client'], links: ['app-edge', 'client-edge'] }] }),
+    directionality: { responseShare: 0.9, origin: 'explicit' },
+  });
+  return topology;
+};
+
+// 1 - 0.9 는 이진 부동소수에서 정확히 0.1 이 아니다. 값이 아니라 몫을 확인한다.
+const near = (actual, expected, label) => assert.ok(Math.abs(actual - expected) < 1, `${label}: ${actual} vs ${expected}`);
+
+test('sends the response share down the return path a demand declares', () => {
+  const hop = (result, id, direction) => result.links.find((link) => link.id === id).directions[direction].axes.forwarding_bps.load;
+  const plain = calculateScenario(returnPathFixture({ declared: false }));
+  const split = calculateScenario(returnPathFixture());
+  // 적지 않으면 오늘 그대로다. 되돌아오는 길에는 아무것도 그리지 않는다.
+  assert.equal(hop(plain, 'client-edge', 'forward'), 10e9);
+  assert.equal(hop(plain, 'client-edge', 'reverse'), 0);
+  assert.equal(hop(plain, 'app-edge', 'forward'), 0);
+  // 적으면 응답 9할이 되돌아오는 홉으로 옮겨간다. LB 로 가는 링크에는 요청 1할만 남는다.
+  near(hop(split, 'client-edge', 'forward'), 1e9, '요청 홉');
+  near(hop(split, 'client-edge', 'reverse'), 9e9, '돌아오는 홉');
+  near(hop(split, 'edge-lb', 'forward'), 1e9, 'LB 로 가는 홉');
+  near(hop(split, 'lb-app', 'forward'), 1e9, 'LB 뒤 홉');
+  near(hop(split, 'app-edge', 'forward'), 9e9, '직행 홉');
+});
+
+test('keeps the whole load on a device that sits on both legs', () => {
+  const axis = (result, id, name) => result.devices.find((device) => device.id === id).axes[name].load;
+  const split = calculateScenario(returnPathFixture());
+  // 요청과 응답을 다 지나는 장비는 나누기 전과 같은 값을 본다. 두 다리로 갈랐다고 총량이 달라지지 않는다.
+  near(axis(split, 'edge', 'forwarding_bps'), 10e9, '양쪽에 걸친 장비');
+  near(axis(split, 'app', 'nic_bps'), 10e9, '백엔드 NIC');
+  // 요청만 지나는 LB 는 응답 몫을 보지 않는다. DSR 이 처음부터 말하던 것이다.
+  near(axis(split, 'lb', 'forwarding_bps'), 1e9, '요청만 지나는 LB');
+});
+
+test('stops delivering when the declared return path is gone', () => {
+  const topology = returnPathFixture();
+  const result = calculateScenario(topology, { disabledLinks: ['app-edge'] });
+  const demand = result.demands.find(({ id }) => id === 'web');
+  // 요청은 여전히 갈 수 있다. 그래도 응답이 돌아오지 못하면 전달된 것이 아니다.
+  assert.equal(demand.status, 'unreachable');
+  assert.equal(result.summary.unreachableCount, 1);
+});
+
+test('counts a session once when the request and the response share a device', () => {
+  const topology = returnPathFixture();
+  topology.devices.find(({ id }) => id === 'edge').kind = 'firewall';
+  topology.devices.find(({ id }) => id === 'edge').limits.new_sessions_per_sec = 100e3;
+  topology.devices.find(({ id }) => id === 'edge').behavior = { mode: 'routed', sessionSync: 'none' };
+  topology.demands[0].load.new_sessions_per_sec = 20e3;
+  const edge = calculateScenario(topology).devices.find(({ id }) => id === 'edge');
+  // 세션 수는 요청 다리에만 싣는다. 두 다리에 다 실으면 양쪽에 걸친 장비가 같은 연결을 두 번 센다.
+  assert.equal(edge.axes.new_sessions_per_sec.load, 20e3);
 });

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cloneTopology } from '../public/data.js';
-import { addDemand, addDevice, addLink, createEmptyTopology, moveDevice, removeDemand, removeDevice, removeLink, updateDevice } from '../public/editor.js';
+import { addDemand, addDevice, addLink, createEmptyTopology, moveDevice, removeDemand, removeDevice, removeLink, updateDemand, updateDevice } from '../public/editor.js';
 import { calculateScenario, findShortestPaths } from '../public/engine.js';
 
 test('creates, moves, and links devices with validated IDs', () => {
@@ -196,4 +196,25 @@ test('a demand can name its own route, pool, and direction split when it is crea
     paths: [{ id: 'p', devices: ['a', 'missing'], links: ['ab'] }] }), /missing device/);
   assert.throws(() => addDemand(topology, { id: 'bad-share', source: 'a', target: 'c', load: { forwarding_bps: 1 },
     directionality: { responseShare: 1.4 } }), /between 0 and 1/);
+});
+
+
+test('takes a return path only when it ends where the demand starts', () => {
+  const topology = createEmptyTopology();
+  addDevice(topology, { id: 'client', kind: 'router', limits: { forwarding_bps: 10e9 } });
+  addDevice(topology, { id: 'edge', kind: 'router', limits: { forwarding_bps: 10e9 } });
+  addDevice(topology, { id: 'app', kind: 'server', limits: { nic_bps: 10e9 } });
+  addLink(topology, { source: 'client', target: 'edge', capacityBps: 10e9 });
+  addLink(topology, { source: 'edge', target: 'app', capacityBps: 10e9 });
+  const response = { id: 'response', devices: ['app', 'edge', 'client'], links: ['edge-app', 'client-edge'] };
+  // 되돌아오는 길이므로 끝은 출발지여야 한다. 뒤집어 적으면 응답이 반대로 흐르는 그림이 조용히 남는다.
+  assert.throws(() => addDemand(topology, { id: 'bad', source: 'client', target: 'app', load: { forwarding_bps: 1e9 },
+    returnPath: [{ ...response, devices: ['client', 'edge', 'app'] }] }), /must end at the demand source/);
+  assert.throws(() => addDemand(topology, { id: 'missing', source: 'client', target: 'app', load: { forwarding_bps: 1e9 },
+    returnPath: [{ ...response, links: ['edge-app', 'nowhere'] }] }), /missing link/);
+  const demand = addDemand(topology, { id: 'web', source: 'client', target: 'app', load: { forwarding_bps: 1e9 }, returnPath: [response] });
+  assert.equal(demand.returnPath.length, 1);
+  // 끝점이 바뀌면 반환 경로는 다른 설계의 것이 된다. 명시 경로와 같이 걷어낸다.
+  updateDemand(topology, 'web', { target: 'edge' });
+  assert.equal(demand.returnPath, undefined);
 });

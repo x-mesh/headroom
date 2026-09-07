@@ -63,6 +63,20 @@ function normalizePaths(topology, paths) {
   });
 }
 
+/**
+ * 반환 경로. 응답 몫이 탈 홉을 따로 적는 자리다 — DSR 은 여기서 LB 를 빼고, 그러면 응답
+ * 바이트가 LB 를 지나지 않는 것이 링크 숫자에 그대로 나타난다. 적지 않으면 오늘 그대로,
+ * 응답 몫까지 요청 홉에 실린다. 되돌아오는 길이므로 끝은 수요의 출발지여야 한다.
+ */
+function normalizeReturnPath(topology, returnPath, source) {
+  const paths = normalizePaths(topology, returnPath);
+  if (!paths?.length) return null;
+  for (const path of paths) {
+    if (path.devices.at(-1) !== source) throw new Error(`Return path ${path.id} must end at the demand source ${source}`);
+  }
+  return paths;
+}
+
 function normalizeDirectionality(directionality) {
   if (!directionality) return null;
   const responseShare = finite(directionality.responseShare, 'Response share', { min: 0 });
@@ -411,8 +425,10 @@ export function addDemand(topology, input) {
   const paths = normalizePaths(topology, input.paths);
   const demand = { id, name: String(input.name || id).trim().slice(0, 80) || id, source, target, load,
     pathMode: input.pathMode === 'explicit' || (input.pathMode == null && paths?.length) ? 'explicit' : 'shortest' };
-  // 아래 셋은 없는 것이 기본값이라, 값이 있을 때만 붙인다. 빈 필드를 만들면 저장 파일마다 실린다.
+  // 아래 넷은 없는 것이 기본값이라, 값이 있을 때만 붙인다. 빈 필드를 만들면 저장 파일마다 실린다.
   if (paths) demand.paths = paths;
+  const returnPath = normalizeReturnPath(topology, input.returnPath, source);
+  if (returnPath) demand.returnPath = returnPath;
   const backendPool = normalizeBackendPool(input.backendPool, devices);
   if (backendPool) demand.backendPool = backendPool;
   const directionality = normalizeDirectionality(input.directionality);
@@ -443,7 +459,11 @@ export function updateDemand(topology, id, patch) {
   }
   if (demand.source === demand.target) throw new Error('Demand source and target must differ');
   // 끝점이 바뀌면 손으로 고른 백엔드 목록은 다른 설계의 것이 된다. 자동 판정으로 되돌린다.
-  if (endpointsChanged) { delete demand.paths; demand.pathMode = 'shortest'; if (Array.isArray(demand.backendPool?.memberIds)) delete demand.backendPool; }
+  if (endpointsChanged) { delete demand.paths; delete demand.returnPath; demand.pathMode = 'shortest'; if (Array.isArray(demand.backendPool?.memberIds)) delete demand.backendPool; }
+  if (patch.returnPath !== undefined) {
+    const returnPath = normalizeReturnPath(topology, patch.returnPath, demand.source);
+    if (returnPath) demand.returnPath = returnPath; else delete demand.returnPath;
+  }
   if (patch.backendPool !== undefined) demand.backendPool = normalizeBackendPool(patch.backendPool, devices);
   if (demand.backendPool == null) delete demand.backendPool;
   if (patch.name != null) demand.name = String(patch.name).trim().slice(0, 80) || demand.name;
