@@ -110,7 +110,9 @@ test('SVG export includes labels and routes but never executable markup or exter
   const svg = exportDiagramSvg(t);
   assert.match(svg, /&lt;script&gt;/); assert.match(svg, /&amp;/);
   assert.doesNotMatch(svg, /<script|<image|foreignObject/);
-  assert.match(svg, /150,140/); assert.match(svg, /viewBox="-224/);
+  // 손으로 찍은 마디는 자동 경로보다 우선한다. 폴리라인이 경로로 바뀌어 좌표 구분이 쉼표에서
+  // 공백으로 옮겨 갔을 뿐, 그 마디가 그림에 남아야 한다는 단언은 그대로다.
+  assert.match(svg, /L 150 140/); assert.match(svg, /viewBox="-224/);
 });
 
 test('drawio importer rejects unsafe, oversized and compressed XML with actionable errors', () => {
@@ -165,4 +167,22 @@ test('draws the diagram alone when there is no calculation to stamp', () => {
   assert.ok(svg.includes('계산 결과 없음'));
   assert.equal(svg.includes('배율'), false, '결과가 없으면 배율을 지어내지 않는다');
   assert.doesNotMatch(svg, /<script|<image|foreignObject/);
+});
+
+
+test('the exported picture bends its lines the same way the screen does', () => {
+  const topology = buildTemplate('dc-pod');
+  const result = calculateScenario(topology);
+  const shapes = Object.fromEntries(['straight', 'orthogonal', 'curved']
+    .map((linkRoute) => [linkRoute, exportDiagramSvg(topology, result, { linkRoute })]));
+  // 링크만 센다. 장비 심볼도 path 로 그려지고 그 안에는 L 이 잔뜩 있어, 통째로 세면 아이콘을
+  // 굽은 선으로 잘못 읽는다. stroke-linejoin 은 링크에만 붙인다.
+  const linkPaths = (svg) => (svg.match(/<path d="[^"]*"[^>]*stroke-linejoin="round"[^>]*>/g) || [])
+    .map((tag) => tag.match(/d="([^"]*)"/)[1]);
+  const bends = (svg) => linkPaths(svg).filter((d) => d.split(/[LQ]/).length > 2).length;
+  // 화면에서 굽힌 선이 내보낸 그림에서 곧으면, 위키에 붙인 그림이 화면과 다른 말을 한다.
+  assert.equal(bends(shapes.straight), 0, '직선으로 내보낸 그림에는 마디가 없어야 한다');
+  assert.ok(bends(shapes.orthogonal) > 10, `직각으로 내보낸 그림이 ${bends(shapes.orthogonal)}개만 굽었습니다`);
+  assert.ok(shapes.curved.includes(' Q '), '곡선으로 내보낸 그림은 이차 곡선을 써야 한다');
+  for (const d of linkPaths(shapes.curved)) assert.doesNotMatch(d, /Q [-\d. ]+ Q/, '곡선 뒤에 명령 없는 좌표를 두면 경로가 깨진다');
 });

@@ -4,7 +4,7 @@ import { acceptEvidence, addDemand, addDevice, addLink, applySpec, clearEvidence
 import { importDeviceDefinition } from './device-import.js';
 import { parseProject, serializeProject } from './project.js';
 import { GLYPHS, GLYPH_SPRITE } from './glyphs.js';
-import { behaviorToken, formatNodeValue, groupBoxes, GROUP_PAD, kindInitial, nodeAxes, nodeAxisLabel, NODE_REACH, nodeView, placeLinkLabels, STATE_TOKEN, symbolFor, zonePath } from './node-view.js';
+import { behaviorToken, cardBox, formatNodeValue, groupBoxes, GROUP_PAD, kindInitial, LINK_ROUTES, linkPath, nodeAxes, nodeAxisLabel, NODE_REACH, nodeView, placeLinkLabels, routeLink, segmentHitsBox, STATE_TOKEN, symbolFor, zonePath } from './node-view.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
 import { vendorLogoFor } from './logos.js';
 import { buildTemplate, templateGroups, templates } from './templates.js';
@@ -240,7 +240,8 @@ function renderClassControl() {
     </div>`;
   element('class-control').innerHTML = group('배지', 'class-badge', classView.badge, [['off', '끔'], ['on', '켬']])
     + group('떨림', 'number-motion', motionView.drift, [['off', '끔'], ['on', '켬']])
-    + group('수치', 'node-detail', detailView.level, [['off', '없앰'], ['brief', '요약'], ['full', '전체']]);
+    + group('수치', 'node-detail', detailView.level, [['off', '없앰'], ['brief', '요약'], ['full', '전체']])
+    + group('선', 'link-route', routeView.mode, [['straight', '직선'], ['orthogonal', '직각'], ['curved', '곡선']]);
 }
 
 // 데이터시트를 붙였는데 대조할 워크로드 조건이 없으면 모든 축이 미확인이 된다. 그 상태는
@@ -420,6 +421,14 @@ const motionView = { drift: 'on' };
 try {
   const saved = localStorage.getItem('rack-mesh-number-motion');
   if (saved === 'on' || saved === 'off') motionView.drift = saved;
+} catch { /* 저장된 선택이 없으면 기본값을 쓴다 */ }
+
+// 선을 어떻게 그을지. 직선이 기본이다 - 굽히는 것은 보기의 문제이고, 어느 쪽을 골라도 어느
+// 자원이 무엇에 이어졌는지는 같다. 직각과 곡선은 노드 카드를 비켜 가므로 선이 숫자를 덜 가린다.
+const routeView = { mode: 'straight' };
+try {
+  const saved = localStorage.getItem('rack-mesh-link-route');
+  if (LINK_ROUTES.includes(saved)) routeView.mode = saved;
 } catch { /* 저장된 선택이 없으면 기본값을 쓴다 */ }
 
 // 이니셜은 앞 세 글자를 자르면 SWI·ROU 가 되어 읽히지 않는다. 손으로 정한다.
@@ -746,32 +755,42 @@ function renderTopology() {
     || type === 'shape' && state.selection.some((item) => item.type === 'group'
       && topology.diagram?.groups?.find(({ id: groupId }) => groupId === item.id)?.memberIds.includes(id));
   const linkStatus = (link) => (link.severed ? 'disabled' : severedPathLinks.has(link.id) ? 'on-severed-path' : link.primaryStatus);
-  const labelSpots = placeLinkLabels(current.links.map((link) => ({
-    id: link.id,
-    text: link.severed ? 'DOWN' : formatPercent(link.axes.forwarding_bps?.utilization),
-    status: linkStatus(link),
-    util: link.axes.forwarding_bps?.utilization ?? null,
-    binding: link.id === current.summary.bindingResourceId,
-    from: devices.get(link.source).position,
-    to: devices.get(link.target).position,
-  })), current.devices.map(({ position }) => position));
+  // 마디를 한 번만 정하고 선·판정 영역·패킷 점·라벨이 모두 그것을 쓴다. 따로 계산하면
+  // 곡선 위의 라벨이 직선 자리에 남는다. 양 끝 노드는 장애물에서 뺀다 - 자기 카드는 지나야 한다.
+  const cards = new Map(current.devices.filter(({ position }) => position).map((device) => [device.id, cardBox(device.position)]));
+  const routes = new Map(current.links.map((link) => [link.id, routeLink(
+    devices.get(link.source).position, devices.get(link.target).position,
+    [...cards].filter(([id]) => id !== link.source && id !== link.target).map(([, box]) => box), routeView.mode)]));
+  // 라벨은 가운데 마디 위에서 자리를 찾는다(diagram.js 와 같은 규칙).
+  const midSegment = (points) => { const half = Math.max(1, Math.floor(points.length / 2)); return [points[half - 1], points[half]]; };
+  const labelSpots = placeLinkLabels(current.links.map((link) => {
+    const [from, to] = midSegment(routes.get(link.id));
+    return {
+      id: link.id,
+      text: link.severed ? 'DOWN' : formatPercent(link.axes.forwarding_bps?.utilization),
+      status: linkStatus(link),
+      util: link.axes.forwarding_bps?.utilization ?? null,
+      binding: link.id === current.summary.bindingResourceId,
+      from, to,
+    };
+  }), current.devices.map(({ position }) => position));
   element('link-layer').innerHTML = groupMarkup + current.links.map((link) => {
-    const source = devices.get(link.source).position;
-    const target = devices.get(link.target).position;
     const onSeveredPath = !link.severed && severedPathLinks.has(link.id);
     const status = linkStatus(link);
     const spot = labelSpots.get(link.id);
+    const geometry = escapeAttribute(linkPath(routes.get(link.id), routeView.mode));
     const utilization = link.axes.forwarding_bps?.utilization;
     const packetCount = !link.severed && !onSeveredPath && utilization > 0 ? Math.min(3, Math.max(1, Math.ceil(utilization * 3))) : 0;
     const packetDuration = Math.max(1.25, 3.4 - Math.min(utilization || 0, 1.5) * 1.25);
+    // 점은 선을 따라간다. 예전에는 cx/cy 를 양 끝 사이에서 옮겼는데, 그러면 굽은 선 위에서
+    // 점만 곧게 질러가 어느 길로 흐르는지가 그림과 어긋난다.
     const packetDots = Array.from({ length: packetCount }, (_, index) => `<circle class="packet-dot ${status}" r="3">
-      <animate attributeName="cx" values="${source.x};${target.x}" dur="${packetDuration.toFixed(2)}s" begin="-${(packetDuration * index / packetCount).toFixed(2)}s" repeatCount="indefinite"></animate>
-      <animate attributeName="cy" values="${source.y};${target.y}" dur="${packetDuration.toFixed(2)}s" begin="-${(packetDuration * index / packetCount).toFixed(2)}s" repeatCount="indefinite"></animate>
+      <animateMotion path="${geometry}" dur="${packetDuration.toFixed(2)}s" begin="-${(packetDuration * index / packetCount).toFixed(2)}s" repeatCount="indefinite"></animateMotion>
     </circle>`).join('');
     return `<g class="link-group" data-link-id="${escapeAttribute(link.id)}">
-      ${selectionHas('link', link.id) ? `<line class="link-selection" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}"></line>` : ''}
-      <line class="link ${status}" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}"></line>
-      <line class="link-hit" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}" tabindex="0" role="button" aria-label="${escapeAttribute(`${resourceName(link)} 링크 검사${link.severed ? ' · 끊김' : onSeveredPath ? ' · 경로 단절' : ''}`)}"></line>
+      ${selectionHas('link', link.id) ? `<path class="link-selection" d="${geometry}"></path>` : ''}
+      <path class="link ${status}" d="${geometry}"></path>
+      <path class="link-hit" d="${geometry}" tabindex="0" role="button" aria-label="${escapeAttribute(`${resourceName(link)} 링크 검사${link.severed ? ' · 끊김' : onSeveredPath ? ' · 경로 단절' : ''}`)}"></path>
       ${packetDots}
       ${spot ? `<text class="link-label"${link.severed ? '' : ` data-live-util="${utilization ?? ''}" data-live-seed="${link.id}"`} x="${spot.x}" y="${spot.y}" text-anchor="middle">${link.severed ? 'DOWN' : formatPercent(utilization)}</text>` : ''}
     </g>`;
@@ -1716,7 +1735,7 @@ function downloadText(filename, text, type = 'application/json') {
 
 // 내보낸 그림은 화면과 같은 축을 골라 같은 값을 말해야 한다. 그래서 결과와 훑기를 함께 넘긴다.
 function diagramSvg() {
-  return exportDiagramSvg(topology, current, { sweep: sweepStale() ? null : sweep, exportedAt: new Date().toISOString().slice(0, 16).replace('T', ' ') });
+  return exportDiagramSvg(topology, current, { sweep: sweepStale() ? null : sweep, linkRoute: routeView.mode, exportedAt: new Date().toISOString().slice(0, 16).replace('T', ' ') });
 }
 
 async function exportPng() {
@@ -1966,6 +1985,13 @@ element('class-control').addEventListener('click', (event) => {
   if (motion) {
     motionView.drift = motion;
     try { localStorage.setItem('rack-mesh-number-motion', motion); } catch { /* 저장이 막혀도 이번 세션은 바뀐다 */ }
+    render();
+    return;
+  }
+  const route = event.target.closest('[data-link-route]')?.dataset.linkRoute;
+  if (route && LINK_ROUTES.includes(route)) {
+    routeView.mode = route;
+    try { localStorage.setItem('rack-mesh-link-route', route); } catch { /* 저장이 막혀도 이번 세션은 바뀐다 */ }
     render();
     return;
   }
@@ -2486,21 +2512,6 @@ element('drawio-file-input').addEventListener('change', async (event) => {
     commitTopology(`drawio에서 도형 ${imported.shapes.length}개와 연결선 ${imported.connectors.length}개를 가져왔습니다. 계산 의미는 장비에 별도로 지정하세요.`);
   } catch (error) { showToast(`drawio 가져오기 실패: ${error.message}`); }
 });
-// 선분이 상자와 겹치는지. Liang-Barsky 로 매개변수 구간을 잘라, 남는 구간이 있으면 겹친 것이다.
-// 장비는 가운데 점이 상자 안에 있어야 하지만 링크는 지나가기만 해도 고른다 - 가로질러 그은
-// 얇은 상자로 여러 선을 한꺼번에 집는 것이 선을 여럿 고르는 유일하게 쓸 만한 손놀림이다.
-function segmentHitsBox(a, b, box) {
-  let enter = 0; let leave = 1;
-  const dx = b.x - a.x; const dy = b.y - a.y;
-  for (const [slope, room] of [[-dx, a.x - box.left], [dx, box.right - a.x], [-dy, a.y - box.top], [dy, box.bottom - a.y]]) {
-    if (slope === 0) { if (room < 0) return false; continue; }
-    const cut = room / slope;
-    if (slope < 0) { if (cut > leave) return false; if (cut > enter) enter = cut; }
-    else { if (cut < enter) return false; if (cut < leave) leave = cut; }
-  }
-  return true;
-}
-
 const topologyScroll = document.querySelector('.topology-scroll');
 // drawio 와 같은 손놀림으로 맞춘다. 빈 곳을 왼쪽으로 끌면 고르고, 오른쪽이나 가운데로 끌면
 // 화면을 민다. 예전에는 왼쪽 드래그가 화면을 밀고 선택 상자는 Shift 뒤에 숨어 있어, 상자가

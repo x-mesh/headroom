@@ -154,6 +154,101 @@ const LABEL_SPOTS = [0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74, 0.18, 0.82];
 const LABEL_CHAR = 5.4;
 const LABEL_ROW = 11;
 
+export const LINK_ROUTES = Object.freeze(['straight', 'orthogonal', 'curved']);
+// 통로를 옆으로 옮기는 폭과, 몇 칸까지 밀어 볼지. 넓히면 더 잘 피하지만 마디가 멀리 튄다.
+const LANE_STEP = 30;
+const LANE_TRIES = 5;
+// 곡선 모드에서 곧게 갈 수 있는 선도 살짝 부풀린다. 겹쳐 지나는 두 선이 갈려 보인다.
+const BOW_RATIO = 0.11;
+const BOW_MAX = 30;
+
+/** 노드 카드가 차지하는 상자. 라벨이 피하는 자리와 같은 상자를 선도 피한다. */
+export const cardBox = (position) => ({
+  left: position.x - NODE_REACH.left, right: position.x + NODE_REACH.right,
+  top: position.y - NODE_REACH.top, bottom: position.y + NODE_REACH.bottom,
+});
+
+/** 선분이 상자와 겹치는지. Liang-Barsky 로 매개변수 구간을 잘라, 남는 구간이 있으면 겹친 것이다. */
+export function segmentHitsBox(a, b, box) {
+  let enter = 0; let leave = 1;
+  const dx = b.x - a.x; const dy = b.y - a.y;
+  for (const [slope, room] of [[-dx, a.x - box.left], [dx, box.right - a.x], [-dy, a.y - box.top], [dy, box.bottom - a.y]]) {
+    if (slope === 0) { if (room < 0) return false; continue; }
+    const cut = room / slope;
+    if (slope < 0) { if (cut > leave) return false; if (cut > enter) enter = cut; }
+    else { if (cut < enter) return false; if (cut < leave) leave = cut; }
+  }
+  return true;
+}
+
+const pathClear = (points, obstacles) => points.every((point, index) =>
+  index === 0 || !obstacles.some((box) => segmentHitsBox(points[index - 1], point, box)));
+
+/**
+ * 두 점을 잇는 마디를 정한다. 직선은 두 점 그대로이고, 나머지는 노드 카드를 비켜 갈 통로를
+ * 찾는다. 통로를 못 찾으면 곧게 잇는다 - 못 피한 것을 피한 것처럼 굽히면 그림이 거짓말을 한다.
+ *
+ * @param {{x:number,y:number}} from
+ * @param {{x:number,y:number}} to
+ * @param {{left:number,right:number,top:number,bottom:number}[]} obstacles 양 끝 노드는 빼고 넣는다.
+ * @param {'straight'|'orthogonal'|'curved'} mode
+ * @returns {{x:number,y:number}[]} 마디. 화면과 내보내기가 같은 이 배열로 그린다.
+ */
+export function routeLink(from, to, obstacles = [], mode = 'straight') {
+  if (mode !== 'orthogonal' && mode !== 'curved') return [from, to];
+  if (pathClear([from, to], obstacles)) {
+    if (mode === 'orthogonal') return [from, to];
+    // 곧게 갈 수 있어도 곡선은 부풀린다. 길이에 비례하되 상한을 둬 짧은 선이 고리가 되지 않게 한다.
+    const dx = to.x - from.x; const dy = to.y - from.y;
+    const span = Math.hypot(dx, dy);
+    if (span < 1) return [from, to];
+    const bow = Math.min(span * BOW_RATIO, BOW_MAX);
+    // 부풀린 배가 남의 카드에 닿을 수 있다. 반대쪽으로도 재 보고, 둘 다 걸리면 곧게 둔다 -
+    // 피하려고 부풀린 선이 도리어 숫자를 가리면 굽힌 값어치가 없다.
+    for (const side of [1, -1]) {
+      const arc = [from, { x: (from.x + to.x) / 2 - (dy / span) * bow * side, y: (from.y + to.y) / 2 + (dx / span) * bow * side }, to];
+      if (pathClear(arc, obstacles)) return arc;
+    }
+    return [from, to];
+  }
+  const midX = (from.x + to.x) / 2;
+  const midY = (from.y + to.y) / 2;
+  const vertical = []; const horizontal = [];
+  for (let step = 0; step <= LANE_TRIES; step += 1) {
+    for (const side of step ? [1, -1] : [1]) {
+      const shift = side * step * LANE_STEP;
+      vertical.push([from, { x: midX + shift, y: from.y }, { x: midX + shift, y: to.y }, to]);
+      horizontal.push([from, { x: from.x, y: midY + shift }, { x: to.x, y: midY + shift }, to]);
+    }
+  }
+  // 가로로 먼 링크는 세로 통로부터 본다. 긴 쪽을 가로질러야 마디가 덜 튀어 나간다.
+  const wide = Math.abs(to.x - from.x) >= Math.abs(to.y - from.y);
+  const ordered = wide ? [...vertical, ...horizontal] : [...horizontal, ...vertical];
+  return ordered.find((points) => pathClear(points, obstacles)) ?? [from, to];
+}
+
+const round = (value) => Math.round(value * 100) / 100;
+
+/**
+ * 마디를 SVG 경로 문자열로 옮긴다. 직각은 마디를 그대로 잇고, 곡선은 꺾인 자리를 둥글게 지난다.
+ * 라벨과 패킷 점이 같은 마디를 쓰므로, 그리는 방식만 여기서 갈린다.
+ */
+export function linkPath(points, mode = 'straight') {
+  const at = (point) => `${round(point.x)} ${round(point.y)}`;
+  if (mode !== 'curved' || points.length < 3) return `M ${points.map(at).join(' L ')}`;
+  const half = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  let d = `M ${at(points[0])}`;
+  for (let index = 1; index < points.length - 1; index += 1) {
+    // 앞뒤 마디의 가운데로 물러났다가 꼭짓점을 제어점 삼아 지난다. 이어 붙이면 매끈해진다.
+    const enter = half(points[index - 1], points[index]);
+    const leave = half(points[index], points[index + 1]);
+    // L 을 매 마디마다 다시 쓴다. 빼면 뒤따르는 좌표쌍이 앞 Q 의 인자로 읽혀 경로가 깨진다.
+    // 꺾인 자리가 이어지면 앞 곡선의 끝과 다음 L 의 도착점이 같아 길이 0 이라 그림은 그대로다.
+    d += ` L ${at(enter)} Q ${at(points[index])} ${at(leave)}`;
+  }
+  return `${d} L ${at(points.at(-1))}`;
+}
+
 /**
  * @param {{id:string, text:string, status:string, util:number|null, binding:boolean, from:{x,y}, to:{x,y}}[]} entries
  * @param {{x:number, y:number}[]} nodes 노드 중심. 카드가 라벨을 덮으므로 그 자리는 피한다.

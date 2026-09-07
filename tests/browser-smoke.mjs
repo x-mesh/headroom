@@ -208,10 +208,13 @@ async function verify(viewport, screenshot, interact = false) {
     assert.ok(symbol.painted, `${symbol.id}: symbol renders an empty box`);
     assert.ok(symbol.insideCanvas, `${symbol.id}: node overflows the canvas bottom`);
   }
+  // 선이 곧을 수도 굽을 수도 있으므로 좌표 속성이 아니라 그려진 길의 끝을 잰다. 어느 모양이든
+  // 끝은 심볼 가운데여야 한다 - 거기서 벗어나면 선이 어느 장비에 닿았는지 그림이 말하지 못한다.
   const anchored = await page.evaluate(() => {
-    const line = document.querySelector('[data-link-id="edge-a-fw-a"] .link');
+    const drawn = document.querySelector('[data-link-id="edge-a-fw-a"] .link');
     const [originX, originY] = document.querySelector('#link-layer').getAttribute('viewBox').split(' ').map(Number);
-    return [Number(line.getAttribute('x2')) - originX, Number(line.getAttribute('y2')) - originY];
+    const end = drawn.getPointAtLength(drawn.getTotalLength());
+    return [end.x - originX, end.y - originY];
   });
   const target = symbols.find((symbol) => symbol.id === 'fw-a').center;
   assert.ok(Math.abs(target[0] - anchored[0]) < 1.5 && Math.abs(target[1] - anchored[1]) < 1.5,
@@ -883,10 +886,11 @@ async function verify(viewport, screenshot, interact = false) {
       const layer = document.querySelector('#link-layer');
       const svg = layer.getBoundingClientRect();
       const [x, y] = layer.getAttribute('viewBox').split(' ').map(Number);
-      const line = document.querySelector('[data-link-id="source-a-target-a"] .link');
+      const drawn = document.querySelector('[data-link-id="source-a-target-a"] .link');
+      const start = drawn.getPointAtLength(0);
       const symbol = document.querySelector('[data-device-id="source-a"] .node-symbol').getBoundingClientRect();
-      return Math.hypot((symbol.left + symbol.width / 2) - (svg.left + Number(line.getAttribute('x1')) - x),
-        (symbol.top + symbol.height / 2) - (svg.top + Number(line.getAttribute('y1')) - y));
+      return Math.hypot((symbol.left + symbol.width / 2) - (svg.left + start.x - x),
+        (symbol.top + symbol.height / 2) - (svg.top + start.y - y));
     });
     assert.ok(anchorGap < 1.5, `a link must stay on the symbol center after the origin moves, gap ${anchorGap}`);
 
@@ -1003,6 +1007,29 @@ async function verify(viewport, screenshot, interact = false) {
       'drawing a selection box must leave the scroll position alone');
     assert.equal(await page.evaluate(() => !document.getElementById('selection-marquee').hidden), false,
       'the selection box must disappear with the pointer');
+
+    // 선 모양 토글. 굽은 선은 노드 카드를 비켜 가고, 패킷 점도 그 길을 따라야 한다 - 점만
+    // 곧게 질러가면 어느 길로 흐르는지가 그림과 어긋난다.
+    const shapeOf = () => page.evaluate(() => {
+      const paths = [...document.querySelectorAll('.link')];
+      return {
+        bent: paths.filter((path) => path.getAttribute('d').split(/[LQ]/).length > 2).length,
+        total: paths.length,
+        motion: document.querySelectorAll('.packet-dot animateMotion').length,
+        straightAttrs: paths.filter((path) => path.tagName.toLowerCase() !== 'path').length,
+      };
+    });
+    for (const [mode, label] of [['straight', '직선'], ['orthogonal', '직각'], ['curved', '곡선']]) {
+      await page.locator(`[data-link-route="${mode}"]`).click();
+      await page.waitForTimeout(120);
+      const shape = await shapeOf();
+      assert.equal(shape.straightAttrs, 0, '선은 어느 모양이든 path 로 그려야 굽힐 수 있다');
+      assert.equal(await page.locator(`[data-link-route="${mode}"]`).getAttribute('aria-pressed'), 'true', `${label} 을 고른 것이 버튼에 나타나야 한다`);
+      if (mode === 'curved') assert.equal(shape.bent, shape.total, `${label} 은 모든 선을 굽혀야 한다`);
+      if (mode === 'straight') assert.equal(shape.bent, 0, `${label} 은 마디를 만들지 않는다`);
+      assert.ok(shape.motion > 0, `${label} 에서도 패킷 점이 선을 따라가야 한다`);
+    }
+    await page.locator('[data-link-route="straight"]').click();
 
     // 선을 고르는 일은 고른 것이 보여야 성립한다. 예전에는 고르기는 되는데 화면이 그대로여서
     // 아무 일도 일어나지 않은 것처럼 읽혔고, 상자는 장비와 도형만 담아 선은 하나씩만 고를 수 있었다.

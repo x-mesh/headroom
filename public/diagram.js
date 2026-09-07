@@ -1,5 +1,5 @@
 import { axisCatalog } from './data.js';
-import { formatNodePercent, groupBoxes, nodeView, placeLinkLabels } from './node-view.js';
+import { cardBox, formatNodePercent, groupBoxes, linkPath, nodeView, placeLinkLabels, routeLink } from './node-view.js';
 const clone = (value) => structuredClone(value);
 const coordinate = (value) => {
   const n = Number(value);
@@ -247,7 +247,20 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
   const anchorPoint = (node, anchor) => (node.kind === 'node'
     ? { x: coordinate(node.x + node.width / 2), y: coordinate(node.y + NODE.symbolH / 2) }
     : { x: coordinate(node.x + node.width * (anchor?.x ?? .5)), y: coordinate(node.y + node.height * (anchor?.y ?? .5)) });
-  const routes = [...(next.links || []), ...next.diagram.connectors].flatMap((edge) => { const a = byId.get(edge.source), b = byId.get(edge.target); return a && b ? [{ edge, points: [anchorPoint(a, edge.sourceAnchor), ...(edge.waypoints || []).map((p) => ({ x: coordinate(p.x), y: coordinate(p.y) })), anchorPoint(b, edge.targetAnchor)] }] : []; });
+  // 선 모양은 화면이 고른 것을 그대로 따른다. 같은 설계가 화면에서는 굽고 내보낸 그림에서는
+  // 곧으면, 위키에 붙인 그림이 화면과 다른 말을 한다. 손으로 찍은 마디가 있으면 그것이 우선이다.
+  const route = options.linkRoute || 'straight';
+  const cards = new Map(nodes.filter(({ kind }) => kind === 'node').map((node) => [node.id, cardBox(node.device.position)]));
+  const routes = [...(next.links || []), ...next.diagram.connectors].flatMap((edge) => {
+    const a = byId.get(edge.source); const b = byId.get(edge.target);
+    if (!a || !b) return [];
+    const from = anchorPoint(a, edge.sourceAnchor);
+    const to = anchorPoint(b, edge.targetAnchor);
+    const pinned = (edge.waypoints || []).map((p) => ({ x: coordinate(p.x), y: coordinate(p.y) }));
+    if (pinned.length) return [{ edge, points: [from, ...pinned, to] }];
+    const obstacles = [...cards].filter(([id]) => id !== edge.source && id !== edge.target).map(([, box]) => box);
+    return [{ edge, points: routeLink(from, to, obstacles, route) }];
+  });
 
   const groups = result ? groupBoxes(result.devices.filter(({ position }) => position)) : [];
   const extent = [...nodes.flatMap((n) => [{ x: coordinate(n.x), y: coordinate(n.y) }, { x: coordinate(n.x + n.width), y: coordinate(n.y + n.height) }]),
@@ -290,7 +303,7 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
     const dash = LINK_DASH[status] ? ` stroke-dasharray="${LINK_DASH[status]}"` : '';
     const spot = labelSpots.get(edge.id);
     const label = edgeLabel(link, edge);
-    return `<polyline points="${points.map((p) => `${fmt(p.x)},${fmt(p.y)}`).join(' ')}" fill="none" stroke="${stroke}" stroke-width="${LINK_WIDTH[status] ?? 1}"${dash}/>`
+    return `<path d="${linkPath(points, route)}" fill="none" stroke="${stroke}" stroke-width="${LINK_WIDTH[status] ?? 1}" stroke-linejoin="round"${dash}/>`
       + (label && spot ? text(spot.x, spot.y, label, { size: 9, fill: status && status !== 'healthy' ? stroke : INK.muted, anchor: 'middle', halo: true }) : '');
   }).join('');
 

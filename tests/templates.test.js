@@ -4,7 +4,7 @@ import { cloneTopology } from '../public/data.js';
 import { calculateScenario, sweepSingleFaults } from '../public/engine.js';
 import { buildTemplate, templates } from '../public/templates.js';
 import { serializeProject } from '../public/project.js';
-import { NODE_REACH, formatNodePercent, placeLinkLabels } from '../public/node-view.js';
+import { cardBox, LINK_ROUTES, linkPath, NODE_REACH, formatNodePercent, placeLinkLabels, routeLink, segmentHitsBox } from '../public/node-view.js';
 
 // 화면이 "이 설계에서 확인할 것"으로 내보내는 문장이다. 계산이 실제로 그렇게 나오지 않으면
 // 도구가 스스로 틀린 말을 가르치게 된다. 그래서 문구에 적힌 숫자를 엔진과 대조한다.
@@ -248,4 +248,50 @@ test('consensus spends packets, not bytes', () => {
   const link = result.links.find(({ id }) => id === 'node-1-node-2');
   assert.equal(link.directions.forward.axes.forwarding_pps.load, link.directions.reverse.axes.forwarding_pps.load);
   assert.ok(link.directions.forward.axes.forwarding_bps.load > link.directions.reverse.axes.forwarding_bps.load * 10);
+});
+
+
+test('a bent line goes around the cards a straight one cuts through', () => {
+  const counted = { straight: 0, orthogonal: 0, curved: 0 };
+  let links = 0;
+  for (const { id } of templates) {
+    const topology = buildTemplate(id);
+    if (!topology.links.length) continue;
+    links += topology.links.length;
+    const boxes = new Map(topology.devices.map((device) => [device.id, cardBox(device.position)]));
+    const at = new Map(topology.devices.map((device) => [device.id, device.position]));
+    for (const link of topology.links) {
+      // 양 끝의 카드는 셈에서 뺀다. 자기 장비에서 나가는 선은 그 카드를 지날 수밖에 없다.
+      const obstacles = [...boxes].filter(([memberId]) => memberId !== link.source && memberId !== link.target).map(([, box]) => box);
+      for (const mode of LINK_ROUTES) {
+        const points = routeLink(at.get(link.source), at.get(link.target), obstacles, mode);
+        if (points.some((point, index) => index && obstacles.some((box) => segmentHitsBox(points[index - 1], point, box)))) counted[mode] += 1;
+      }
+    }
+  }
+  // 곧게 그으면 남의 카드를 뚫고 지나가는 선이 이만큼 있다. 굽히는 선택지가 있는 이유다.
+  assert.ok(counted.straight > 20, `직선이 카드를 지나는 링크가 ${counted.straight}개뿐이라 굽힐 이유를 못 보여 줍니다`);
+  assert.equal(counted.orthogonal, 0, `직각이 카드를 ${counted.orthogonal}개 링크에서 지납니다`);
+  assert.equal(counted.curved, 0, `곡선이 카드를 ${counted.curved}개 링크에서 지납니다`);
+  assert.ok(links > 200);
+});
+
+test('every route mode draws a path that starts and ends on the devices it joins', () => {
+  const from = { x: 0, y: 0 };
+  const to = { x: 400, y: 120 };
+  const wall = [{ left: 150, right: 250, top: -60, bottom: 60 }];
+  for (const mode of LINK_ROUTES) {
+    for (const obstacles of [[], wall]) {
+      const points = routeLink(from, to, obstacles, mode);
+      assert.deepEqual(points[0], from, `${mode}: 선은 출발 장비에서 시작해야 한다`);
+      assert.deepEqual(points.at(-1), to, `${mode}: 선은 도착 장비에서 끝나야 한다`);
+      const d = linkPath(points, mode);
+      assert.match(d, /^M 0 0/, `${mode}: 경로가 출발점에서 열려야 한다`);
+      // 좌표쌍이 명령 없이 이어지면 앞 곡선의 인자로 읽혀 길이 엉뚱한 곳으로 간다.
+      assert.doesNotMatch(d, /Q [-\d. ]+ Q/, `${mode}: 곡선 뒤에 명령 없는 좌표를 두면 경로가 깨진다`);
+    }
+  }
+  // 곧게 갈 수 있어도 곡선은 부풀린다. 겹쳐 지나는 두 선이 갈려 보이게 하는 것이 이 모드의 값이다.
+  assert.equal(routeLink(from, to, [], 'curved').length, 3);
+  assert.equal(routeLink(from, to, [], 'orthogonal').length, 2, '곧게 갈 수 있으면 직각은 굽히지 않는다');
 });
