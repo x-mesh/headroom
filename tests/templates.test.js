@@ -220,7 +220,7 @@ test('every link label the canvas draws is a label a person can actually read', 
 
 test('a four-node consensus cluster keeps its ledger while a quorum stands', () => {
   const topology = buildTemplate('raft-cluster');
-  const ledger = (options) => calculateScenario(topology, { scale: 1, ...options }).services.find(({ id }) => id === 'svc-ledger');
+  const ledger = (options) => calculateScenario(topology, { scale: 1, ...options }).services.find(({ id }) => id === 'svc-term');
   assert.equal(ledger({}).status, 'pass');
   // 팔로워 한 대는 잃어도 커밋이 이어진다. 넷의 정족수는 셋이다.
   assert.equal(ledger({ disabledDevices: ['node-3'] }).status, 'pass');
@@ -229,8 +229,10 @@ test('a four-node consensus cluster keeps its ledger while a quorum stands', () 
   assert.equal(ledger({ disabledDevices: ['node-3', 'node-4'] }).status, 'fail');
   // 리더가 멈추면 정족수가 살아 있어도 쓰기가 들어갈 곳이 없다. 재선출까지가 그 공백이다.
   const leaderDown = ledger({ disabledDevices: ['node-1'] });
+  // 리더를 잃어도 정족수는 셋으로 선다. 이 임기의 쓰기 경로만 끊기는 것이고, 그 구분이
+  // 수용 기준의 이름과 endpointGroups 에 나뉘어 있어야 클러스터가 죽었다고 읽히지 않는다.
   assert.equal(leaderDown.endpointGroups[0].available, 3, '리더를 잃어도 셋은 남는다');
-  assert.equal(leaderDown.status, 'fail', '정족수가 살아도 쓰기 경로가 없으면 원장은 멈춘다');
+  assert.equal(leaderDown.status, 'fail', '이 임기의 쓰기 경로는 리더와 함께 끊긴다');
 });
 
 test('consensus spends packets, not bytes', () => {
@@ -243,7 +245,7 @@ test('consensus spends packets, not bytes', () => {
   assert.ok(leader.axes.nic_pps.utilization > leader.axes.nic_bps.utilization * 2, '대역폭이 아니라 패킷이 먼저 차야 한다');
   assert.equal(result.summary.bindingResourceId, 'node-1');
   // 로그는 한쪽으로만 흐르는데 수락 응답은 보낸 것 하나에 하나씩이다. 바이트는 기울고 패킷은 같다.
-  const link = result.links.find(({ id }) => id === 'tor-node-2');
+  const link = result.links.find(({ id }) => id === 'node-1-node-2');
   assert.equal(link.directions.forward.axes.forwarding_pps.load, link.directions.reverse.axes.forwarding_pps.load);
   assert.ok(link.directions.forward.axes.forwarding_bps.load > link.directions.reverse.axes.forwarding_bps.load * 10);
 });
