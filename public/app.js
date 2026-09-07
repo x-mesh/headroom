@@ -239,7 +239,8 @@ function renderClassControl() {
       ${choices.map(([value, text]) => `<button type="button" data-${attribute}="${value}" aria-pressed="${current === value}">${escapeText(text)}</button>`).join('')}
     </div>`;
   element('class-control').innerHTML = group('배지', 'class-badge', classView.badge, [['off', '끔'], ['on', '켬']])
-    + group('떨림', 'number-motion', motionView.drift, [['off', '끔'], ['on', '켬']]);
+    + group('떨림', 'number-motion', motionView.drift, [['off', '끔'], ['on', '켬']])
+    + group('수치', 'node-detail', detailView.level, [['off', '없앰'], ['brief', '요약'], ['full', '전체']]);
 }
 
 // 데이터시트를 붙였는데 대조할 워크로드 조건이 없으면 모든 축이 미확인이 된다. 그 상태는
@@ -405,6 +406,16 @@ try {
 // 한다 - 원인이 있는 움직임이라 계산을 배신하지 않고, 오히려 무엇 때문에 바뀌었는지 보인다.
 // 떨림은 지어낸 값이다. 그래서 끄는 스위치를 늘 화면에 두고, 무엇이 떨리고 있는지 이름으로
 // 밝힌다 - 값을 적어야 하는 사람은 그것을 끄고 적는다.
+// 카드가 담는 축 정보의 양. 축 행 하나가 네 조각(토큰·이름·부하·백분율)을 담고, 그중 절반
+// 넘게가 병목이 아닌 축이다 - 병목은 노드마다 하나뿐이다. 줄이는 것은 보이는 것뿐이고 계산은
+// 그대로다. 어느 단에서도 미확인은 숨기지 않는다 - 지우면 안전으로 읽힌다.
+const DETAIL_LEVELS = new Set(['off', 'brief', 'full']);
+const detailView = { level: 'full' };
+try {
+  const saved = localStorage.getItem('rack-mesh-node-detail');
+  if (DETAIL_LEVELS.has(saved)) detailView.level = saved;
+} catch { /* 저장된 선택이 없으면 기본값을 쓴다 */ }
+
 const motionView = { drift: 'on' };
 try {
   const saved = localStorage.getItem('rack-mesh-number-motion');
@@ -425,7 +436,7 @@ function vendorBadge(device) {
   return '';
 }
 
-function nodeAxisRow(device, key, axis) {
+function nodeAxisRow(device, key, axis, brief = false) {
   // unknown·invalid 축에는 data-live-util을 붙이지 않는다. 텔레메트리가 미확인 값을 숫자로 덮어쓰면 안 된다.
   const live = axis.utilization == null ? '' : ` data-live-util="${axis.utilization}" data-live-seed="${escapeAttribute(device.id)}:${key}"`;
   // 사용률만 떨고 부하는 그대로면 한쪽만 살아 있는 것처럼 보인다. 한계를 몰라 사용률이
@@ -434,7 +445,10 @@ function nodeAxisRow(device, key, axis) {
   const percent = axis.status === 'unknown' ? '\u2014' : axis.status === 'invalid' ? 'ERR' : formatPercent(axis.utilization);
   // 막대 후보가 쓰는 값. unknown 축은 넘기지 않아 막대가 그려지지 않는다.
   const meter = axis.utilization == null ? '' : ` style="--util:${Math.min(axis.utilization, 1.5)}"`;
-  return `<span class="node-axis" data-axis-state="${axis.status}"${key === device.bindingAxis ? ' data-binding=""' : ''}${meter}><i>${STATE_TOKEN[axis.status] || '?'}</i><b>${escapeText(nodeAxisLabel(key))}</b><em${liveLoad}>${formatNodeValue(axis.load)}</em><s${live}>${percent}</s></span>`;
+  // 요약에서는 부하 값을 뗀다. 한계가 카드에 없어 그 숫자만으로는 여유를 알 수 없고, 옆의
+  // 백분율이 이미 답을 말한다. 막대는 남긴다 - 숫자를 지워도 길이는 상태를 말한다.
+  const load = brief ? '' : `<em${liveLoad}>${formatNodeValue(axis.load)}</em>`;
+  return `<span class="node-axis" data-axis-state="${axis.status}"${brief ? ' data-brief=""' : ''}${key === device.bindingAxis ? ' data-binding=""' : ''}${meter}><i>${STATE_TOKEN[axis.status] || '?'}</i><b>${escapeText(nodeAxisLabel(key))}</b>${load}<s${live}>${percent}</s></span>`;
 }
 
 // 축 토큰은 시각 축약이라 읽히면 소음이다. 접근 가능한 이름은 요약만 담고 흔들리는 값을 넣지 않는다.
@@ -771,15 +785,26 @@ function renderTopology() {
     const status = device.active ? device.primaryStatus : 'disabled';
     const pool = device.active ? poolNote(pools.get(device.id)) : '';
     const idle = device.active && !pool && !device.carriesDemand ? '트래픽 수요 없음' : '';
-    const { rows, hidden } = nodeAxes(device);
+    const { rows: allRows, hidden: allHidden } = nodeAxes(device);
+    // 요약은 병목 축만 남긴다. 화면 제목이 부르는 것이 그 축이다. 다만 미확인 축은 함께
+    // 남긴다 - 접어 두면 86% 옆에서 아는 값만 보이고 모르는 축이 있다는 사실이 사라져, 읽는
+    // 사람이 이 장비를 다 안다고 여긴다. 미확인은 대개 없거나 하나라 줄이 크게 늘지 않는다.
+    // 병목을 못 고르면 첫 줄을 남긴다 - 아무것도 안 보이면 노드가 빈 상자가 된다.
+    const brief = detailView.level === 'brief';
+    const keep = allRows.filter(([key, axis]) => key === device.bindingAxis || axis.status === 'unknown');
+    const rows = !brief ? allRows : (keep.length ? keep : allRows.slice(0, 1));
+    const hidden = detailView.level === 'full' ? allHidden : allHidden + (allRows.length - rows.length);
     const verdict = sweep.resources.find(({ id }) => id === device.id);
     // 이미 죽은 장비에 "이게 죽으면 끊긴다"와 숨긴 축 개수를 붙이는 것은 소음이다.
     const spof = device.active && !sweepStale() && verdict?.verdict === 'severs' && !verdict.endpoint;
     const meta = [device.kind.toUpperCase(), behaviorToken(device), zonePath(device.zone).at(-1) || device.zone,
-      spof ? 'SPOF' : '', device.active && hidden ? `+${hidden}` : ''].filter(Boolean).join(' \u00b7 ');
-    const axes = device.active
-      ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis)).join('')
-      : '<span class="node-axis" data-axis-state="disabled"><i>x</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>';
+      spof ? 'SPOF' : '',
+      // 없앰에서는 숨긴 개수를 말하지 않는다. 축 블록이 통째로 없어 +2 가 무엇의 2인지 알 수 없다.
+      device.active && hidden && detailView.level !== 'off' ? `+${hidden}` : ''].filter(Boolean).join(' \u00b7 ');
+    const axes = detailView.level === 'off' ? ''
+      : device.active
+        ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis, brief)).join('')
+        : '<span class="node-axis" data-axis-state="disabled"><i>x</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>';
     return `<button type="button" class="mesh-node ${status} ${state.selectedId === device.id ? 'selected' : ''} ${selectionHas('device', device.id) ? 'multi-selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x - viewport.minX}px;top:${device.position.y - viewport.minY}px" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
       <span class="node-symbol">${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}${classView.badge === 'on' ? `<span class="node-class-badge">${escapeText(kindInitial(device.kind))}</span>` : ''}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolFor(device.kind).id}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}${pool || idle ? `<span class="node-pool"${idle ? ' data-warn=""' : ''}>${escapeText(pool || idle)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
     </button>`;
@@ -1935,9 +1960,16 @@ element('class-control').addEventListener('click', (event) => {
     return;
   }
   const motion = event.target.closest('[data-number-motion]')?.dataset.numberMotion;
-  if (!motion) return;
-  motionView.drift = motion;
-  try { localStorage.setItem('rack-mesh-number-motion', motion); } catch { /* 저장이 막혀도 이번 세션은 바뀐다 */ }
+  if (motion) {
+    motionView.drift = motion;
+    try { localStorage.setItem('rack-mesh-number-motion', motion); } catch { /* 저장이 막혀도 이번 세션은 바뀐다 */ }
+    render();
+    return;
+  }
+  const detail = event.target.closest('[data-node-detail]')?.dataset.nodeDetail;
+  if (!detail || !DETAIL_LEVELS.has(detail)) return;
+  detailView.level = detail;
+  try { localStorage.setItem('rack-mesh-node-detail', detail); } catch { /* 저장이 막혀도 이번 세션은 바뀐다 */ }
   render();
 });
 document.querySelector('.mobile-fault-tray').addEventListener('click', (event) => {

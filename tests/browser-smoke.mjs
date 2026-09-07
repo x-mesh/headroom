@@ -232,6 +232,25 @@ async function verify(viewport, screenshot, interact = false) {
   assert.equal(paired.length, 4);
   for (const cell of paired) assert.equal(cell.series, cell.figure, `${cell.figure} 칸이 ${cell.series} 를 그립니다`);
 
+  // 카드가 담는 수치는 세 단으로 줄일 수 있다. 줄이는 것은 보이는 것뿐이고 계산은 그대로다.
+  // 다만 어느 단에서도 미확인은 숨기지 않는다 - 접어 두면 아는 값만 남아 다 안다고 읽힌다.
+  const detail = async (level) => {
+    await page.locator(`[data-node-detail="${level}"]`).click();
+    await page.waitForTimeout(150);
+    return page.evaluate(() => ({
+      rows: document.querySelectorAll('.node-axis').length,
+      unknown: [...document.querySelectorAll('.node-axis')].filter((row) => row.textContent.includes('—')).length,
+    }));
+  };
+  assert.equal(await page.locator('[data-node-detail="full"]').getAttribute('aria-pressed'), 'true', '기본은 전체다');
+  const full = await detail('full');
+  const brief = await detail('brief');
+  const off = await detail('off');
+  assert.ok(brief.rows < full.rows, `요약이 전체보다 줄어야 한다: ${brief.rows} / ${full.rows}`);
+  assert.equal(off.rows, 0, '없앰은 축 줄을 하나도 그리지 않는다');
+  assert.equal(brief.unknown, full.unknown, `요약이 미확인 축을 숨겼습니다: ${brief.unknown} / ${full.unknown}`);
+  await detail('full');
+
   assert.ok(await page.locator('.topology-group').count() > 0, 'zones must draw as group boxes');
   assert.ok(await page.locator('.topology-group[data-depth="2"]').count() > 0, 'a slash in a zone nests one box inside another');
   // 이름표는 선 위에 뜨지만 배경이 없으면 선이 글자 사이를 지난다. 상자는 글자를 실제로 재서
