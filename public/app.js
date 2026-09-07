@@ -2000,7 +2000,16 @@ element('node-layer').addEventListener('pointerdown', (event) => {
   // 두 번째 장비를 고르면 선택이 0이 되던 원인이다. 선택은 click 에 맡기고 드래그도 걸지 않는다.
   if (event.shiftKey || event.metaKey || event.ctrlKey) return;
   if (!state.selection.some((item) => item.type === 'device' && item.id === device.id)) selectElement('device', device.id);
-  dragState = { id: device.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, origin: { ...device.position }, initial: structuredClone(topology), selection: structuredClone(state.selection), button };
+  // 여럿을 고른 채 하나를 끌면 나머지도 같이 따라와야 한다. 놓는 순간에는 moveSelection 이
+  // 전부 옮기지만, 끄는 동안 잡은 것만 움직이면 나머지는 안 딸려온다고 읽히고 놓을 때 튄다.
+  // 그래서 함께 끌 노드의 시작 자리를 여기서 적어 두고, 미리보기는 그 자리에 델타만 더한다.
+  const dragging = new Map(state.selection
+    .filter((item) => item.type === 'device')
+    .map((item) => [item.id, topology.devices.find(({ id }) => id === item.id)?.position])
+    .filter(([, at]) => at)
+    .map(([id, at]) => [id, { ...at }]));
+  if (!dragging.has(device.id)) dragging.set(device.id, { ...device.position });
+  dragState = { id: device.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, origin: { ...device.position }, initial: structuredClone(topology), selection: structuredClone(state.selection), dragging, button };
   button.setPointerCapture(event.pointerId); button.classList.add('dragging');
 });
 element('node-layer').addEventListener('pointermove', (event) => {
@@ -2018,9 +2027,19 @@ element('node-layer').addEventListener('pointermove', (event) => {
     return;
   }
   if (!dragState || dragState.pointerId !== event.pointerId) return;
-  const position = { x: dragState.origin.x + (event.clientX - dragState.startX) / state.zoom, y: dragState.origin.y + (event.clientY - dragState.startY) / state.zoom };
-  const moved = moveDevice(topology, dragState.id, position);
+  const dx = (event.clientX - dragState.startX) / state.zoom;
+  const dy = (event.clientY - dragState.startY) / state.zoom;
+  // 잡은 것만 토폴로지에 반영한다. 놓을 때 moveSelection 이 그 델타로 나머지를 옮기므로,
+  // 여기서 전부 옮기면 같은 이동이 두 번 얹힌다. 나머지는 화면에서만 따라 움직인다.
+  const moved = moveDevice(topology, dragState.id, { x: dragState.origin.x + dx, y: dragState.origin.y + dy });
   dragState.button.style.left = `${moved.position.x - viewport.minX}px`; dragState.button.style.top = `${moved.position.y - viewport.minY}px`;
+  for (const [id, origin] of dragState.dragging) {
+    if (id === dragState.id) continue;
+    const node = document.querySelector(`[data-device-id="${CSS.escape(id)}"]`);
+    if (!node) continue;
+    node.style.left = `${origin.x + dx - viewport.minX}px`;
+    node.style.top = `${origin.y + dy - viewport.minY}px`;
+  }
   suppressNodeClick = Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY) > 4;
 });
 element('node-layer').addEventListener('pointerup', (event) => {

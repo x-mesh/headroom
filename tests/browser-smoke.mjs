@@ -265,6 +265,35 @@ async function verify(viewport, screenshot, interact = false) {
     assert.equal(await picked(), want, why);
   }
 
+  // 여럿을 고른 채 하나를 끌면 나머지도 같이 따라와야 한다. 놓는 순간에는 원래도 전부
+  // 옮겨졌지만, 끄는 동안 잡은 것만 움직여서 나머지는 안 딸려온다고 읽혔다.
+  const spots = () => page.evaluate(() => Object.fromEntries(['fw-a', 'fw-b', 'spine-a'].map((id) => {
+    const node = document.querySelector(`[data-device-id="${id}"]`);
+    return [id, [Math.round(parseFloat(node.style.left)), Math.round(parseFloat(node.style.top))]];
+  })));
+  await page.locator('[data-device-id="fw-a"]').click();
+  for (const id of ['fw-b', 'spine-a']) await page.locator(`[data-device-id="${id}"]`).click({ modifiers: ['Shift'] });
+  const startSpots = await spots();
+  const grab = await page.locator('[data-device-id="fw-a"]').boundingBox();
+  await page.mouse.move(grab.x + grab.width / 2, grab.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(grab.x + grab.width / 2 + 90, grab.y + 80, { steps: 10 });
+  const midSpots = await spots();
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  const endSpots = await spots();
+  const shift = (from, to, id) => [to[id][0] - from[id][0], to[id][1] - from[id][1]];
+  const led = shift(startSpots, midSpots, 'fw-a');
+  assert.ok(led[0] > 40, `끄는 동안 잡은 노드가 따라와야 한다: ${led}`);
+  for (const id of ['fw-b', 'spine-a']) {
+    assert.deepEqual(shift(startSpots, midSpots, id), led, `${id} 가 끄는 동안 함께 움직여야 한다`);
+    assert.deepEqual(shift(startSpots, endSpots, id), shift(startSpots, endSpots, 'fw-a'), `${id} 가 놓은 뒤에도 같은 만큼 옮겨져야 한다`);
+  }
+  // 뒤 검사는 노드가 제자리에 있는 것을 전제한다.
+  await page.keyboard.press('ControlOrMeta+z');
+  await page.waitForTimeout(150);
+  assert.deepEqual(await spots(), startSpots, '되돌리면 세 노드가 모두 제자리로 온다');
+
   assert.ok(await page.locator('.topology-group').count() > 0, 'zones must draw as group boxes');
   assert.ok(await page.locator('.topology-group[data-depth="2"]').count() > 0, 'a slash in a zone nests one box inside another');
   // 이름표는 선 위에 뜨지만 배경이 없으면 선이 글자 사이를 지난다. 상자는 글자를 실제로 재서
