@@ -16,23 +16,48 @@ const f5Source = {
   note: '*Maximum throughput. †ECDHE-ECDSA-AES128-SHA256 cipher string tested.',
 };
 
+// 이 표에서 조건이 구체적으로 적힌 것은 TLS 핸드셰이크의 키와 암호 스위트뿐이다. 처리량과
+// 연결 수립은 어느 계층에서 쟀는지만 밝히고 패킷 크기를 말하지 않으므로 그 축은 미확인으로
+// 남는다. 미확인의 이유를 적어 두는 것과 아무것도 적지 않는 것은 다르다 - 인스펙터가
+// "측정 조건 없음" 대신 무엇이 비어 있는지를 보인다.
+const BIGIP_CONDITIONS = Object.freeze({
+  l4: {
+    forwarding_bps: { test_method: 'l4', packet_size_bytes: 'unknown' },
+    new_sessions_per_sec: { test_method: 'l4', packet_size_bytes: 'not_applicable' },
+    concurrent_sessions: { test_method: 'l4', packet_size_bytes: 'not_applicable' },
+  },
+  l7: { forwarding_bps: { test_method: 'l7', packet_size_bytes: 'unknown' } },
+  'ssl-rsa': {
+    forwarding_bps: { test_method: 'bulk-crypto', packet_size_bytes: 'unknown', cipher: 'unknown' },
+    tls_full_handshakes_per_sec: { cipher: 'rsa-2048', packet_size_bytes: 'not_applicable' },
+  },
+  'ssl-ecc': {
+    // 벌크 처리량은 RSA 프로필과 같은 값이다. 어느 스위트로 쟀는지는 표가 말하지 않는다.
+    forwarding_bps: { test_method: 'bulk-crypto', packet_size_bytes: 'unknown', cipher: 'unknown' },
+    tls_full_handshakes_per_sec: { cipher: 'ECDHE-ECDSA-AES128-SHA256', packet_size_bytes: 'not_applicable' },
+  },
+});
+
 function bigip({ id, model, l4Bps, l7Bps, cps, sessions, bulkBps, rsaTps, eccTps }) {
   return {
-    id, vendor: 'F5', model, kind: 'lb', source: f5Source,
+    id, vendor: 'F5', model, kind: 'lb',
+    // 측정 조건을 구조로 옮기면 근거 digest 가 바뀐다. retrievedAt 은 데이터시트를 읽은 날이라
+    // 고칠 수 없으므로, 카탈로그의 판을 따로 적어 저장된 프로젝트가 어느 판에서 왔는지 남긴다.
+    revision: 'catalog-2026-09-07', source: f5Source,
     profiles: [
-      { id: 'l4', label: 'L4 부하분산',
+      { id: 'l4', axisConditions: BIGIP_CONDITIONS['l4'], label: 'L4 부하분산',
         note: '연결 수립과 동시 연결은 데이터시트가 L4 기준으로만 싣습니다. 이 프로필이 그 값입니다.',
         limits: { forwarding_bps: l4Bps, new_sessions_per_sec: cps, concurrent_sessions: sessions,
           tls_full_handshakes_per_sec: null, tls_resumed_handshakes_per_sec: null } },
-      { id: 'l7', label: 'L7 프록시',
+      { id: 'l7', axisConditions: BIGIP_CONDITIONS['l7'], label: 'L7 프록시',
         note: 'L7 처리량만 표에 있습니다. L7 로 프록시할 때의 초당 연결 수립은 데이터시트가 말하지 않으므로 미확인으로 둡니다.',
         limits: { forwarding_bps: l7Bps, new_sessions_per_sec: null, concurrent_sessions: null,
           tls_full_handshakes_per_sec: null, tls_resumed_handshakes_per_sec: null } },
-      { id: 'ssl-rsa', label: 'SSL 오프로드 · RSA 2K',
+      { id: 'ssl-rsa', axisConditions: BIGIP_CONDITIONS['ssl-rsa'], label: 'SSL 오프로드 · RSA 2K',
         note: '처리량은 벌크 암호화 값이고, TPS 는 RSA 2048비트 키의 신규 핸드셰이크입니다. 재개 핸드셰이크 수치는 데이터시트에 없습니다.',
         limits: { forwarding_bps: bulkBps, new_sessions_per_sec: null, concurrent_sessions: null,
           tls_full_handshakes_per_sec: rsaTps, tls_resumed_handshakes_per_sec: null } },
-      { id: 'ssl-ecc', label: 'SSL 오프로드 · ECDSA P-256',
+      { id: 'ssl-ecc', axisConditions: BIGIP_CONDITIONS['ssl-ecc'], label: 'SSL 오프로드 · ECDSA P-256',
         note: 'ECDHE-ECDSA-AES128-SHA256 로 시험한 값입니다. 같은 장비가 RSA 보다 적은 핸드셰이크를 감당합니다.',
         limits: { forwarding_bps: bulkBps, new_sessions_per_sec: null, concurrent_sessions: null,
           tls_full_handshakes_per_sec: eccTps, tls_resumed_handshakes_per_sec: null } },

@@ -15,7 +15,19 @@ const catalyst8300Source = {
   note: 'IMIX is average packet size of 352 Bytes packet size.',
 };
 
-const routerProfile = (id, label, bps, note) => ({ id, label, note, limits: { forwarding_bps: bps, forwarding_pps: null } });
+// 프로필 id 가 곧 측정 조건이다. 이 표는 패킷 크기와 켜 둔 기능을 함께 바꾸므로 그 둘을 구조로
+// 옮긴다. IMIX 의 352바이트는 데이터시트 각주가 밝힌 평균값이다. pps 는 표에 없어 레코드도 없다.
+const ROUTER_CONDITIONS = Object.freeze({
+  'ipv4-1400b': { packet_size_bytes: 1400, features_enabled: [] },
+  'ipsec-1400b': { packet_size_bytes: 1400, features_enabled: ['ipsec'] },
+  'ipsec-imix': { packet_size_bytes: 352, test_method: 'imix', features_enabled: ['ipsec'] },
+  'sdwan-iqdf-imix': { packet_size_bytes: 352, test_method: 'imix', features_enabled: ['dpi', 'fnf', 'ipsec', 'qos'] },
+});
+
+const routerProfile = (id, label, bps, note) => ({
+  id, label, note, limits: { forwarding_bps: bps, forwarding_pps: null },
+  axisConditions: { forwarding_bps: ROUTER_CONDITIONS[id] },
+});
 
 export const routerCatalog = Object.freeze([
   {
@@ -23,6 +35,9 @@ export const routerCatalog = Object.freeze([
     vendor: 'Cisco',
     model: 'Catalyst 8300-2N2S-4T2X',
     kind: 'router',
+    // 측정 조건을 구조로 옮기면 근거 digest 가 바뀐다. retrievedAt 은 데이터시트를 읽은 날이라
+    // 고칠 수 없으므로, 카탈로그의 판을 따로 적어 저장된 프로젝트가 어느 판에서 왔는지 남긴다.
+    revision: 'catalog-2026-09-07',
     source: catalyst8300Source,
     profiles: [
       routerProfile('ipv4-1400b', 'IPv4 포워딩 · 1400B', 19.7e9, '자율 모드의 순수 IPv4 포워딩입니다. 암호화도 검사도 없습니다.'),
@@ -37,6 +52,9 @@ export const routerCatalog = Object.freeze([
     vendor: 'Cisco',
     model: 'Catalyst 8300-1N1S-4T2X',
     kind: 'router',
+    // 측정 조건을 구조로 옮기면 근거 digest 가 바뀐다. retrievedAt 은 데이터시트를 읽은 날이라
+    // 고칠 수 없으므로, 카탈로그의 판을 따로 적어 저장된 프로젝트가 어느 판에서 왔는지 남긴다.
+    revision: 'catalog-2026-09-07',
     source: catalyst8300Source,
     profiles: [
       routerProfile('ipv4-1400b', 'IPv4 포워딩 · 1400B', 19.7e9, '자율 모드의 순수 IPv4 포워딩입니다.'),

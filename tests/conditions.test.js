@@ -62,10 +62,36 @@ test('reads the three condition values the schema allows', () => {
 
 test('gives the catalog enough structured conditions to judge against', () => {
   let withConditions = 0;
+  let judgeable = 0;
   for (const entry of deviceCatalog) for (const profile of entry.profiles) {
-    for (const record of buildSpec(entry, profile).records) if (record.conditions) withConditions += 1;
+    for (const record of buildSpec(entry, profile).records) {
+      if (!record.conditions) continue;
+      withConditions += 1;
+      // 조건에 'unknown' 이 하나라도 섞이면 어떤 워크로드를 적어도 applicable 이 되지 않는다.
+      // 조건을 적어 둔 것과 그 값을 실제로 쓸 수 있는 것은 다르다. 둘 다 센다.
+      if (record.value != null && record.evidenceKind !== 'unverified'
+        && !Object.values(record.conditions).some((value) => value === 'unknown')) judgeable += 1;
+    }
   }
-  assert.ok(withConditions >= 30, `조건을 가진 축 레코드가 ${withConditions}개뿐입니다.`);
+  assert.ok(withConditions >= 100, `조건을 가진 축 레코드가 ${withConditions}개뿐입니다.`);
+  assert.ok(judgeable >= 30, `워크로드로 판정할 수 있는 축 레코드가 ${judgeable}개뿐입니다.`);
+});
+
+test('lets a switch, a router, and a load balancer be judged, not just a firewall', () => {
+  // 방화벽만 조건을 갖고 있으면 카탈로그의 나머지는 값을 알면서도 계산에 쓰지 못한다.
+  // 클래스마다 최소 하나는 워크로드와 대조되어야 카탈로그가 계산 도구로 쓰인다.
+  const cases = [
+    ['cisco-catalyst-9300-48t', 'standalone', 'forwarding_pps', { packet_size_bytes: 64, traffic_rate_scope: 'unidirectional' }],
+    ['cisco-catalyst-8300-2n2s-4t2x', 'ipsec-1400b', 'forwarding_bps', { packet_size_bytes: 1400, features_enabled: ['ipsec'] }],
+    ['f5-big-ip-i5800', 'ssl-ecc', 'tls_full_handshakes_per_sec', { cipher: 'ECDHE-ECDSA-AES128-SHA256' }],
+    ['f5-big-ip-i5800', 'l4', 'concurrent_sessions', { test_method: 'l4' }],
+  ];
+  for (const [catalogId, profileId, axis, conditions] of cases) {
+    const entry = catalogEntry(catalogId);
+    const profile = entry.profiles.find(({ id }) => id === profileId);
+    const record = buildSpec(entry, profile).records.find((item) => item.axis === axis);
+    assert.equal(evidenceApplicability(record, conditions), 'applicable', `${catalogId}/${profileId}/${axis}`);
+  }
 });
 
 // ── P1-26 워크로드 조건 입력 ──────────────────────────────────────────────
