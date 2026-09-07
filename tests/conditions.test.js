@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cloneTopology } from '../src/data.js';
-import { acceptanceDigest, buildSpec, evidenceApplicability, normalizeEvidence } from '../src/evidence.js';
-import { acceptEvidence, applySpec, clearEvidenceAcceptance, setWorkloadConditions } from '../src/editor.js';
-import { calculateScenario } from '../src/engine.js';
-import { catalogEntry, deviceCatalog } from '../src/devices/catalog.js';
-import { serializeProject, validateProject } from '../src/project.js';
+import { cloneTopology } from '../public/data.js';
+import { acceptanceDigest, buildSpec, evidenceApplicability, normalizeEvidence } from '../public/evidence.js';
+import { acceptEvidence, applySpec, clearEvidenceAcceptance, setWorkloadConditions } from '../public/editor.js';
+import { calculateScenario } from '../public/engine.js';
+import { catalogEntry, deviceCatalog } from '../public/devices/catalog.js';
+import { serializeProject, validateProject } from '../public/project.js';
 
 const FORTIGATE = 'fortinet-fortigate-100f';
 const firewallOnly = { packet_size_bytes: 1518, transport: 'udp', features_enabled: [] };

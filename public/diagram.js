@@ -282,7 +282,7 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
 
   const edges = routes.map(({ edge, points }) => {
     const link = linkStatus.get(edge.id);
-    // 화면과 같은 판정을 쓴다(src/app.js renderTopology). 끊긴 링크는 DOWN 이고, 살아 있지만
+    // 화면과 같은 판정을 쓴다(public/app.js renderTopology). 끊긴 링크는 DOWN 이고, 살아 있지만
     // 이 트래픽이 지날 수 없는 링크는 따로 표시한다. 죽은 링크에 0% 를 적으면 한가한 것으로 읽힌다.
     const onSeveredPath = link && !link.severed && severed.has(edge.id);
     const status = !link ? null : link.severed ? 'disabled' : onSeveredPath ? 'severed-path' : link.primaryStatus;

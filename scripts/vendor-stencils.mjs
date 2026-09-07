@@ -8,8 +8,8 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const vendorDir = resolve(root, 'vendor/drawio-stencils');
 const repo = 'jgraph/drawio';
-const stencilPath = 'src/main/webapp/stencils/networks.xml';
-const licensePath = 'src/main/webapp/stencils/LICENSE';
+const stencilPath = 'public/main/webapp/stencils/networks.xml';
+const licensePath = 'public/main/webapp/stencils/LICENSE';
 
 export const SHAPES = [
   'Switch', 'Router', 'Firewall', 'Load Balancer', 'Server', 'Storage', 'Rack', 'Cloud',

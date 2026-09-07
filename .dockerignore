@@ -1,0 +1,4 @@
+# 이미지에 들어가는 것은 public/ 과 deploy/nginx.conf 뿐이다. 나머지는 빌드 문맥에서도 뺀다.
+*
+!public
+!deploy/nginx.conf

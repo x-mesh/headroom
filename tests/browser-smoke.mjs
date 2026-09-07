@@ -4,8 +4,8 @@ import { mkdir, readFile as readTextFile } from 'node:fs/promises';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { server } from '../scripts/serve.mjs';
-import { cloneTopology } from '../src/data.js';
-import { templates } from '../src/templates.js';
+import { cloneTopology } from '../public/data.js';
+import { templates } from '../public/templates.js';
 const templateCount = templates.length;
 
 await mkdir('.impeccable/review', { recursive: true });

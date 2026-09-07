@@ -1,4 +1,4 @@
-// simple-icons 에서 장비 제조사 마크만 골라 vendor/ 와 src/logos.js 로 가져온다.
+// simple-icons 에서 장비 제조사 마크만 골라 vendor/ 와 public/logos.js 로 가져온다.
 // 네트워크를 쓰는 두 스크립트 중 하나이며 수동 실행한다. 빌드와 앱은 산출물만 읽는다.
 //
 // 패키지는 CC0-1.0 이지만 마크 자체의 상표권은 각 소유자에게 있다. 식별 목적으로만 쓰고,
@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const vendorDir = resolve(root, 'vendor/brand-logos');
-const outputFile = resolve(root, 'src/logos.js');
+const outputFile = resolve(root, 'public/logos.js');
 const registry = 'https://cdn.jsdelivr.net/npm/simple-icons';
 
 // 이 도구가 다루는 장비를 만드는 회사들. 카탈로그에 없는 제조사는 약칭 배지로 남는다.
@@ -103,7 +103,7 @@ To remove a mark, delete its entry from \`VENDORS\` in \`scripts/vendor-logos.mj
 \`npm run logos:vendor\`. A device whose manufacturer has no mark shows a short text badge.
 `);
   await writeFile(outputFile, renderModule(icons, provenance));
-  console.log(`src/logos.js  ${icons.length} marks · simple-icons ${pkg.version}`);
+  console.log(`public/logos.js  ${icons.length} marks · simple-icons ${pkg.version}`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main().catch((error) => { console.error(error.message); process.exit(1); });

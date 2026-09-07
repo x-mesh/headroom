@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeEvidence, evidenceApplicability, evidenceDigest, buildSpec, validateEvidenceRecords } from '../src/evidence.js';
-import { deviceCatalog } from '../src/devices/catalog.js';
+import { normalizeEvidence, evidenceApplicability, evidenceDigest, buildSpec, validateEvidenceRecords } from '../public/evidence.js';
+import { deviceCatalog } from '../public/devices/catalog.js';
 
 test('SI normalization preserves the measurement and rejects mismatched units', () => {
   const record = normalizeEvidence({ axis: 'forwarding_bps', value: 2.5, unit: 'Gbps', conditions: { packet_size_bytes: 64 }, source: { type: 'datasheet' } });

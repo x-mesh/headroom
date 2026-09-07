@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cloneTopology } from '../src/data.js';
-import { calculateScenario, compareScenarios, deliveryRoleOf, sweepSingleFaults } from '../src/engine.js';
-import { addDemand, addDevice, addLink, createEmptyTopology } from '../src/editor.js';
-import { buildTemplate, templates } from '../src/templates.js';
+import { cloneTopology } from '../public/data.js';
+import { calculateScenario, compareScenarios, deliveryRoleOf, sweepSingleFaults } from '../public/engine.js';
+import { addDemand, addDevice, addLink, createEmptyTopology } from '../public/editor.js';
+import { buildTemplate, templates } from '../public/templates.js';
 
 test('splits demand evenly across active ECMP paths', () => {
   const result = calculateScenario(cloneTopology());
@@ -559,8 +559,8 @@ test('an unreachable demand keeps the path it would have taken', () => {
 });
 
 test('every catalog profile states axes the engine knows and numbers a datasheet could print', async () => {
-  const { catalogFor, deviceCatalog } = await import('../src/devices/catalog.js');
-  const { axisCatalog } = await import('../src/data.js');
+  const { catalogFor, deviceCatalog } = await import('../public/devices/catalog.js');
+  const { axisCatalog } = await import('../public/data.js');
   assert.ok(deviceCatalog.length >= 26, 'the catalog covers more than one manufacturer and more than one class');
   for (const kind of ['firewall', 'switch', 'router', 'lb', 'waf', 'server', 'nas', 'storage']) {
     assert.ok(catalogFor(kind).length > 0, `${kind} needs at least one catalog entry`);
@@ -596,7 +596,7 @@ test('every catalog profile states axes the engine knows and numbers a datasheet
 });
 
 test('a switch datasheet mixes two bases, and the profile says so', async () => {
-  const { catalogEntry } = await import('../src/devices/catalog.js');
+  const { catalogEntry } = await import('../public/devices/catalog.js');
   const entry = catalogEntry('cisco-catalyst-9300-48t');
   const standalone = entry.profiles.find(({ id }) => id === 'standalone');
   // 128 Gbps 단방향을 64바이트 프레임(프리앰블·IFG 포함 672비트)으로 나누면 190.5 Mpps 다.
@@ -608,7 +608,7 @@ test('a switch datasheet mixes two bases, and the profile says so', async () => 
 });
 
 test('a router datasheet turns features and packet size together', async () => {
-  const { catalogEntry } = await import('../src/devices/catalog.js');
+  const { catalogEntry } = await import('../public/devices/catalog.js');
   const entry = catalogEntry('cisco-catalyst-8300-2n2s-4t2x');
   const plain = entry.profiles.find(({ id }) => id === 'ipv4-1400b').limits.forwarding_bps;
   const loaded = entry.profiles.find(({ id }) => id === 'sdwan-iqdf-imix').limits.forwarding_bps;
@@ -618,7 +618,7 @@ test('a router datasheet turns features and packet size together', async () => {
 });
 
 test('an adapter derives its packet rate from line rate and says so', async () => {
-  const { catalogEntry, catalogFor } = await import('../src/devices/catalog.js');
+  const { catalogEntry, catalogFor } = await import('../public/devices/catalog.js');
   // 서버 스펙 시트는 NIC 처리량을 적지 않는다. 한계를 정하는 것은 꽂은 카드다.
   assert.ok(catalogFor('server').length > 0 && catalogFor('vm').length > 0, 'an adapter fits every endpoint class');
   const nic = catalogEntry('intel-e810-cqda2');
@@ -631,7 +631,7 @@ test('an adapter derives its packet rate from line rate and says so', async () =
 });
 
 test('a storage appliance carries its port count, not its IOPS', async () => {
-  const { catalogEntry } = await import('../src/devices/catalog.js');
+  const { catalogEntry } = await import('../public/devices/catalog.js');
   const nas = catalogEntry('synology-fs6400');
   const onboard = nas.profiles.find(({ id }) => id === 'onboard').limits;
   // 데이터시트의 외부 포트는 10GbE 2개와 1GbE 2개다.
@@ -643,7 +643,7 @@ test('a storage appliance carries its port count, not its IOPS', async () => {
 });
 
 test('a balancer datasheet changes layer, and the profiles keep that straight', async () => {
-  const { catalogEntry } = await import('../src/devices/catalog.js');
+  const { catalogEntry } = await import('../public/devices/catalog.js');
   const f5 = catalogEntry('f5-big-ip-i10800');
   const l4 = f5.profiles.find(({ id }) => id === 'l4').limits;
   const l7 = f5.profiles.find(({ id }) => id === 'l7').limits;

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { ICONS, ICON_EXTERNAL, ICON_FALLBACK, ICON_KINDS, ICON_SOURCE, ICON_SPRITE } from '../src/icons.js';
+import { ICONS, ICON_EXTERNAL, ICON_FALLBACK, ICON_KINDS, ICON_SOURCE, ICON_SPRITE } from '../public/icons.js';
 
-const appSource = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
+const appSource = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 
 test('covers every device kind offered by the editor with a fallback', () => {
   // 편집기가 내놓는 클래스 목록은 팔레트 하나뿐이다. 장비 추가 폼도 여기서 읽어 쓴다.
@@ -55,7 +55,7 @@ test('records upstream provenance', () => {
 });
 
 test('vendor marks resolve from a manufacturer string and stay optional', async () => {
-  const { VENDOR_LOGOS, VENDOR_LOGO_SOURCE, vendorLogoFor } = await import('../src/logos.js');
+  const { VENDOR_LOGOS, VENDOR_LOGO_SOURCE, vendorLogoFor } = await import('../public/logos.js');
   assert.ok(Object.keys(VENDOR_LOGOS).length >= 12, 'the catalog covers the manufacturers this tool draws');
   for (const [slug, mark] of Object.entries(VENDOR_LOGOS)) {
     assert.match(slug, /^[a-z0-9]+$/, `${slug} must be a normalized key`);
@@ -75,7 +75,7 @@ test('vendor marks resolve from a manufacturer string and stay optional', async 
 
 
 test('hand-drawn symbols meet the generated symbols on every rule', async () => {
-  const { GLYPHS, GLYPH_KINDS, GLYPH_SPRITE } = await import('../src/glyphs.js');
+  const { GLYPHS, GLYPH_KINDS, GLYPH_SPRITE } = await import('../public/glyphs.js');
   assert.ok(GLYPH_KINDS.length >= 1);
   for (const kind of GLYPH_KINDS) {
     const glyph = GLYPHS[kind];

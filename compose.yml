@@ -1,0 +1,12 @@
+# 운영. 이미지를 굽고 그 안의 것만 내보낸다. 호스트의 작업 트리를 보지 않는다.
+services:
+  rack-mesh:
+    build: .
+    image: rack-mesh:local
+    ports:
+      - "${RACK_MESH_PORT:-4173}:80"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run

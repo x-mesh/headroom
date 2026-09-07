@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { importDeviceDefinition } from '../src/device-import.js';
+import { importDeviceDefinition } from '../public/device-import.js';
 
 test('imports Rack Mesh performance limits with metadata', () => {
   const template = importDeviceDefinition({ performance_profile: { schema_version: 1, profile_id: 'fw-100', revision: 'r1', device_ref: { manufacturer: 'Acme', model: 'FW 100' }, class: 'firewall', limits: [{ axis: 'new_sessions_per_sec', value: 42000, source: { type: 'datasheet' }, conditions: { packet_size_bytes: 1518 } }] } });

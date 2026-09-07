@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateScenario } from '../src/engine.js';
+import { calculateScenario } from '../public/engine.js';
 
 function performanceFixture() {
   const devices = Array.from({ length: 200 }, (_, i) => ({ id: `n${i}`, kind: 'switch', limits: { forwarding_bps: 1e12, forwarding_pps: 1e10 } }));

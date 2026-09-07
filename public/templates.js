@@ -24,7 +24,7 @@ function place(topology, entries) {
 /**
  * 데이터시트 값은 카탈로그에서만 온다(PRD 8절: 엔진 코드에 벤더 데이터를 두지 않는다).
  * 템플릿에 숫자를 다시 적으면 두 곳이 갈라지고, records 의 digest 가 맞지 않아 프로젝트
- * 저장이 막힌다(src/project.js validateProject).
+ * 저장이 막힌다(public/project.js validateProject).
  */
 function equip(topology, id, [catalogId, profileId], accept = []) {
   const entry = catalogEntry(catalogId);

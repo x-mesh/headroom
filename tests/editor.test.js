@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cloneTopology } from '../src/data.js';
-import { addDemand, addDevice, addLink, createEmptyTopology, moveDevice, removeDemand, removeDevice, removeLink, updateDevice } from '../src/editor.js';
-import { calculateScenario, findShortestPaths } from '../src/engine.js';
+import { cloneTopology } from '../public/data.js';
+import { addDemand, addDevice, addLink, createEmptyTopology, moveDevice, removeDemand, removeDevice, removeLink, updateDevice } from '../public/editor.js';
+import { calculateScenario, findShortestPaths } from '../public/engine.js';
 
 test('creates, moves, and links devices with validated IDs', () => {
   const topology = createEmptyTopology();
@@ -70,8 +70,8 @@ test('a device carries its manufacturer and model, and rejects a logo that is no
 });
 
 test('a datasheet profile and a user correction both survive on the device', async () => {
-  const { applySpec, setLimitOverride } = await import('../src/editor.js');
-  const { catalogEntry, catalogProfile } = await import('../src/devices/catalog.js');
+  const { applySpec, setLimitOverride } = await import('../public/editor.js');
+  const { catalogEntry, catalogProfile } = await import('../public/devices/catalog.js');
   const entry = catalogEntry('fortinet-fortigate-100f');
   const profile = catalogProfile(entry.id, 'fw-1518');
   const topology = createEmptyTopology();

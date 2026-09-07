@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHistory } from '../src/history.js';
+import { createHistory } from '../public/history.js';
 
 test('history snapshots isolate mutations, retain a saved checkpoint and discard redo on a new edit', () => {
   const initial = { position: { x: 0 }, failed: ['a'] };

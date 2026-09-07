@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { addConnector, addShape, updateShape, removeDiagramElements, moveSelection, alignSelection, distributeSelection, copySelection, pasteSelection, groupSelection, ungroupSelection, exportDiagramSvg, importDrawio } from '../src/diagram.js';
-import { calculateScenario, sweepSingleFaults } from '../src/engine.js';
-import { nodeAxes } from '../src/node-view.js';
-import { buildTemplate } from '../src/templates.js';
+import { addConnector, addShape, updateShape, removeDiagramElements, moveSelection, alignSelection, distributeSelection, copySelection, pasteSelection, groupSelection, ungroupSelection, exportDiagramSvg, importDrawio } from '../public/diagram.js';
+import { calculateScenario, sweepSingleFaults } from '../public/engine.js';
+import { nodeAxes } from '../public/node-view.js';
+import { buildTemplate } from '../public/templates.js';
 
 const topology = () => ({ devices: [{ id: 'a', name: 'A', position: { x: 100, y: 100 }, spec: { limits: { nic_bps: 100 } } }, { id: 'b', name: 'B', position: { x: 300, y: 100 } }], links: [{ id: 'ab', source: 'a', target: 'b', capacityBps: 200, waypoints: [{ x: 150, y: 140 }] }], demands: [{ id: 'traffic', source: 'a', target: 'b' }] });
 const selection = [{ type: 'device', id: 'a' }, { type: 'device', id: 'b' }];

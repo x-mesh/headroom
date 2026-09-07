@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cloneTopology } from '../src/data.js';
-import { calculateScenario, sweepSingleFaults } from '../src/engine.js';
-import { buildTemplate, templates } from '../src/templates.js';
-import { serializeProject } from '../src/project.js';
-import { NODE_REACH, formatNodePercent, placeLinkLabels } from '../src/node-view.js';
+import { cloneTopology } from '../public/data.js';
+import { calculateScenario, sweepSingleFaults } from '../public/engine.js';
+import { buildTemplate, templates } from '../public/templates.js';
+import { serializeProject } from '../public/project.js';
+import { NODE_REACH, formatNodePercent, placeLinkLabels } from '../public/node-view.js';
 
 // 화면이 "이 설계에서 확인할 것"으로 내보내는 문장이다. 계산이 실제로 그렇게 나오지 않으면
 // 도구가 스스로 틀린 말을 가르치게 된다. 그래서 문구에 적힌 숫자를 엔진과 대조한다.

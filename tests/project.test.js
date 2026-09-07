@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cloneTopology } from '../src/data.js';
-import { calculateScenario } from '../src/engine.js';
-import { createProject, parseProject, serializeProject } from '../src/project.js';
+import { cloneTopology } from '../public/data.js';
+import { calculateScenario } from '../public/engine.js';
+import { createProject, parseProject, serializeProject } from '../public/project.js';
 
 test('round trips topology and scenario without changing calculation', () => {
   const topology = cloneTopology();

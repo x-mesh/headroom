@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateScenario, createExport, findShortestPaths, sweepSingleFaults } from '../src/engine.js';
-import { addDevice, addLink, removeDevice, removeLink, updateDemand, createEmptyTopology } from '../src/editor.js';
-import { normalizeEvidence } from '../src/evidence.js';
+import { calculateScenario, createExport, findShortestPaths, sweepSingleFaults } from '../public/engine.js';
+import { addDevice, addLink, removeDevice, removeLink, updateDemand, createEmptyTopology } from '../public/editor.js';
+import { normalizeEvidence } from '../public/evidence.js';
 
 function network() {
   return {

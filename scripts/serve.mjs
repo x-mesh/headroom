@@ -3,7 +3,9 @@ import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
+// 브라우저가 쓰는 것만 내준다. 예전에는 저장소 루트를 그대로 서빙해서 .git 과 node_modules,
+// 내부 문서까지 열려 있었다 - Makefile 의 기본 HOST 가 0.0.0.0 이라 같은 망 전체에 열렸다.
+const root = resolve(fileURLToPath(new URL('../public', import.meta.url)));
 const port = Number(process.env.RACK_MESH_PORT || process.argv[2] || 4173);
 const host = process.env.RACK_MESH_HOST || process.argv[3] || '127.0.0.1';
 const dev = process.env.RACK_MESH_DEV === '1';

@@ -1,0 +1,6 @@
+# 개발. docker compose up 이 이 파일을 자동으로 겹쳐 읽는다. 여기서만 public/ 을 마운트해
+# 고친 파일이 바로 보이게 한다. 운영은 이 파일을 빼고 실행한다: docker compose -f compose.yml up
+services:
+  rack-mesh:
+    volumes:
+      - ./public:/usr/share/nginx/html:ro

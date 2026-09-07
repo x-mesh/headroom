@@ -1,4 +1,4 @@
-// vendor/drawio-stencils/networks.subset.xml → src/icons.js
+// vendor/drawio-stencils/networks.subset.xml → public/icons.js
 // 네트워크를 쓰지 않는다. 서브셋을 가져오는 것은 scripts/vendor-stencils.mjs 의 일이다.
 //
 // mxGraph 스텐실은 명령형 캔버스다. 도형 명령(rect/roundrect/ellipse/path)이 대기 노드를
@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const subsetFile = resolve(root, 'vendor/drawio-stencils/networks.subset.xml');
 const provenanceFile = resolve(root, 'vendor/drawio-stencils/PROVENANCE.json');
-const outputFile = resolve(root, 'src/icons.js');
+const outputFile = resolve(root, 'public/icons.js');
 
 // 프로젝트의 kind 문자열 → drawio 도형명. rack/cloud 는 kind 가 아니라 폴백용이다.
 // 이 스텐실 계열은 서버 변종을 "같은 스택 + 작은 표식"으로 그린다. 우리 심볼 칸에서는 그
@@ -328,13 +328,13 @@ async function main() {
   const { source, icons } = await generate();
   if (process.argv.includes('--check')) {
     const current = await readFile(outputFile, 'utf8').catch(() => null);
-    if (current !== source) fail('src/icons.js가 최신이 아닙니다. `make icons`를 실행하세요.');
+    if (current !== source) fail('public/icons.js가 최신이 아닙니다. `make icons`를 실행하세요.');
     console.log(`icons ok · ${icons.length} symbols`);
     return;
   }
   await writeFile(outputFile, source);
   for (const icon of icons) console.log(`${icon.id.padEnd(14)} ${String(icon.width).padStart(5)}x${String(icon.height).padEnd(6)} ${String(icon.body.length).padStart(5)} bytes`);
-  console.log(`src/icons.js  ${Buffer.byteLength(source, 'utf8')} bytes`);
+  console.log(`public/icons.js  ${Buffer.byteLength(source, 'utf8')} bytes`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main().catch((error) => { console.error(error.message); process.exit(1); });
