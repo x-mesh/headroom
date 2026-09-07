@@ -1065,44 +1065,182 @@ function templateGrade(id) {
   return templateGrades.get(id);
 }
 
-// 안내는 처음 한 번 뜨고 마는 것이 아니어야 한다. 작업 사본을 복원하면 첫 화면 설명이
-// 함께 오지 않고, 사용자가 만든 설계에는 애초에 가르칠 것이 없다. 그래서 언제든 여는 문을 둔다.
-const GUIDE_STEPS = [
-  { action: 'scale', value: 1.4, label: '배율 1.40배로 올리기',
-    text: '워크로드를 올리면 어느 축이 먼저 한계를 넘는지 헤드라인이 순서를 말합니다.' },
-  { action: 'panel-failure', label: '장애 주입 열기',
-    text: '자원을 하나씩 끈 결과를 미리 계산해 둡니다. 끊는 것, 남은 쪽이 넘치는 것, 견디는 것으로 나뉩니다.' },
-  { action: 'workload', label: '워크로드 조건 적기',
-    text: '데이터시트 숫자는 특정 조건에서 잰 값입니다. 우리 트래픽 조건을 적어야 그 값을 이 설계에 쓸 수 있는지 판정합니다.' },
-];
-
-function openGuidePanel() {
-  const lesson = topology.template;
-  openEditorPanel('사용 안내', `<p class="editor-hint">이 도구는 장비 하나가 서로 독립인 한계를 여럿 갖는다고 봅니다. 방화벽은 대역폭이 한가해도 신규 세션에서 먼저 막힙니다. 계산이 답하는 질문은 <b>어느 축에 먼저 닿는가</b> 하나입니다.</p>
-    <div class="guide-block">
-      <h3>화면 읽는 법</h3>
-      <ul class="guide-tokens">
-        <li><i data-token="healthy">.</i> 정상</li>
-        <li><i data-token="warning">!</i> 주의 · 기본 80% 이상</li>
-        <li><i data-token="overloaded">&gt;</i> 용량 초과</li>
-        <li><i data-token="unknown">?</i> 한계 미확인</li>
-        <li><i data-token="invalid">x</i> 입력 오류 또는 꺼짐</li>
-      </ul>
-      <p class="guide-rule"><b>미확인은 0%가 아닙니다.</b> 한계를 모르는 축은 막대를 채우지 않고 백분율도 적지 않습니다. 모르는 것을 안전으로도 위험으로도 바꾸지 않습니다.</p>
-    </div>
-    <div class="guide-block">
-      <h3>지금 설계에서 확인할 것</h3>
-      ${lesson?.teaches
-        ? `<p>${escapeText(lesson.teaches)}</p>${lesson.experiment ? `<p class="guide-rule">${escapeText(lesson.experiment.prompt)}</p><div class="form-actions"><button type="button" data-guide-lesson>${escapeText(lesson.experiment.action.label)}</button></div>` : ''}`
-        : '<p>이 설계에는 붙어 있는 설명이 없습니다. 직접 만들었거나, 설명이 생기기 전에 저장한 작업 사본입니다.</p><div class="form-actions"><button type="button" data-guide-demo>데모 설계 다시 열기</button><button type="button" data-guide-templates>설계 템플릿 고르기</button></div>'}
-    </div>
-    <div class="guide-block">
-      <h3>해 볼 것</h3>
-      <ol class="guide-steps">${GUIDE_STEPS.map((step) => `<li><span>${escapeText(step.text)}</span>
-        <button type="button" data-guide-step="${escapeAttribute(step.action)}"${step.value ? ` data-guide-value="${step.value}"` : ''}>${escapeText(step.label)}</button></li>`).join('')}</ol>
-    </div>`);
+// 안내는 읽는 문서가 아니라 따라가는 흐름이다. 각 단계는 설명만 하지 않고 실제로 그 조작을
+// 해서 화면이 바뀌는 것을 보인다. 강조는 좌표가 아니라 이름 있는 영역에 건다 — 좌표에 못 박으면
+// 레이아웃이 바뀔 때마다 안내가 엉뚱한 곳을 가리킨다.
+// 안내가 못 박은 숫자를 말하면, 사용자가 만든 설계에서 열었을 때 틀린 말을 하게 된다.
+// 그래서 각 단계는 지금 화면의 계산에서 대상과 숫자를 고른다. 고를 것이 없으면 그 사실을 말한다.
+function tourTargets() {
+  const actives = current.devices.filter(({ active }) => active);
+  const known = (device) => Object.entries(device.axes).filter(([, axis]) => axis.utilization != null);
+  // 축이 서로 가장 크게 갈리는 장비. "한 장비가 한계를 여럿 갖는다"를 가장 잘 보이는 자리다.
+  const spread = actives
+    .map((device) => {
+      const values = known(device);
+      if (values.length < 2) return null;
+      const sorted = [...values].sort((a, b) => b[1].utilization - a[1].utilization);
+      return { device, high: sorted[0], low: sorted.at(-1), gap: sorted[0][1].utilization - sorted.at(-1)[1].utilization };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.gap - a.gap)[0] || null;
+  const rank = { overloads: 0, severs: 1, absorbs: 2 };
+  const fault = sweep.resources
+    .filter((item) => !item.endpoint && item.verdict !== 'unknown' && current.devices.some(({ id }) => id === item.id))
+    .sort((a, b) => (rank[a.verdict] ?? 9) - (rank[b.verdict] ?? 9))[0] || null;
+  const rung = current.summary.overloadedCount > 0 ? null : current.summary.growthLadder?.rungs?.[0] || null;
+  return { spread, fault, rung };
 }
 
+const TOUR_STEPS = [
+  {
+    title: '지금 보고 있는 것',
+    region: '.summary-strip',
+    text: () => {
+      const { summary } = current;
+      const binding = summary.bindingResourceId ? resourceName(resourceById(summary.bindingResourceId)) : null;
+      return binding
+        ? `위 줄의 최소 headroom 이 이 설계에서 가장 빠듯한 축의 남은 여유입니다. 지금은 ${withParticle(binding, 'subject')} 가장 빠듯합니다. 옆의 세 칸은 과부하 자원, 전달 실패, 활성 장애 수입니다.`
+        : '위 줄이 이 설계의 요약입니다. 아직 한계를 아는 축이 없어 최소 headroom 을 계산하지 못합니다.';
+    },
+    run: () => { setLeftPanel('failure'); },
+  },
+  {
+    title: '한 장비가 한계를 여럿 갖습니다',
+    region: '.inspector-panel',
+    text: ({ spread }) => {
+      if (!spread) return '오른쪽 검사기가 고른 자원의 축을 모두 보여 줍니다. 지금 설계에는 한계를 아는 축이 둘 이상인 장비가 없어 비교할 것이 없습니다.';
+      const low = `${axisCatalog[spread.low[0]]?.label || spread.low[0]} ${formatPercent(spread.low[1].utilization)}`;
+      const high = `${axisCatalog[spread.high[0]]?.label || spread.high[0]} ${formatPercent(spread.high[1].utilization)}`;
+      return `${withParticle(resourceName(spread.device), 'object')} 골랐습니다. 오른쪽 검사기를 보면 ${low} 인데 ${high} 입니다. 같은 장비인데 축마다 다릅니다. 이 도구가 하는 일은 그중 어느 축에 먼저 닿는지 계산하는 것입니다.`;
+    },
+    run: ({ spread }) => {
+      if (!spread) return;
+      state.selectedId = spread.device.id;
+      state.selection = [{ type: 'device', id: spread.device.id }];
+    },
+  },
+  {
+    title: '막대를 끌면 용량이 정해집니다',
+    region: '.inspector-panel',
+    text: () => '축 막대는 읽기만 하는 그림이 아닙니다. 좌우로 끌면 그 축을 몇 %에 두겠다는 목표가 정해지고, 거기서 나온 한계값이 저장됩니다. 방향키로도 됩니다. 데이터시트를 붙인 장비에서는 보정으로 기록되고 원본은 그대로 남습니다.',
+  },
+  {
+    title: '어느 축에 먼저 닿는지',
+    region: '.topology-heading',
+    text: ({ rung }) => (rung
+      ? `캔버스 제목이 병목 자원과 축을 말하고, 그 아래 줄이 몇 배에서 넘는지 알려 줍니다. 지금 설계는 ${rung.breachScale.toFixed(2)}배에서 ${resourceName(resourceById(rung.resourceId)) || rung.resourceId} 의 ${withParticle(axisCatalog[rung.axis]?.label || rung.axis, 'subject')} 먼저 넘습니다. 배율을 그 지점 너머로 올렸습니다 — 제목이 바뀌었는지 보세요.`
+      : '캔버스 제목이 병목 자원과 축을 말합니다. 지금 설계는 이미 넘은 축이 있어 성장 배율을 말하지 않습니다.'),
+    run: ({ rung }) => {
+      if (!rung) return;
+      state.scale = Math.min(1.8, Math.round((rung.breachScale + 0.05) * 20) / 20);
+      element('scale-input').value = String(Math.round(state.scale * 100));
+    },
+  },
+  {
+    title: '하나를 끄면 남은 쪽이 받아냅니다',
+    region: '#failure-list',
+    text: ({ fault }) => {
+      const tail = '왼쪽 목록은 자원을 하나씩 끈 결과를 미리 계산해 둔 것입니다 — 끊는 것, 남은 쪽이 넘치는 것, 견디는 것으로 나뉩니다.';
+      if (!fault) return `끌 자원이 아직 없습니다. ${tail}`;
+      const name = resourceName(resourceById(fault.id)) || fault.id;
+      const verdict = fault.verdict === 'severs' ? '트래픽이 끊깁니다'
+        : fault.verdict === 'overloads' ? '남은 쪽이 한계를 넘습니다' : '남은 쪽이 받아냅니다';
+      return `${withParticle(name, 'object')} 껐습니다. ${verdict}. ${tail}`;
+    },
+    run: ({ fault }) => {
+      state.scale = 1; element('scale-input').value = '100';
+      if (fault) state.disabledDevices.add(fault.id);
+      setLeftPanel('failure');
+    },
+  },
+  {
+    title: '미확인은 0%가 아닙니다',
+    region: '.scenario-legend',
+    text: () => '노드의 축 앞에 붙는 토큰이 상태입니다. 정상은 마침표, 주의는 느낌표, 초과는 부등호, 미확인은 물음표, 오류와 꺼짐은 x 입니다. 한계를 모르는 축은 막대를 채우지 않고 백분율도 적지 않습니다. 모르는 것을 안전으로도 위험으로도 바꾸지 않습니다.',
+
+  },
+  {
+    title: '숫자에는 조건이 붙습니다',
+    region: '.inspector-panel',
+    text: () => '데이터시트 값은 특정 조건에서 잰 숫자입니다. 20 Gbps 가 1518바이트 UDP 기준이고, 위협 방어를 켜면 같은 장비가 1 Gbps 입니다. 그래서 장비를 붙이면 우리 트래픽 조건을 적어야 그 값을 이 설계에 쓸 수 있는지 판정합니다. 노드를 오른쪽 클릭하면 조건째로 고를 수 있습니다.',
+  },
+  {
+    // 마무리에는 가리킬 곳이 없다. 화면 전체를 감싸면 상자가 그 위에 얹혀 안내가 아니라 방해가 된다.
+    title: '다 됐습니다',
+    region: null,
+    text: () => '설계는 안내를 시작하기 전으로 되돌렸습니다. 캔버스 아래 줄이 지금 무엇이 막고 있는지 계속 말해 줍니다. 이 안내는 헤더의 사용 안내로 언제든 다시 열 수 있습니다.',
+  },
+];
+
+let tour = null;
+
+function startTour() {
+  closeEditorPanel();
+  // 안내가 바꾸는 것은 시나리오 상태뿐이라 그대로 되돌릴 수 있다. 설계 자체는 건드리지 않는다.
+  tour = {
+    index: 0,
+    restore: { scale: state.scale, devices: [...state.disabledDevices], links: [...state.disabledLinks],
+      selectedId: state.selectedId, leftPanel: state.leftPanel },
+  };
+  runTourStep(0);
+}
+
+function endTour() {
+  if (!tour) return;
+  const { restore } = tour;
+  tour = null;
+  state.scale = restore.scale; element('scale-input').value = String(restore.scale * 100);
+  state.disabledDevices = new Set(restore.devices); state.disabledLinks = new Set(restore.links);
+  state.selectedId = restore.selectedId;
+  state.selection = restore.selectedId ? [{ type: 'device', id: restore.selectedId }] : [];
+  setLeftPanel(restore.leftPanel);
+  document.querySelectorAll('.tour-highlight').forEach((node) => node.classList.remove('tour-highlight'));
+  element('tour').hidden = true; element('tour').innerHTML = '';
+  recalculate();
+}
+
+function runTourStep(index) {
+  if (!tour) return;
+  if (index < 0 || index >= TOUR_STEPS.length) { endTour(); return; }
+  tour.index = index;
+  const step = TOUR_STEPS[index];
+  // 단계마다 시나리오 상태를 시작 시점으로 되돌린 뒤 그 단계가 할 일만 한다. 그래야 '이전'으로
+  // 오갔을 때 앞 단계가 남긴 장애나 배율이 쌓이지 않는다. 마지막 단계는 되돌린 화면 그대로다.
+  state.scale = tour.restore.scale; element('scale-input').value = String(Math.round(tour.restore.scale * 100));
+  state.disabledDevices = new Set(tour.restore.devices);
+  state.disabledLinks = new Set(tour.restore.links);
+  current = calculateScenario(topology, scenarioOptions());
+  sweep = sweepSingleFaults(topology, { scale: state.scale }); sweepScale = state.scale;
+  const targets = tourTargets();
+  step.run?.(targets);
+  recalculate();
+  document.querySelectorAll('.tour-highlight').forEach((node) => node.classList.remove('tour-highlight'));
+  // 좁은 화면에서는 접혀 사라지는 영역이 있다. 그때는 강조하지 않는다 — 없는 곳을 가리키지 않는다.
+  const region = step.region ? document.querySelector(step.region) : null;
+  const rect = region?.getBoundingClientRect();
+  const visible = Boolean(rect && rect.width > 8 && rect.height > 8);
+  if (visible) region.classList.add('tour-highlight');
+  const box = element('tour');
+  box.hidden = false;
+  // 가리키는 곳을 상자가 덮으면 안내가 아니라 방해다. 강조한 영역 반대편으로 비킨다.
+  box.dataset.side = visible && rect.left > window.innerWidth / 2 ? 'left' : 'right';
+  box.innerHTML = `<p class="tour-count">${index + 1} / ${TOUR_STEPS.length}</p>
+    <h2 id="tour-title">${escapeText(step.title)}</h2>
+    <p class="tour-text">${escapeText(step.text(targets))}</p>
+    <div class="tour-actions">
+      <button type="button" data-tour="skip">건너뛰기</button>
+      <button type="button" data-tour="prev"${index === 0 ? ' disabled' : ''}>이전</button>
+      <button type="button" data-tour="next">${index === TOUR_STEPS.length - 1 ? '닫기' : '다음'}</button>
+    </div>`;
+  box.querySelector('[data-tour="next"]').focus();
+  // 가운데로 올려야 아래에 붙은 상자 위로 보인다. nearest 는 화면 밖에 둔 채로 끝난다.
+  if (visible) region.scrollIntoView({ block: 'center', behavior: reducedMotion.matches ? 'auto' : 'smooth' });
+}
+
+// 안내는 처음 한 번 뜨고 마는 것이 아니어야 한다. 작업 사본을 복원하면 첫 화면 설명이
+// 함께 오지 않고, 사용자가 만든 설계에는 애초에 가르칠 것이 없다. 그래서 언제든 여는 문을 둔다.
+// 안내는 처음 한 번 뜨고 마는 것이 아니어야 한다. 작업 사본을 복원하면 첫 화면 설명이
+// 함께 오지 않고, 사용자가 만든 설계에는 애초에 가르칠 것이 없다. 그래서 언제든 여는 문을 둔다.
 function openTemplatePicker() {
   const cards = templates.map((item) => {
     const grade = templateGrade(item.id);
@@ -1672,7 +1810,19 @@ element('link-layer').addEventListener('keydown', (event) => {
   if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.target.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
 });
 element('capture-baseline-button').addEventListener('click', captureBaseline);
-element('guide-button').addEventListener('click', openGuidePanel);
+element('guide-button').addEventListener('click', startTour);
+element('tour').addEventListener('click', (event) => {
+  const action = event.target.closest('[data-tour]')?.dataset.tour;
+  if (!action || !tour) return;
+  if (action === 'skip') { endTour(); return; }
+  runTourStep(tour.index + (action === 'next' ? 1 : -1));
+});
+document.addEventListener('keydown', (event) => {
+  if (!tour) return;
+  if (event.key === 'Escape') { event.preventDefault(); endTour(); }
+  if (event.key === 'ArrowRight') { event.preventDefault(); runTourStep(tour.index + 1); }
+  if (event.key === 'ArrowLeft') { event.preventDefault(); runTourStep(tour.index - 1); }
+});
 element('reset-button').addEventListener('click', () => { state.disabledDevices.clear(); state.disabledLinks.clear(); state.disabledDomains.clear(); state.scale = 1; element('scale-input').value = '100'; showToast('장애와 배율을 초기화했습니다.'); recalculate(); });
 element('export-button').addEventListener('click', exportResult);
 document.querySelector('.editor-tools').addEventListener('click', (event) => { const button = event.target.closest('[data-editor-action]'); if (button) handleEditorAction(button.dataset.editorAction); });
@@ -1854,26 +2004,6 @@ element('inspector-content').addEventListener('click', (event) => {
 });
 
 element('editor-panel-content').addEventListener('click', (event) => {
-  const step = event.target.closest('[data-guide-step]');
-  if (step) {
-    const { guideStep, guideValue } = step.dataset;
-    closeEditorPanel();
-    if (guideStep === 'scale') { state.scale = Number(guideValue); element('scale-input').value = String(state.scale * 100); recalculate(); }
-    if (guideStep === 'panel-failure') { setLeftPanel('failure'); }
-    if (guideStep === 'workload') openWorkloadForm();
-    return;
-  }
-  if (event.target.closest('[data-guide-lesson]')) {
-    const { action } = topology.template.experiment;
-    closeEditorPanel();
-    lessonRevealed = true;
-    if (action.type === 'fault-device') { state.disabledDevices.add(action.id); setLeftPanel('failure'); recalculate(); }
-    if (action.type === 'fault-link') { state.disabledLinks.add(action.id); setLeftPanel('failure'); recalculate(); }
-    if (action.type === 'scale') { state.scale = Number(action.value); element('scale-input').value = String(state.scale * 100); recalculate(); }
-    return;
-  }
-  if (event.target.closest('[data-guide-demo]')) { loadTopology(cloneTopology(), '데모 설계를 다시 열었습니다.'); return; }
-  if (event.target.closest('[data-guide-templates]')) { openTemplatePicker(); return; }
   const choice = event.target.closest('[data-swap-catalog]');
   const detach = event.target.closest('[data-swap-detach]');
   if (choice || detach) {

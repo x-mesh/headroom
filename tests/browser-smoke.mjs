@@ -275,14 +275,47 @@ async function verify(viewport, screenshot, interact = false) {
 
   // 안내는 언제든 다시 열 수 있어야 한다. 작업 사본을 복원하면 첫 화면 설명이 함께 오지 않고,
   // 사용자가 만든 설계에는 애초에 가르칠 것이 없다.
+  const beforeTour = await page.evaluate(() => ({
+    scale: document.querySelector('#scale-input').value, faults: document.querySelector('#summary-faults').textContent,
+  }));
   await page.locator('#guide-button').click();
-  await page.waitForFunction(() => document.querySelector('.guide-tokens'));
-  assert.match(await page.locator('.guide-rule').first().textContent(), /미확인은 0%가 아닙니다/,
-    'the guide must state the one rule a newcomer gets wrong');
-  assert.equal(await page.locator('[data-guide-step]').count(), 3, 'the guide must offer things that actually run');
-  await page.locator('[data-guide-step="workload"]').click();
-  await page.waitForFunction(() => document.querySelector('[data-editor-form="workload"]'));
-  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('#tour')?.hidden === false);
+  assert.match(await page.locator('.tour-count').textContent(), /^1 \/ \d+$/);
+  const tourTexts = [];
+  for (let step = 1; ; step += 1) {
+    tourTexts.push(await page.locator('.tour-text').textContent());
+    // 부드러운 스크롤이 끝나야 자리가 정해진다. 멈춘 뒤에 잰다.
+    await page.waitForFunction(() => {
+      const spot = document.querySelector('.tour-highlight');
+      if (!spot) return true;
+      const top = Math.round(spot.getBoundingClientRect().top);
+      const settled = window.__tourSettle === top;
+      window.__tourSettle = top;
+      return settled;
+    }, null, { polling: 120 });
+    // 안내가 가리키는 곳은 상자가 덮지 않아야 한다. 덮으면 안내가 아니라 방해다.
+    assert.equal(await page.evaluate(() => {
+      const box = document.querySelector('#tour').getBoundingClientRect();
+      const spot = document.querySelector('.tour-highlight')?.getBoundingClientRect();
+      if (!spot) return true;
+      return Math.min(spot.bottom, box.top, window.innerHeight) - Math.max(spot.top, 0) > 8;
+    }), true, `${step}단계에서 강조한 영역이 상자에 가렸습니다.`);
+    const last = await page.locator('[data-tour="next"]').textContent() === '닫기';
+    await page.locator('[data-tour="next"]').click();
+    if (last) break;
+    await page.waitForFunction((previous) => document.querySelector('.tour-text')?.textContent !== previous, tourTexts.at(-1));
+  }
+  assert.ok(tourTexts.length >= 6, `단계가 ${tourTexts.length}개뿐입니다.`);
+  // 안내는 지금 설계에서 계산한 값으로 말한다. 못 박은 숫자면 다른 설계에서 틀린 말이 된다.
+  assert.match(tourTexts.join(' '), /1\.\d\d배에서/, 'the tour must read the breach scale off the live calculation');
+  assert.match(tourTexts.join(' '), /미확인은 0%가 아닙니다|한계를 모르는 축은 막대를 채우지 않고/,
+    'the tour must state the one rule a newcomer gets wrong');
+  // 안내가 만진 것은 시나리오 상태뿐이고, 끝나면 그대로 돌아와야 한다.
+  await page.waitForFunction(() => document.querySelector('#tour')?.hidden === true);
+  assert.deepEqual(await page.evaluate(() => ({
+    scale: document.querySelector('#scale-input').value, faults: document.querySelector('#summary-faults').textContent,
+  })), beforeTour, 'the tour must put the design back where it found it');
+  assert.equal(await page.locator('.tour-highlight').count(), 0);
 
   // 처음 오는 사람이 보는 화면에도 설명이 있어야 한다. 답은 실험을 누른 뒤에 편다.
   assert.match(await page.locator('#learning-panel').textContent(), /독립인 한계를 여럿/, 'the first screen must state what the tool claims');
