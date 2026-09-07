@@ -273,6 +273,17 @@ async function verify(viewport, screenshot, interact = false) {
   await page.locator('[data-editor-action="undo"]').click();
   await page.waitForFunction((before) => document.querySelector('[data-axis-limit]')?.textContent === before, limitBefore);
 
+  // 안내는 언제든 다시 열 수 있어야 한다. 작업 사본을 복원하면 첫 화면 설명이 함께 오지 않고,
+  // 사용자가 만든 설계에는 애초에 가르칠 것이 없다.
+  await page.locator('#guide-button').click();
+  await page.waitForFunction(() => document.querySelector('.guide-tokens'));
+  assert.match(await page.locator('.guide-rule').first().textContent(), /미확인은 0%가 아닙니다/,
+    'the guide must state the one rule a newcomer gets wrong');
+  assert.equal(await page.locator('[data-guide-step]').count(), 3, 'the guide must offer things that actually run');
+  await page.locator('[data-guide-step="workload"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-editor-form="workload"]'));
+  await page.keyboard.press('Escape');
+
   // 처음 오는 사람이 보는 화면에도 설명이 있어야 한다. 답은 실험을 누른 뒤에 편다.
   assert.match(await page.locator('#learning-panel').textContent(), /독립인 한계를 여럿/, 'the first screen must state what the tool claims');
   assert.equal(await page.locator('#learning-panel output').isHidden(), true, 'the answer must not sit beside the question');

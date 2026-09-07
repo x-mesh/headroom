@@ -353,6 +353,24 @@ button { color: inherit; }
 .learning-panel output { display: block; margin-top: 5px; color: var(--muted); }
 /* display:block 이 [hidden] 을 이긴다. 답을 감추려면 여기서 다시 눌러야 한다. */
 .learning-panel output[hidden] { display: none; }
+
+/* 사용 안내. 읽는 문서라 캔버스 어휘를 그대로 쓴다 — 토큰과 규칙을 화면과 같은 모양으로 보인다. */
+.guide-block { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line-soft); }
+.guide-block h3 { margin: 0 0 10px; font: 600 13px/1.3 var(--font-ui); }
+.guide-block p { margin: 0 0 8px; max-width: 68ch; color: var(--text); font: 400 12px/1.65 var(--font-ui); }
+.guide-tokens { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 0 0 12px; padding: 0; list-style: none; font: 500 11px/1.6 var(--font-data); color: var(--muted); }
+.guide-tokens i { display: inline-block; width: 1.6ch; margin-right: 5px; font-style: normal; font-weight: 700; text-align: center; }
+.guide-tokens i[data-token="healthy"] { color: var(--cyan); }
+.guide-tokens i[data-token="warning"] { color: var(--amber); }
+.guide-tokens i[data-token="overloaded"], .guide-tokens i[data-token="invalid"] { color: var(--danger); }
+.guide-tokens i[data-token="unknown"] { color: var(--unknown); }
+.guide-rule { padding: 10px 12px; border-left: 2px solid var(--signal-deep); background: var(--surface); }
+.guide-steps { margin: 0; padding-left: 20px; display: grid; gap: 12px; }
+.guide-steps li { font: 400 12px/1.6 var(--font-ui); }
+.guide-steps li::marker { color: var(--muted); font-weight: 700; }
+.guide-steps span { display: block; max-width: 64ch; }
+.guide-steps button, .guide-block .form-actions button { min-height: 32px; margin-top: 6px; padding: 0 12px; border: 1px solid var(--line); background: var(--surface-raised); color: var(--text); font: 600 11px/1 var(--font-ui); cursor: pointer; }
+.guide-steps button:hover, .guide-block .form-actions button:hover { border-color: var(--signal-deep); color: var(--signal-deep); }
 .evidence-state { display: block; margin-top: 4px; color: var(--text); font-family: var(--font-data); }
 .bottleneck-note { margin: 0; color: var(--text); font: 500 11px/1.5 var(--font-ui); }
 #calculation-note { flex: none; }
@@ -456,7 +474,9 @@ button { color: inherit; }
 @media (max-width: 760px) {
   .topbar { grid-template-columns: 1fr auto; padding: 12px 14px; }
   .run-state { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; min-width: 0; }
-  .top-actions .text-button { display: none; }
+  /* 좁은 화면에서 헤더 동작은 접는다. 안내만 남긴다 — 처음 오는 사람이 가장 필요로 하는 문이다. */
+  .top-actions .text-button:not(#guide-button) { display: none; }
+  #guide-button { padding-inline: 10px; }
   .brand span { display: none; }
   .control-deck { grid-template-columns: 1fr; gap: 16px; padding: 16px 14px; }
   .editor-deck { padding: 7px 14px; align-items: flex-start; flex-direction: column; }.editor-tools { width: 100%; }.editor-mode { min-height: 24px; }

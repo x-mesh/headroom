@@ -1065,6 +1065,44 @@ function templateGrade(id) {
   return templateGrades.get(id);
 }
 
+// 안내는 처음 한 번 뜨고 마는 것이 아니어야 한다. 작업 사본을 복원하면 첫 화면 설명이
+// 함께 오지 않고, 사용자가 만든 설계에는 애초에 가르칠 것이 없다. 그래서 언제든 여는 문을 둔다.
+const GUIDE_STEPS = [
+  { action: 'scale', value: 1.4, label: '배율 1.40배로 올리기',
+    text: '워크로드를 올리면 어느 축이 먼저 한계를 넘는지 헤드라인이 순서를 말합니다.' },
+  { action: 'panel-failure', label: '장애 주입 열기',
+    text: '자원을 하나씩 끈 결과를 미리 계산해 둡니다. 끊는 것, 남은 쪽이 넘치는 것, 견디는 것으로 나뉩니다.' },
+  { action: 'workload', label: '워크로드 조건 적기',
+    text: '데이터시트 숫자는 특정 조건에서 잰 값입니다. 우리 트래픽 조건을 적어야 그 값을 이 설계에 쓸 수 있는지 판정합니다.' },
+];
+
+function openGuidePanel() {
+  const lesson = topology.template;
+  openEditorPanel('사용 안내', `<p class="editor-hint">이 도구는 장비 하나가 서로 독립인 한계를 여럿 갖는다고 봅니다. 방화벽은 대역폭이 한가해도 신규 세션에서 먼저 막힙니다. 계산이 답하는 질문은 <b>어느 축에 먼저 닿는가</b> 하나입니다.</p>
+    <div class="guide-block">
+      <h3>화면 읽는 법</h3>
+      <ul class="guide-tokens">
+        <li><i data-token="healthy">.</i> 정상</li>
+        <li><i data-token="warning">!</i> 주의 · 기본 80% 이상</li>
+        <li><i data-token="overloaded">&gt;</i> 용량 초과</li>
+        <li><i data-token="unknown">?</i> 한계 미확인</li>
+        <li><i data-token="invalid">x</i> 입력 오류 또는 꺼짐</li>
+      </ul>
+      <p class="guide-rule"><b>미확인은 0%가 아닙니다.</b> 한계를 모르는 축은 막대를 채우지 않고 백분율도 적지 않습니다. 모르는 것을 안전으로도 위험으로도 바꾸지 않습니다.</p>
+    </div>
+    <div class="guide-block">
+      <h3>지금 설계에서 확인할 것</h3>
+      ${lesson?.teaches
+        ? `<p>${escapeText(lesson.teaches)}</p>${lesson.experiment ? `<p class="guide-rule">${escapeText(lesson.experiment.prompt)}</p><div class="form-actions"><button type="button" data-guide-lesson>${escapeText(lesson.experiment.action.label)}</button></div>` : ''}`
+        : '<p>이 설계에는 붙어 있는 설명이 없습니다. 직접 만들었거나, 설명이 생기기 전에 저장한 작업 사본입니다.</p><div class="form-actions"><button type="button" data-guide-demo>데모 설계 다시 열기</button><button type="button" data-guide-templates>설계 템플릿 고르기</button></div>'}
+    </div>
+    <div class="guide-block">
+      <h3>해 볼 것</h3>
+      <ol class="guide-steps">${GUIDE_STEPS.map((step) => `<li><span>${escapeText(step.text)}</span>
+        <button type="button" data-guide-step="${escapeAttribute(step.action)}"${step.value ? ` data-guide-value="${step.value}"` : ''}>${escapeText(step.label)}</button></li>`).join('')}</ol>
+    </div>`);
+}
+
 function openTemplatePicker() {
   const cards = templates.map((item) => {
     const grade = templateGrade(item.id);
@@ -1634,6 +1672,7 @@ element('link-layer').addEventListener('keydown', (event) => {
   if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.target.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
 });
 element('capture-baseline-button').addEventListener('click', captureBaseline);
+element('guide-button').addEventListener('click', openGuidePanel);
 element('reset-button').addEventListener('click', () => { state.disabledDevices.clear(); state.disabledLinks.clear(); state.disabledDomains.clear(); state.scale = 1; element('scale-input').value = '100'; showToast('장애와 배율을 초기화했습니다.'); recalculate(); });
 element('export-button').addEventListener('click', exportResult);
 document.querySelector('.editor-tools').addEventListener('click', (event) => { const button = event.target.closest('[data-editor-action]'); if (button) handleEditorAction(button.dataset.editorAction); });
@@ -1815,6 +1854,26 @@ element('inspector-content').addEventListener('click', (event) => {
 });
 
 element('editor-panel-content').addEventListener('click', (event) => {
+  const step = event.target.closest('[data-guide-step]');
+  if (step) {
+    const { guideStep, guideValue } = step.dataset;
+    closeEditorPanel();
+    if (guideStep === 'scale') { state.scale = Number(guideValue); element('scale-input').value = String(state.scale * 100); recalculate(); }
+    if (guideStep === 'panel-failure') { setLeftPanel('failure'); }
+    if (guideStep === 'workload') openWorkloadForm();
+    return;
+  }
+  if (event.target.closest('[data-guide-lesson]')) {
+    const { action } = topology.template.experiment;
+    closeEditorPanel();
+    lessonRevealed = true;
+    if (action.type === 'fault-device') { state.disabledDevices.add(action.id); setLeftPanel('failure'); recalculate(); }
+    if (action.type === 'fault-link') { state.disabledLinks.add(action.id); setLeftPanel('failure'); recalculate(); }
+    if (action.type === 'scale') { state.scale = Number(action.value); element('scale-input').value = String(state.scale * 100); recalculate(); }
+    return;
+  }
+  if (event.target.closest('[data-guide-demo]')) { loadTopology(cloneTopology(), '데모 설계를 다시 열었습니다.'); return; }
+  if (event.target.closest('[data-guide-templates]')) { openTemplatePicker(); return; }
   const choice = event.target.closest('[data-swap-catalog]');
   const detach = event.target.closest('[data-swap-detach]');
   if (choice || detach) {
