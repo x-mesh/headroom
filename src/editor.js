@@ -1,4 +1,4 @@
-import { behaviorCatalog } from './data.js';
+import { axisCatalog, behaviorCatalog } from './data.js';
 import { acceptanceDigest, evidenceApplicability } from './evidence.js';
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -28,6 +28,39 @@ function normalizeVendorLogo(value) {
   }
   if (logo.length > LOGO_LIMIT) throw new Error(`Vendor logo must stay under ${LOGO_LIMIT / 1024}KB`);
   return logo;
+}
+
+// 링크는 bps 하나가 아니다. 축마다 용량이 따로 있고, 비대칭 회선은 방향마다 다르다.
+// 축 이름을 카탈로그로 막는 이유는, 오타 난 축이 아무 장비도 갖지 않아 조용히 무시되기 때문이다.
+function normalizeCapacity(capacity, label) {
+  const entries = Object.entries(capacity || {});
+  if (!entries.length) throw new Error(`${label} requires at least one axis`);
+  return Object.fromEntries(entries.map(([axis, value]) => {
+    if (!axisCatalog[axis]) throw new Error(`Unknown link capacity axis ${axis}`);
+    return [axis, finite(value, axis, { min: Number.EPSILON })];
+  }));
+}
+
+/**
+ * 명시 경로. 홉이 실제로 이어지는지는 여기서 보지 않는다 — 엔진이 그것을 invalidPaths 로
+ * 보고하는 쪽이, 손으로 고친 오래된 파일도 열려서 고칠 수 있게 한다. 여기서는 없는 id 만 막는다.
+ */
+function normalizePaths(topology, paths) {
+  if (paths == null) return null;
+  if (!Array.isArray(paths)) throw new Error('Demand paths must be a list');
+  const devices = deviceIds(topology);
+  const links = linkIds(topology);
+  const seen = new Set();
+  return paths.map((path, index) => {
+    const id = requireId(path.id || `path-${index + 1}`, 'Demand path');
+    if (seen.has(id)) throw new Error(`Demand path ${id} already exists`);
+    seen.add(id);
+    for (const [key, known] of [['devices', devices], ['links', links]]) {
+      if (!Array.isArray(path[key])) throw new Error(`Demand path ${id} requires ${key}`);
+      for (const member of path[key]) if (!known.has(member)) throw new Error(`Demand path ${id} names a missing ${key.slice(0, -1)} ${member}`);
+    }
+    return { id, devices: [...path.devices], links: [...path.links], ...(path.weight == null ? {} : { weight: finite(path.weight, 'Demand path weight', { min: Number.EPSILON }) }) };
+  });
 }
 
 function normalizeDirectionality(directionality) {
@@ -246,17 +279,58 @@ export function clearEvidenceAcceptance(topology, id, axis) {
   return device;
 }
 
+/**
+ * 지운 자원을 가리키는 참조를 걷어낸다. 남겨 두면 검증이 걸려 계산 전체가 invalid 가 되고,
+ * 그러면 판정 하나가 아니라 설계의 모든 숫자가 사라진다. HA 그룹만 청소하던 것을 랙·서비스·
+ * 장애 도메인까지 넓힌다 — 검증 패널이 이미 그 셋을 사용자에게 만들게 해 주기 때문이다.
+ * 멤버가 하나도 안 남은 항목은 HA 그룹과 같이 통째로 버린다. 빈 멤버 목록 자체가 검증에 걸린다.
+ */
+function releaseReferences(topology, { deviceId = null, linkId = null, demandId = null }) {
+  const drop = (list, value) => list.filter((item) => item !== value);
+  if (deviceId) {
+    if (Array.isArray(topology.haGroups)) {
+      topology.haGroups = topology.haGroups
+        .map((group) => (group.members?.includes(deviceId) ? { ...group, members: drop(group.members, deviceId) } : group))
+        .filter((group) => group.members?.length);
+    }
+    if (Array.isArray(topology.racks)) {
+      topology.racks = topology.racks
+        .map((rack) => ({ ...rack, deviceIds: drop(rack.deviceIds || [], deviceId) }))
+        .filter((rack) => rack.deviceIds.length);
+    }
+  }
+  if (Array.isArray(topology.failureDomains) && (deviceId || linkId)) {
+    topology.failureDomains = topology.failureDomains
+      .map((domain) => ({ ...domain, deviceIds: drop(domain.deviceIds || [], deviceId), linkIds: drop(domain.linkIds || [], linkId) }))
+      .filter((domain) => domain.deviceIds.length || domain.linkIds.length);
+  }
+  if (Array.isArray(topology.services) && (deviceId || demandId)) {
+    topology.services = topology.services
+      .map((service) => ({
+        ...service,
+        demandIds: drop(service.demandIds || [], demandId),
+        endpointGroups: (service.endpointGroups || [])
+          .map((group) => {
+            const members = drop(group.members || [], deviceId);
+            // 최소 가용 대수가 남은 멤버 수보다 크면 그것도 검증에 걸린다. 줄어든 만큼 낮춘다.
+            return { ...group, members, minAvailable: Math.min(group.minAvailable ?? 1, members.length) };
+          })
+          .filter((group) => group.members.length),
+      }))
+      .filter((service) => service.demandIds.length);
+  }
+}
+
 export function removeDevice(topology, id) {
   if (!deviceIds(topology).has(id)) throw new Error(`Device ${id} does not exist`);
   const removedLinks = new Set(topology.links.filter((link) => link.source === id || link.target === id).map(({ id: linkId }) => linkId));
   topology.devices = topology.devices.filter((device) => device.id !== id);
   topology.links = topology.links.filter((link) => !removedLinks.has(link.id));
-  // HA 그룹에 남은 멤버 id 는 검증에서 걸려 이후 계산 전체를 멈춘다.
-  if (Array.isArray(topology.haGroups)) {
-    topology.haGroups = topology.haGroups
-      .map((group) => (group.members?.includes(id) ? { ...group, members: group.members.filter((member) => member !== id) } : group))
-      .filter((group) => group.members?.length);
-  }
+  // 끝점이 사라진 수요는 남긴다. 사용자가 적어 넣은 부하를 지우는 대신 다시 이어 붙일 수 있게
+  // 두는 것이 이 편집기의 계약이다(tests/solver-boundary.test.js "stay editable while retaining demand").
+  // 반면 랙·서비스·장애 도메인의 멤버 목록은 화면에서 되돌릴 길이 마땅치 않아 여기서 걷어낸다.
+  releaseReferences(topology, { deviceId: id });
+  for (const linkId of removedLinks) releaseReferences(topology, { linkId });
   return { removedDeviceId: id, removedLinkIds: [...removedLinks] };
 }
 
@@ -268,7 +342,15 @@ export function addLink(topology, input) {
   if (!devices.has(source) || !devices.has(target)) throw new Error('Link endpoints must exist');
   const id = requireId(input.id || `${source}-${target}`, 'Link');
   if (linkIds(topology).has(id)) throw new Error(`Link ${id} already exists`);
-  const link = { id, source, target, capacity: { forwarding_bps: finite(input.capacityBps ?? 10e9, 'Link capacity', { min: Number.EPSILON }) }, enabled: true };
+  const capacity = normalizeCapacity(input.capacity ?? { forwarding_bps: input.capacityBps ?? 10e9 }, 'Link capacity');
+  const link = { id, source, target, capacity, enabled: true };
+  if (input.capacityByDirection) {
+    // 엔진은 capacity 를 양방향 공통으로 깔고 방향별 값을 축 단위로 덮어쓴다(engine.js resolve).
+    const byDirection = Object.fromEntries(['forward', 'reverse']
+      .filter((direction) => input.capacityByDirection[direction])
+      .map((direction) => [direction, normalizeCapacity(input.capacityByDirection[direction], `Link ${direction} capacity`)]));
+    if (Object.keys(byDirection).length) link.capacityByDirection = byDirection;
+  }
   for (const side of ['source', 'target']) {
     if (!input[`${side}Port`]) continue;
     const portId = String(input[`${side}Port`]);
@@ -303,6 +385,7 @@ export function updateLink(topology, id, patch) {
 export function removeLink(topology, id) {
   if (!linkIds(topology).has(id)) throw new Error(`Link ${id} does not exist`);
   topology.links = topology.links.filter((link) => link.id !== id);
+  releaseReferences(topology, { linkId: id });
 }
 
 export function addDemand(topology, input) {
@@ -316,7 +399,15 @@ export function addDemand(topology, input) {
   const load = {};
   for (const [axis, value] of Object.entries(input.load || {})) load[axis] = finite(value, axis);
   if (!Object.keys(load).length) throw new Error('Demand requires at least one load axis');
-  const demand = { id, name: String(input.name || id).trim().slice(0, 80) || id, source, target, load, pathMode: 'shortest' };
+  const paths = normalizePaths(topology, input.paths);
+  const demand = { id, name: String(input.name || id).trim().slice(0, 80) || id, source, target, load,
+    pathMode: input.pathMode === 'explicit' || (input.pathMode == null && paths?.length) ? 'explicit' : 'shortest' };
+  // 아래 셋은 없는 것이 기본값이라, 값이 있을 때만 붙인다. 빈 필드를 만들면 저장 파일마다 실린다.
+  if (paths) demand.paths = paths;
+  const backendPool = normalizeBackendPool(input.backendPool, devices);
+  if (backendPool) demand.backendPool = backendPool;
+  const directionality = normalizeDirectionality(input.directionality);
+  if (directionality) demand.directionality = directionality;
   topology.demands.push(demand);
   return demand;
 }
@@ -359,6 +450,7 @@ export function updateDemand(topology, id, patch) {
 export function removeDemand(topology, id) {
   if (!topology.demands.some((demand) => demand.id === id)) throw new Error(`Demand ${id} does not exist`);
   topology.demands = topology.demands.filter((demand) => demand.id !== id);
+  releaseReferences(topology, { demandId: id });
 }
 
 export function createEmptyTopology(name = 'Untitled topology') {

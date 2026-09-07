@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cloneTopology } from '../src/data.js';
-import { addDemand, addDevice, addLink, createEmptyTopology, moveDevice, removeDevice, updateDevice } from '../src/editor.js';
+import { addDemand, addDevice, addLink, createEmptyTopology, moveDevice, removeDemand, removeDevice, removeLink, updateDevice } from '../src/editor.js';
 import { calculateScenario, findShortestPaths } from '../src/engine.js';
 
 test('creates, moves, and links devices with validated IDs', () => {
@@ -100,4 +100,100 @@ test('a datasheet profile and a user correction both survive on the device', asy
   assert.equal(device.limits.new_sessions_per_sec, null, 'clearing a correction returns to unknown, not to zero');
   assert.equal(device.overrides, undefined);
   assert.throws(() => setLimitOverride(topology, 'fw', 'nic_bps', 1e9), /not part of this profile/);
+});
+
+// HA 그룹만 청소하던 자리에서 랙·서비스·장애 도메인이 빠져 있었다. 그 셋을 선언한 설계에서
+// 멤버 하나를 지우면 검증이 걸려 계산 전체가 invalid 가 되고, 판정 하나가 아니라 설계의
+// 모든 숫자가 사라졌다. 검증 패널이 이미 사용자에게 그 셋을 만들게 해 주므로 실제로 닿는 길이다.
+test('a removed device leaves no dangling rack, service, or failure domain member', () => {
+  const topology = createEmptyTopology();
+  for (const id of ['core', 'srv-1', 'srv-2']) addDevice(topology, { id, kind: id === 'core' ? 'switch' : 'server', limits: { forwarding_bps: 1e10, forwarding_pps: 1e7, nic_bps: 1e10, nic_pps: 1e7 } });
+  for (const n of [1, 2]) {
+    addLink(topology, { source: 'core', target: `srv-${n}` });
+    addDemand(topology, { id: `d${n}`, source: 'core', target: `srv-${n}`, load: { nic_bps: 1e9, nic_pps: 1e6 } });
+  }
+  topology.racks = [{ id: 'rack-01', deviceIds: ['srv-1', 'srv-2'], powerBasis: 'typical', powerBudgetWatts: 3000, capacityU: 42 }];
+  topology.failureDomains = [{ id: 'row-a', deviceIds: ['srv-1', 'srv-2'], linkIds: ['core-srv-1'] }];
+  topology.services = [{ id: 'svc', demandIds: ['d1', 'd2'], requiredDeliveryRatio: 1,
+    endpointGroups: [{ id: 'pool', members: ['srv-1', 'srv-2'], minAvailable: 2 }] }];
+  assert.equal(calculateScenario(topology).summary.evaluationStatus !== 'invalid', true);
+
+  removeDevice(topology, 'srv-2');
+  assert.deepEqual(topology.racks[0].deviceIds, ['srv-1']);
+  assert.deepEqual(topology.failureDomains[0].deviceIds, ['srv-1']);
+  assert.deepEqual(topology.services[0].endpointGroups[0].members, ['srv-1']);
+  // 최소 가용 대수도 남은 멤버 수를 넘으면 검증에 걸린다. 함께 낮아져야 한다.
+  assert.equal(topology.services[0].endpointGroups[0].minAvailable, 1);
+  // 지운 장비에 물린 링크의 id 도 장애 도메인에서 빠진다.
+  assert.deepEqual(topology.failureDomains[0].linkIds, ['core-srv-1']);
+
+  removeDemand(topology, 'd1');
+  assert.deepEqual(topology.services[0].demandIds, ['d2']);
+  removeLink(topology, 'core-srv-1');
+  assert.deepEqual(topology.failureDomains[0].linkIds, []);
+
+  // 남은 수요 d2 는 끝점이 사라져 invalid 지만, 그것은 사용자가 다시 이어 붙일 수 있는 상태다.
+  // 여기서 확인하는 것은 되돌릴 길이 없는 컬렉션 참조가 하나도 안 남았다는 것이다.
+  const issues = calculateScenario(topology).validationIssues.map(({ reason }) => reason);
+  for (const reason of ['rack-member-missing', 'service-endpoint-missing', 'service-demand-missing', 'domain-member-missing', 'invalid-min-available']) {
+    assert.ok(!issues.includes(reason), `${reason} 가 남았습니다: ${JSON.stringify(issues)}`);
+  }
+});
+
+test('a collection left with no members goes away instead of failing validation', () => {
+  const topology = createEmptyTopology();
+  addDevice(topology, { id: 'only', limits: { forwarding_bps: 1e9 } });
+  topology.racks = [{ id: 'rack-01', deviceIds: ['only'], powerBasis: 'typical', powerBudgetWatts: 1000, capacityU: 42 }];
+  topology.failureDomains = [{ id: 'row-a', deviceIds: ['only'], linkIds: [] }];
+  removeDevice(topology, 'only');
+  // 빈 멤버 목록 자체가 검증에 걸린다. HA 그룹이 이미 쓰던 방식대로 항목을 통째로 버린다.
+  assert.deepEqual(topology.racks, []);
+  assert.deepEqual(topology.failureDomains, []);
+});
+
+// 엔진은 방향별 용량과 명시 경로와 백엔드 풀을 이미 읽는데, 그것을 만들 길이 편집기에 없었다.
+// 그래서 템플릿이 링크와 수요를 만든 뒤 객체를 직접 주무르고 있었고, 그 길은 검증을 지나지 않았다.
+test('a link can carry a different capacity in each direction', () => {
+  const topology = createEmptyTopology();
+  for (const id of ['cpe', 'carrier']) addDevice(topology, { id, kind: 'router', limits: { forwarding_bps: 1e10, forwarding_pps: 1e7 } });
+  addLink(topology, { id: 'wan', source: 'cpe', target: 'carrier',
+    capacity: { forwarding_bps: 1e9, forwarding_pps: 1e6 },
+    capacityByDirection: { forward: { forwarding_bps: 200e6 }, reverse: { forwarding_bps: 1e9 } } });
+  const link = topology.links[0];
+  // capacity 는 양방향 공통으로 깔리고 방향별 값이 축 단위로 덮는다. pps 는 양쪽 모두 공통값이다.
+  assert.equal(link.capacity.forwarding_pps, 1e6);
+  assert.equal(link.capacityByDirection.forward.forwarding_bps, 200e6);
+  assert.equal(link.capacityByDirection.reverse.forwarding_bps, 1e9);
+  addDemand(topology, { id: 'upload', source: 'cpe', target: 'carrier', load: { forwarding_bps: 170e6, forwarding_pps: 30e3 } });
+  const result = calculateScenario(topology).links[0];
+  assert.equal(result.directions.forward.axes.forwarding_bps.limit, 200e6);
+  assert.equal(result.directions.reverse.axes.forwarding_bps.limit, 1e9);
+  // 축 이름을 막지 않으면 오타 난 축이 아무 장비도 갖지 않아 조용히 무시된다.
+  assert.throws(() => addLink(topology, { id: 'typo', source: 'carrier', target: 'cpe', capacity: { forwarding_bits: 1e9 } }), /Unknown link capacity axis/);
+});
+
+test('a demand can name its own route, pool, and direction split when it is created', () => {
+  const topology = createEmptyTopology();
+  for (const [id, kind] of [['a', 'switch'], ['b', 'router'], ['c', 'web']]) addDevice(topology, { id, kind, limits: { forwarding_bps: 1e10, forwarding_pps: 1e7, nic_bps: 1e10, nic_pps: 1e7 } });
+  addLink(topology, { id: 'ab', source: 'a', target: 'b' });
+  addLink(topology, { id: 'bc', source: 'b', target: 'c' });
+  const demand = addDemand(topology, { id: 'traffic', source: 'a', target: 'c', load: { forwarding_bps: 1e8, forwarding_pps: 1e5 },
+    paths: [{ id: 'via-b', devices: ['a', 'b', 'c'], links: ['ab', 'bc'] }],
+    backendPool: 'single', directionality: { responseShare: 0.2, origin: 'explicit' } });
+  // 경로를 주면 pathMode 가 따라온다. 그러지 않으면 엔진이 그 경로를 읽지 않는다.
+  assert.equal(demand.pathMode, 'explicit');
+  assert.equal(demand.paths[0].id, 'via-b');
+  assert.equal(demand.backendPool, 'single');
+  assert.deepEqual(demand.directionality, { responseShare: 0.2, origin: 'explicit' });
+  assert.equal(calculateScenario(topology).demands[0].status, 'delivered');
+
+  // 없는 것은 없는 채로 둔다. 빈 필드를 만들면 저장 파일마다 실린다.
+  const plain = addDemand(topology, { id: 'plain', source: 'a', target: 'c', load: { forwarding_bps: 1e8 } });
+  assert.equal(plain.pathMode, 'shortest');
+  for (const key of ['paths', 'backendPool', 'directionality']) assert.equal(Object.hasOwn(plain, key), false);
+
+  assert.throws(() => addDemand(topology, { id: 'bad-path', source: 'a', target: 'c', load: { forwarding_bps: 1 },
+    paths: [{ id: 'p', devices: ['a', 'missing'], links: ['ab'] }] }), /missing device/);
+  assert.throws(() => addDemand(topology, { id: 'bad-share', source: 'a', target: 'c', load: { forwarding_bps: 1 },
+    directionality: { responseShare: 1.4 } }), /between 0 and 1/);
 });
