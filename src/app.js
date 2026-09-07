@@ -232,10 +232,12 @@ function growthNote() {
 }
 
 function renderClassControl() {
-  element('class-control').innerHTML = `<div class="layout-axis" role="group" aria-label="클래스 배지">
-      <span>배지</span>
-      ${[['off', '끔'], ['on', '켬']].map(([value, label]) => `<button type="button" data-class-badge="${value}" aria-pressed="${classView.badge === value}">${escapeText(label)}</button>`).join('')}
+  const group = (label, attribute, current, choices) => `<div class="layout-axis" role="group" aria-label="${escapeAttribute(label)}">
+      <span>${escapeText(label)}</span>
+      ${choices.map(([value, text]) => `<button type="button" data-${attribute}="${value}" aria-pressed="${current === value}">${escapeText(text)}</button>`).join('')}
     </div>`;
+  element('class-control').innerHTML = group('배지', 'class-badge', classView.badge, [['off', '끔'], ['on', '켬']])
+    + group('흔들림', 'number-motion', motionView.drift, [['off', '끔'], ['on', '켬']]);
 }
 
 // 데이터시트를 붙였는데 대조할 워크로드 조건이 없으면 모든 축이 미확인이 된다. 그 상태는
@@ -298,6 +300,7 @@ function render() {
   renderEditorMode();
   renderClassControl();
   renderLearningPanel();
+  syncLiveNumbers();
   document.querySelector('[data-editor-action="undo"]').disabled = !documentHistory.canUndo;
   document.querySelector('[data-editor-action="redo"]').disabled = !documentHistory.canRedo;
 }
@@ -394,6 +397,15 @@ const classView = { badge: 'off' };
 try {
   const saved = localStorage.getItem('rack-mesh-class-badge');
   if (saved === 'on' || saved === 'off') classView.badge = saved;
+} catch { /* 저장된 선택이 없으면 기본값을 쓴다 */ }
+
+// 숫자는 두 가지로 움직인다. 값이 실제로 바뀌었을 때 이전 값에서 새 값으로 잇는 것은 항상
+// 한다 - 원인이 있는 움직임이라 계산을 배신하지 않고, 오히려 무엇 때문에 바뀌었는지 보인다.
+// 미세한 흔들림은 지어낸 값이므로 기본이 꺼짐이고, 켜면 화면이 그렇다고 말한다.
+const motionView = { drift: 'off' };
+try {
+  const saved = localStorage.getItem('rack-mesh-number-motion');
+  if (saved === 'on' || saved === 'off') motionView.drift = saved;
 } catch { /* 저장된 선택이 없으면 기본값을 쓴다 */ }
 
 // 이니셜은 앞 세 글자를 자르면 SWI·ROU 가 되어 읽히지 않는다. 손으로 정한다.
@@ -944,6 +956,72 @@ function telemetryWave(seed, amplitude = 0.015) {
   return Math.sin(telemetryTick * 0.72 + hash * 0.13) * amplitude + Math.sin(telemetryTick * 0.23 + hash) * amplitude * 0.35;
 }
 
+// 트윈은 260ms, 흔들림 갱신은 820ms(DESIGN.md 의 telemetry cadence). 진폭은 사용률 1.2% 안쪽이라
+// 70% 가 69~71% 사이에서만 흔들린다. 그보다 크면 읽는 사람이 어느 값을 적어야 할지 헷갈린다.
+const MOTION = { tween: 260, driftCadence: 820, amplitude: 0.012 };
+// seed 는 자원과 축을 함께 가리킨다. 화면이 통째로 다시 그려져도 같은 숫자를 이어서 따라간다.
+const liveShown = new Map();
+const liveTweens = new Map();
+let motionFrame = null;
+let driftStamp = 0;
+
+const liveNodes = () => document.querySelectorAll('[data-live-util], [data-live-load]');
+function liveTarget(node) {
+  const raw = node.dataset.liveUtil ?? node.dataset.liveLoad;
+  const value = raw === '' || raw == null ? Number.NaN : Number(raw);
+  return { seed: node.dataset.liveSeed, value, load: node.dataset.liveUnit != null };
+}
+function paintLive(node, value, load) {
+  node.textContent = load ? `${formatCompact(value, node.dataset.liveUnit)} load` : formatPercent(value);
+}
+
+/** 다시 그린 뒤 부른다. 값이 실제로 바뀐 숫자만 이전 값에서 새 값으로 잇는다. */
+function syncLiveNumbers() {
+  const seen = new Set();
+  for (const node of liveNodes()) {
+    const { seed, value } = liveTarget(node);
+    if (!seed || !Number.isFinite(value)) continue;
+    seen.add(seed);
+    const shown = liveShown.get(seed);
+    // 처음 그려지는 숫자는 올 곳이 없다. 움직임을 줄인 환경에서도 잇지 않는다.
+    if (shown != null && Math.abs(shown - value) > 1e-9 && !reducedMotion.matches) {
+      liveTweens.set(seed, { from: shown, to: value, start: performance.now() });
+    } else liveTweens.delete(seed);
+    liveShown.set(seed, value);
+  }
+  for (const seed of [...liveShown.keys()]) if (!seen.has(seed)) { liveShown.delete(seed); liveTweens.delete(seed); }
+  if (!motionFrame) motionFrame = requestAnimationFrame(stepMotion);
+}
+
+function stepMotion(now) {
+  motionFrame = null;
+  const drifting = motionView.drift === 'on' && !reducedMotion.matches;
+  const ticked = drifting && now - driftStamp >= MOTION.driftCadence;
+  if (ticked) { telemetryTick += 1; driftStamp = now; }
+  // 흔들림은 820ms 마다 한 번만 값이 바뀐다. 그 사이 프레임에 같은 글자를 다시 칠하지 않는다.
+  if (!liveTweens.size && !ticked) {
+    if (drifting) motionFrame = requestAnimationFrame(stepMotion);
+    return;
+  }
+  let running = false;
+  for (const node of liveNodes()) {
+    const { seed, value, load } = liveTarget(node);
+    if (!seed || !Number.isFinite(value)) continue;
+    const tween = liveTweens.get(seed);
+    if (tween) {
+      const progress = Math.min(1, (now - tween.start) / MOTION.tween);
+      paintLive(node, tween.from + (tween.to - tween.from) * (1 - (1 - progress) ** 3), load);
+      if (progress >= 1) liveTweens.delete(seed); else running = true;
+      continue;
+    }
+    // 흔들림은 헤드라인 숫자에 걸지 않는다(DESIGN.md). 고정된 비교 패널과 다른 말을 하면
+    // 읽는 사람은 어느 쪽을 적어야 할지 알 수 없다.
+    const drifted = drifting && !node.closest('.binding-callout');
+    paintLive(node, drifted ? Math.max(0, value * (1 + telemetryWave(seed, MOTION.amplitude))) : value, load);
+  }
+  if (running || drifting) motionFrame = requestAnimationFrame(stepMotion);
+}
+
 function pushTelemetry(name, value) {
   const history = telemetryHistory.get(name) || [];
   history.push(value);
@@ -971,21 +1049,8 @@ function renderSparkline(svg, values) {
   marker.setAttribute('cy', y.toFixed(1));
 }
 
+// 스파크라인 표본을 밀어 넣는다. 숫자 자체를 칠하는 일은 stepMotion 이 맡는다.
 function updateTelemetry() {
-  telemetryTick += 1;
-  document.querySelectorAll('[data-live-util]').forEach((target) => {
-    if (target.dataset.liveUtil === '') return;
-    const base = Number(target.dataset.liveUtil);
-    if (!Number.isFinite(base)) return;
-    target.textContent = formatPercent(Math.max(0, base));
-  });
-  document.querySelectorAll('[data-live-load]').forEach((target) => {
-    if (target.dataset.liveLoad === '') return;
-    const base = Number(target.dataset.liveLoad);
-    if (!Number.isFinite(base)) return;
-    const value = Math.max(0, base);
-    target.textContent = `${formatCompact(value, target.dataset.liveUnit)} load`;
-  });
   const liveHeadroom = current.summary.minHeadroom;
   element('summary-headroom').dataset.liveValue = liveHeadroom == null ? '' : liveHeadroom.toFixed(6);
   // 최소 headroom 을 모르면 표본을 만들지 않는다. 0 은 위험으로, 0% 는 안전으로 읽혀
@@ -1738,10 +1803,17 @@ element('failure-list').addEventListener('click', (event) => {
   if (button) toggleFailure(button.dataset.failureType, button.dataset.failureId);
 });
 element('class-control').addEventListener('click', (event) => {
-  const value = event.target.closest('[data-class-badge]')?.dataset.classBadge;
-  if (!value) return;
-  classView.badge = value;
-  try { localStorage.setItem('rack-mesh-class-badge', value); } catch { /* 저장이 막혀도 이번 세션은 바뀐다 */ }
+  const badge = event.target.closest('[data-class-badge]')?.dataset.classBadge;
+  if (badge) {
+    classView.badge = badge;
+    try { localStorage.setItem('rack-mesh-class-badge', badge); } catch { /* 저장이 막혀도 이번 세션은 바뀐다 */ }
+    render();
+    return;
+  }
+  const motion = event.target.closest('[data-number-motion]')?.dataset.numberMotion;
+  if (!motion) return;
+  motionView.drift = motion;
+  try { localStorage.setItem('rack-mesh-number-motion', motion); } catch { /* 저장이 막혀도 이번 세션은 바뀐다 */ }
   render();
 });
 document.querySelector('.mobile-fault-tray').addEventListener('click', (event) => {

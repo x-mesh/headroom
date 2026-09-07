@@ -881,17 +881,79 @@ async function verify(viewport, screenshot, interact = false) {
   await page.close();
 }
 
+// 숫자가 움직이는 두 가지를 나눠 확인한다. 값이 실제로 바뀌었을 때 잇는 것은 계산이 원인이라
+// 항상 돌고, 미세한 흔들림은 지어낸 값이라 켠 사람에게만 보인다. 둘을 섞으면 화면의 숫자가
+// 왜 움직이는지 설명할 수 없다.
+async function verifyNumberMotion() {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } });
+  await page.addInitScript(() => localStorage.clear());
+  page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
+  page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
+  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+
+  assert.equal(await page.locator('[data-number-motion="off"]').getAttribute('aria-pressed'), 'true',
+    '흔들림은 기본이 꺼짐이어야 한다. 지어낸 변동이 계산값의 기본 모습이 되면 안 된다');
+
+  // 배율을 바꾸면 숫자가 곧바로 튀지 않고 이전 값에서 새 값으로 이어진다.
+  // 표본은 페이지 안에서 뜬다. 브라우저를 왕복하며 읽으면 260ms 트윈을 놓친다.
+  const tween = await page.evaluate(async () => {
+    const read = () => document.querySelector('.binding-callout strong span:last-child').textContent;
+    const first = read();
+    const seen = new Set([first]);
+    const input = document.getElementById('scale-input');
+    input.value = '150';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((done) => {
+      const started = performance.now();
+      const tick = () => { seen.add(read()); (performance.now() - started < 420 ? requestAnimationFrame(tick) : done()); };
+      requestAnimationFrame(tick);
+    });
+    return { first, settled: read(), seen: [...seen] };
+  });
+  assert.notEqual(tween.settled, tween.first, '배율을 바꾸면 값이 달라져야 한다');
+  assert.ok(tween.seen.length >= 4, `값이 이어지지 않고 곧바로 튀었습니다: ${tween.seen.join(' ')}`);
+
+  // 흔들림을 켜면 같은 계산 결과 위에서 값이 미세하게 달라진다. 헤드라인은 흔들지 않는다.
+  // 미확인 축에는 애초에 흔들 값이 없으므로, 사용률이 실제로 있는 축을 고른다.
+  const sampleMotion = (ms) => page.evaluate(async (window) => {
+    const axis = document.querySelector('.axis-title b[data-live-util]:not([data-live-util=""])');
+    const headline = document.querySelector('.binding-callout strong span:last-child');
+    const seen = { axis: new Set([axis.textContent]), headline: new Set([headline.textContent]) };
+    await new Promise((done) => {
+      const started = performance.now();
+      const tick = () => {
+        seen.axis.add(axis.textContent); seen.headline.add(headline.textContent);
+        (performance.now() - started < window ? requestAnimationFrame(tick) : done());
+      };
+      requestAnimationFrame(tick);
+    });
+    return { axis: [...seen.axis], headline: [...seen.headline] };
+  }, ms);
+
+  await page.locator('[data-number-motion="on"]').click();
+  const moving = await sampleMotion(2000);
+  assert.ok(moving.axis.length >= 2, `흔들림을 켰는데 값이 그대로입니다: ${moving.axis.join(' ')}`);
+  assert.equal(moving.headline.length, 1, `헤드라인 숫자는 흔들리지 않아야 한다: ${moving.headline.join(' ')}`);
+
+  // 끄면 멈춘다. 켜 둔 채로는 값을 적을 수 없으므로 끌 수 있어야 한다.
+  await page.locator('[data-number-motion="off"]').click();
+  const stopped = await sampleMotion(1400);
+  assert.equal(stopped.axis.length, 1, `흔들림을 껐는데 값이 계속 움직입니다: ${stopped.axis.join(' ')}`);
+  await page.close();
+}
+
 try {
   await verify({ width: 1440, height: 1000 }, '.impeccable/review/desktop.png', true);
   await verify({ width: 390, height: 844 }, '.impeccable/review/mobile.png');
   await verifyCanvasEditing();
   await verifyBackendPool();
+  await verifyNumberMotion();
   const reducedPage = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
   await reducedPage.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   assert.equal(await reducedPage.locator('.packet-dot').first().evaluate((node) => getComputedStyle(node).display), 'none');
   await reducedPage.close();
   assert.deepEqual(failures, []);
-  console.log('Browser smoke passed: interaction, backend pool, overflow, console, desktop and mobile captures');
+  console.log('Browser smoke passed: interaction, backend pool, number motion, overflow, console, desktop and mobile captures');
 } finally {
   await browser.close();
   server.close();
