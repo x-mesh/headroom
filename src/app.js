@@ -625,6 +625,21 @@ function centerCanvas() {
   scroll.scrollTop = STAGE_PAD - Math.max(0, (scroll.clientHeight - viewport.height * state.zoom) / 2);
 }
 
+/**
+ * 캔버스가 화면보다 크면 centerCanvas 는 가운데가 아니라 왼쪽 위 모서리를 연다 - 남는 여백이
+ * 음수라 0 으로 잘리기 때문이다. 그렇다고 전체를 맞추면 배율이 0.6 아래로 내려가 노드 글자가
+ * 읽히지 않는다. 큰 설계는 다 보여 주는 것이 아니라 그 설계가 말하는 곳을 보여 줘야 한다.
+ * 나머지는 사용자가 밀어서 본다. 화면에 들어가는 설계는 지금처럼 통째로 가운데에 온다.
+ */
+function focusCanvas(resourceId) {
+  const scroll = document.querySelector('.topology-scroll');
+  const device = resourceId && current.devices.find(({ id }) => id === resourceId);
+  const fits = viewport.width * state.zoom <= scroll.clientWidth && viewport.height * state.zoom <= scroll.clientHeight;
+  if (!device || fits) { centerCanvas(); return; }
+  scroll.scrollLeft = STAGE_PAD + (device.position.x - viewport.minX) * state.zoom - scroll.clientWidth / 2;
+  scroll.scrollTop = STAGE_PAD + (device.position.y - viewport.minY) * state.zoom - scroll.clientHeight / 2;
+}
+
 function zoomToFit() {
   const scroll = document.querySelector('.topology-scroll');
   const fit = Math.min(scroll.clientWidth / viewport.width, scroll.clientHeight / viewport.height);
@@ -735,12 +750,30 @@ function renderInspector() {
     <div class="resource-identity"><strong>${escapeText(resourceName(resource))}</strong><span>${escapeText(isDevice ? [[resource.vendor, resource.model].filter(Boolean).join(' '), resource.kind.toUpperCase(), resource.zone].filter(Boolean).join(' · ') : `링크 · ${formatCompact(resource.capacity?.forwarding_bps, 'bps')} 방향별`)}</span></div>
     <div class="binding-callout"><span>BINDING AXIS</span><strong><span>${axisCatalog[resource.bindingAxis]?.label || resource.bindingAxis || '알려진 축 없음'}</span><span data-live-util="${binding?.utilization ?? ''}" data-live-seed="${resource.id}-binding">${binding ? formatPercent(binding.utilization) : '—'}</span></strong></div>
     <div class="axis-list">${Object.entries(resource.axes).map(([axis, result]) => renderAxis(axis, result, resource.id, resource)).join('')}</div>
+    ${isDevice ? '' : renderLinkDirections(resource)}
     ${isDevice ? renderBehavior(resource) : ''}
     ${isDevice ? renderSpecBlock(resource) : ''}
     ${renderSourceNote(source, isDevice ? resource : null)}
     ${isDevice ? renderDeviceEditor(resource) : renderLinkEditor(resource)}`;
 }
 
+// 링크의 평면 축은 바쁜 쪽 방향 하나만 말한다. 방향마다 용량이 다른 회선에서는 그것으로 부족하다
+// — 넘친 방향만 보이고 반대쪽이 왜 멀쩡한지 알 길이 없다. 그래서 한계가 갈리는 링크만 두 방향을
+// 나란히 편다. 양쪽이 같은 링크에 같은 숫자를 두 번 적는 것은 소음이다.
+function renderLinkDirections(resource) {
+  const axes = [...new Set(['forward', 'reverse'].flatMap((direction) => Object.keys(resource.directions?.[direction]?.axes || {})))];
+  const split = axes.filter((axis) => resource.directions?.forward?.axes[axis]?.limit !== resource.directions?.reverse?.axes[axis]?.limit);
+  if (!split.length) return '';
+  const rows = [['forward', '정방향', resource.source], ['reverse', '역방향', resource.target]].map(([direction, label, from]) => {
+    const cells = split.map((axis) => {
+      const result = resource.directions?.[direction]?.axes[axis];
+      return `<span data-status="${escapeAttribute(result?.status || 'unknown')}"><b>${escapeText(axisCatalog[axis]?.nodeLabel || axis)}</b>
+        ${escapeText(formatCompact(result?.limit, axisCatalog[axis]?.unit))} · ${escapeText(result?.utilization == null ? '—' : formatPercent(result.utilization))}</span>`;
+    }).join('');
+    return `<div class="link-direction"><strong>${label}<small>${escapeText(from)} 에서</small></strong>${cells}</div>`;
+  }).join('');
+  return `<div class="direction-list"><span class="spec-code">방향별 한계</span>${rows}</div>`;
+}
 const SOURCE_TYPE_LABEL = { datasheet: '데이터시트', third_party_test: '제3자 시험', user_measured: '실측', estimate: '추정' };
 
 // 어느 조건의 값을 쓰고 있는지가 값 자체만큼 중요하다. 같은 장비가 조건에 따라 20배 갈린다.
@@ -862,6 +895,8 @@ function renderDeviceEditor(resource) {
 function renderLinkEditor(resource) {
   return `<form class="inspector-editor" data-resource-form="link" data-resource-id="${resource.id}">
     <h3>링크 편집</h3><label>방향별 용량 (bps)<input name="capacityBps" type="number" min="1" step="any" required value="${resource.capacity.forwarding_bps}"></label>
+    ${resource.capacityByDirection ? ['forward', 'reverse'].map((direction) => `<label>${direction === 'forward' ? '정방향' : '역방향'}만 다르게 (bps)<input name="${direction}Bps" type="number" min="1" step="any"
+      value="${resource.capacityByDirection[direction]?.forwarding_bps ?? ''}" placeholder="비우면 위 값을 씁니다"></label>`).join('') : ''}
     <div class="inspector-editor-actions"><button type="submit">적용</button><button type="button" data-delete-resource="link">링크 삭제</button></div><p class="editor-error"></p>
   </form>`;
 }
@@ -1352,7 +1387,7 @@ function loadTopology(next, message, undo = null) {
   baselineSnapshot = { topology: structuredClone(topology), scenario: scenarioOptions(true) };
   baseline = calculateScenario(baselineSnapshot.topology, baselineSnapshot.scenario);
   recalculate(); showToast(message, undo);
-  centerCanvas();
+  focusCanvas(current.summary.bindingResourceId);
 }
 
 function applyTemplate(id) {
@@ -1368,7 +1403,7 @@ function applyTemplate(id) {
     baselineSnapshot = previousBaseline; baseline = calculateScenario(previousBaseline.topology, previousBaseline.scenario);
     element('scale-input').value = String(restore.scale * 100);
     documentHistory.reset(topology); recalculate(); showToast('이전 설계로 되돌렸습니다.');
-    centerCanvas();
+    focusCanvas(current.summary.bindingResourceId);
   });
 }
 
@@ -2128,7 +2163,10 @@ element('inspector-content').addEventListener('submit', (event) => {
         }
       }
     }
-    else updateLink(topology, form.dataset.resourceId, { capacityBps: data.get('capacityBps') });
+    else updateLink(topology, form.dataset.resourceId, { capacityBps: data.get('capacityBps'),
+      // 방향 칸은 비대칭 회선에만 뜬다. 뜨지 않았으면 방향 덮어쓰기를 건드리지 않는다.
+      ...(data.has('forwardBps') ? { capacityByDirection: Object.fromEntries(['forward', 'reverse']
+        .map((direction) => [direction, data.get(`${direction}Bps`) ? { forwarding_bps: data.get(`${direction}Bps`) } : null])) } : {}) });
     commitTopology('한계값을 적용했습니다.');
   } catch (error) { formError(form, error.message); }
 });
