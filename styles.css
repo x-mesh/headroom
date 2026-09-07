@@ -271,6 +271,11 @@ button { color: inherit; }
 .topology-group .group-frame { fill: color-mix(in srgb, var(--surface-tint) 55%, transparent); stroke: var(--line-soft); stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
 .topology-group[data-depth="2"] .group-frame { fill: color-mix(in srgb, var(--surface-raised) 60%, transparent); }
 .topology-group .group-label { fill: var(--muted); font: 600 9px/1 var(--font-data); letter-spacing: .1em; }
+/* 이름표는 선 위에 뜨지만 배경이 없으면 선이 글자 사이를 지난다. 상자를 깔아 탭처럼 앉힌다.
+   깊이마다 바탕을 달리해 어느 층의 이름인지 상자만 보고도 갈린다. */
+.group-tag .group-label { fill: var(--muted); font: 600 9px/1 var(--font-data); letter-spacing: .1em; }
+.group-tag-frame { fill: var(--surface-tint); stroke: var(--line-soft); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.group-tag[data-depth="2"] .group-tag-frame { fill: var(--surface-raised); }
 
 /* 링크 50개가 넘는 설계에서는 모든 선이 같은 굵기면 얽힌 실타래가 된다. 선을 지우지는 않는다 —
    무엇이 무엇에 붙어 있는지가 이 그림의 절반이다. 대신 굵기가 심각도를 말하게 한다. 정상은
@@ -542,6 +547,11 @@ button { color: inherit; }
 .topology-group .group-frame { fill: color-mix(in srgb, var(--surface-tint) 55%, transparent); stroke: var(--line-soft); stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
 .topology-group[data-depth="2"] .group-frame { fill: color-mix(in srgb, var(--surface-raised) 60%, transparent); }
 .topology-group .group-label { fill: var(--muted); font: 600 9px/1 var(--font-data); letter-spacing: .1em; }
+/* 이름표는 선 위에 뜨지만 배경이 없으면 선이 글자 사이를 지난다. 상자를 깔아 탭처럼 앉힌다.
+   깊이마다 바탕을 달리해 어느 층의 이름인지 상자만 보고도 갈린다. */
+.group-tag .group-label { fill: var(--muted); font: 600 9px/1 var(--font-data); letter-spacing: .1em; }
+.group-tag-frame { fill: var(--surface-tint); stroke: var(--line-soft); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.group-tag[data-depth="2"] .group-tag-frame { fill: var(--surface-raised); }
 
 /* 링크 50개가 넘는 설계에서는 모든 선이 같은 굵기면 얽힌 실타래가 된다. 선을 지우지는 않는다 —
    무엇이 무엇에 붙어 있는지가 이 그림의 절반이다. 대신 굵기가 심각도를 말하게 한다. 정상은

@@ -678,6 +678,21 @@ function endPaletteDrag() {
   return drag;
 }
 
+/** 이름표 상자를 글자 크기에 맞춘다. 화면에 붙기 전에는 잴 수 없어 그린 뒤에 한 번 돈다. */
+function fitGroupTags() {
+  for (const tag of element('link-layer').querySelectorAll('.group-tag')) {
+    const label = tag.querySelector('.group-label');
+    const frame = tag.querySelector('.group-tag-frame');
+    // 캔버스가 접혀 있으면 잴 것이 없다. 그때는 상자를 두지 않는다 — 0 크기 상자는 점으로 남는다.
+    let box; try { box = label.getBBox(); } catch { box = null; }
+    if (!box || !box.width) { frame.removeAttribute('width'); continue; }
+    frame.setAttribute('x', String(box.x - 5));
+    frame.setAttribute('y', String(box.y - 3));
+    frame.setAttribute('width', String(box.width + 10));
+    frame.setAttribute('height', String(box.height + 6));
+  }
+}
+
 function renderTopology() {
   applyViewport();
   const devices = new Map(current.devices.map((item) => [item.id, item]));
@@ -689,7 +704,12 @@ function renderTopology() {
   const groupMarkup = boxes.map((group) => `<g class="topology-group" data-depth="${group.depth}">
       <rect class="group-frame" x="${group.x}" y="${group.y}" width="${group.width}" height="${group.height}"></rect>
     </g>`).join('');
-  const groupLabels = boxes.map((group) => `<text class="group-label" x="${group.x + 11}" y="${group.y + 13}">${escapeText(group.label)}</text>`).join('');
+  // 이름표가 선 위에 있어도 배경이 없으면 선이 글자 사이를 지난다. 상자를 깔아 탭처럼 앉힌다.
+  // 상자 크기는 렌더 뒤에 글자를 실제로 재서 정한다 — 글꼴이 대체돼도 어긋나지 않는다.
+  const groupLabels = boxes.map((group) => `<g class="group-tag" data-depth="${group.depth}">
+      <rect class="group-tag-frame"></rect>
+      <text class="group-label" x="${group.x + 11}" y="${group.y + 13}">${escapeText(group.label)}</text>
+    </g>`).join('');
   const endpointPoint = (id) => devices.get(id)?.position || (() => {
     const shape = topology.diagram?.shapes?.find((item) => item.id === id);
     return shape ? { x: shape.x + shape.width / 2, y: shape.y + shape.height / 2 } : null;
@@ -721,6 +741,7 @@ function renderTopology() {
       <text class="link-label"${link.severed ? '' : ` data-live-util="${utilization ?? ''}" data-live-seed="${link.id}"`} x="${middleX}" y="${middleY}" text-anchor="middle">${link.severed ? 'DOWN' : formatPercent(utilization)}</text>
     </g>`;
   }).join('') + diagramConnectors + groupLabels;
+  fitGroupTags();
 
   const selectionHas = (type, id) => state.selection.some((item) => item.type === type && item.id === id)
     || type === 'shape' && state.selection.some((item) => item.type === 'group'

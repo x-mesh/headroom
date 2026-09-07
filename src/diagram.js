@@ -258,7 +258,11 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
   const width = Math.max(...extent.map((p) => p.x)) - left + 24;
   const height = Math.max(...extent.map((p) => p.y)) - top + 20;
 
-  const groupMarkup = groups.map((group) => `<rect x="${fmt(group.x)}" y="${fmt(group.y)}" width="${fmt(group.width)}" height="${fmt(group.height)}" fill="none" stroke="${INK.line}" stroke-width="1" stroke-dasharray="4 4"/>`
+  const groupMarkup = groups.map((group) => `<rect x="${fmt(group.x)}" y="${fmt(group.y)}" width="${fmt(group.width)}" height="${fmt(group.height)}" fill="none" stroke="${INK.line}" stroke-width="1" stroke-dasharray="4 4"/>`).join('');
+  // 이름표는 링크 위에 그린다. 아래에 두면 선이 RACK 03 같은 이름을 갈라 어느 랙인지 읽을 수
+  // 없다. 상자 너비는 9px 고정폭 글꼴의 자간(0.6em)으로 어림한다 — 화면은 실제로 재지만
+  // 내보내기에는 잴 DOM 이 없다. 값이 어긋나면 글자가 상자 밖으로 나가므로 여유를 둔다.
+  const groupLabels = groups.map((group) => `<rect x="${fmt(group.x + 6)}" y="${fmt(group.y + 3)}" width="${fmt(group.label.length * 5.4 + 10)}" height="13" fill="${INK.raised}" stroke="${INK.lineSoft}" stroke-width="1"/>`
     + text(group.x + 11, group.y + 13, group.label, { size: 9, weight: 700, fill: INK.muted })).join('');
 
   const edges = routes.map(({ edge, points }) => {
@@ -290,7 +294,7 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${fmt(left)} ${fmt(top)} ${fmt(width)} ${fmt(height)}" width="${fmt(width)}" height="${fmt(height)}">`
     + `<rect x="${fmt(left)}" y="${fmt(top)}" width="${fmt(width)}" height="${fmt(height)}" fill="${INK.canvas}"/>`
-    + groupMarkup + edges + elements + stamp + '</svg>';
+    + groupMarkup + edges + groupLabels + elements + stamp + '</svg>';
 }
 
 // 이 그림이 어느 배율·장애·엔진에서 나왔고 무엇이 미확인인지. 이것이 없으면 그림은 근거가 아니다.

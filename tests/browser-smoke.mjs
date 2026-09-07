@@ -223,6 +223,15 @@ async function verify(viewport, screenshot, interact = false) {
   await page.locator('#tab-failure').click();
   assert.ok(await page.locator('.topology-group').count() > 0, 'zones must draw as group boxes');
   assert.ok(await page.locator('.topology-group[data-depth="2"]').count() > 0, 'a slash in a zone nests one box inside another');
+  // 이름표는 선 위에 뜨지만 배경이 없으면 선이 글자 사이를 지난다. 상자는 글자를 실제로 재서
+  // 깔므로, 글꼴이 대체되어 글자가 넓어지면 상자 밖으로 새어 나온다.
+  const tags = await page.evaluate(() => [...document.querySelectorAll('.group-tag')].map((tag) => ({
+    label: tag.querySelector('.group-label').textContent,
+    text: tag.querySelector('.group-label').getBBox().width,
+    frame: Number(tag.querySelector('.group-tag-frame').getAttribute('width') || 0),
+  })));
+  assert.ok(tags.length > 0, '그룹마다 이름표 상자가 있어야 한다');
+  for (const tag of tags) assert.ok(tag.frame >= tag.text, `${tag.label} 의 상자(${Math.round(tag.frame)})가 글자(${Math.round(tag.text)})를 덮지 못합니다`);
   assert.ok(await page.locator('.node-axis[style*="--util"]').count() > 0, 'a judged axis carries the meter value');
 
   // 심볼과 클래스 표기는 확정됐다. 배지만 취향이라 토글로 남아 있다.
