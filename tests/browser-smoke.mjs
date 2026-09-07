@@ -251,6 +251,20 @@ async function verify(viewport, screenshot, interact = false) {
   assert.equal(brief.unknown, full.unknown, `요약이 미확인 축을 숨겼습니다: ${brief.unknown} / ${full.unknown}`);
   await detail('full');
 
+  // 여러 개를 고르는 두 손놀림. 예전에는 pointerdown 이 보조키를 무시하고 선택을 덮어써서,
+  // 이어지는 click 의 토글이 방금 넣은 것을 도로 빼 아무것도 안 남았다.
+  const picked = () => page.evaluate(() => document.querySelectorAll('.mesh-node.multi-selected').length);
+  for (const [id, modifiers, want, why] of [
+    ['fw-a', [], 1, '보조키 없는 클릭은 하나만 고른다'],
+    ['fw-b', ['Shift'], 2, 'shift 클릭은 선택에 더해야 한다'],
+    ['spine-a', ['Meta'], 3, 'cmd 클릭도 같은 손놀림이다'],
+    ['fw-b', ['Shift'], 2, '이미 고른 것을 다시 누르면 빠져야 한다'],
+    ['fw-a', [], 1, '보조키 없는 클릭은 하나로 되돌린다'],
+  ]) {
+    await page.locator(`[data-device-id="${id}"]`).click({ modifiers });
+    assert.equal(await picked(), want, why);
+  }
+
   assert.ok(await page.locator('.topology-group').count() > 0, 'zones must draw as group boxes');
   assert.ok(await page.locator('.topology-group[data-depth="2"]').count() > 0, 'a slash in a zone nests one box inside another');
   // 이름표는 선 위에 뜨지만 배경이 없으면 선이 글자 사이를 지난다. 상자는 글자를 실제로 재서

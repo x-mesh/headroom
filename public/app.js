@@ -1186,7 +1186,9 @@ function renderComparison() {
 }
 
 function renderEditorMode() {
-  const labels = { select: 'SELECT · DRAG TO MOVE', connect: state.connectSource ? `CONNECT · ${state.connectSource.toUpperCase()} → SELECT TARGET` : 'CONNECT · SELECT SOURCE' };
+  // 여러 개를 고르는 두 손놀림이 화면 어디에도 적혀 있지 않아, 있는 줄 모르고 쓰지 못했다.
+  // 빈 곳을 그냥 끌면 화면이 밀리고 Shift 를 누른 채 끌어야 선택 상자가 나온다.
+  const labels = { select: 'SELECT · DRAG TO MOVE · SHIFT+DRAG TO BOX · SHIFT+CLICK TO ADD', connect: state.connectSource ? `CONNECT · ${state.connectSource.toUpperCase()} → SELECT TARGET` : 'CONNECT · SELECT SOURCE' };
   element('editor-mode').lastChild.textContent = labels[state.editorMode] || state.editorMode.toUpperCase();
   document.querySelector('[data-editor-action="connect"]').setAttribute('aria-pressed', String(state.editorMode === 'connect'));
 }
@@ -1993,6 +1995,10 @@ element('node-layer').addEventListener('pointerdown', (event) => {
     return;
   }
   const device = topology.devices.find(({ id }) => id === button.dataset.deviceId);
+  // 보조키를 누른 것은 고르겠다는 뜻이지 끌겠다는 뜻이 아니다. 여기서 선택을 먼저 바꾸면
+  // 이어지는 click 의 토글이 방금 넣은 것을 도로 빼서 아무것도 안 남았다 — shift 클릭으로
+  // 두 번째 장비를 고르면 선택이 0이 되던 원인이다. 선택은 click 에 맡기고 드래그도 걸지 않는다.
+  if (event.shiftKey || event.metaKey || event.ctrlKey) return;
   if (!state.selection.some((item) => item.type === 'device' && item.id === device.id)) selectElement('device', device.id);
   dragState = { id: device.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, origin: { ...device.position }, initial: structuredClone(topology), selection: structuredClone(state.selection), button };
   button.setPointerCapture(event.pointerId); button.classList.add('dragging');
