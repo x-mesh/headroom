@@ -602,7 +602,7 @@ function createDeviceFromPalette(kind, position) {
     });
     state.selectedId = device.id;
     closeEditorPanel();
-    commitTopology(`${device.name} 장비를 추가했습니다. 인스펙터에서 한계값을 입력하세요.`);
+    commitTopology(`${device.name} 장비를 추가했습니다. 장비 검사에서 한계값을 입력하세요.`);
   } catch (error) { showToast(error.message); }
 }
 
@@ -1454,7 +1454,7 @@ function openDeviceSwapPicker(id) {
       ${profile.note ? `<span class="swap-note">${escapeText(profile.note)}</span>` : ''}
     </button>`;
   })).join('');
-  openEditorPanel(`${resourceName(device)} · 장비 선택`, `<p class="editor-hint">같은 장비라도 측정 조건이 다르면 다른 숫자입니다. 조건째로 고르세요. 고른 값은 워크로드 조건과 대조해 적용 가능한지 판정합니다.</p>
+  openEditorPanel(`${resourceName(device)} · 장비 선택`, `<p class="editor-hint">같은 장비라도 측정 조건이 다르면 다른 숫자라, 조건째로 고릅니다. 고른 값은 워크로드 조건과 대조해 쓸 수 있는지 판정합니다.</p>
     <div class="template-head">
       <label class="template-search"><span class="visually-hidden">장비 검색</span>
         <input type="search" id="swap-search" placeholder="제조사, 모델, 조건으로 검색 (예: 1518, IPS, ASA)" autocomplete="off"></label>
@@ -1537,7 +1537,7 @@ function deviceLimitFields(kind, limits = {}) {
 
 function openDeviceForm(template = null) {
   const kind = template?.kind || PALETTE[0].kind;
-  openEditorPanel('장비 추가', `<p class="editor-hint">장비를 만든 뒤 캔버스에서 드래그해 위치를 조정하세요. 비어 있는 한계값은 unknown으로 유지됩니다.</p><form class="editor-form" data-editor-form="device">
+  openEditorPanel('장비 추가', `<p class="editor-hint">장비를 만든 뒤 캔버스에서 끌어 자리를 옮기세요. 비어 있는 한계값은 미확인으로 남습니다.</p><form class="editor-form" data-editor-form="device">
     <label>이름<input name="name" maxlength="80" required value="${escapeAttribute(template?.name || '')}"></label>
     <label>클래스<select name="kind">${PALETTE.map((item) => `<option value="${escapeAttribute(item.kind)}" ${item.kind === kind ? 'selected' : ''}>${escapeText(`${item.label} · ${item.kind}`)}</option>`).join('')}</select></label>
     <label>영역<input name="zone" maxlength="80" value="${escapeAttribute(template?.zone || 'UNASSIGNED')}"></label>
@@ -1612,7 +1612,7 @@ function openVerificationPanel() {
   const racks = (current.racks || []).map((item) => `<li><b>${escapeText(item.name || item.id)}</b> · 전력 ${item.powerStatus || item.status || '미확인'} · U ${item.spaceStatus || item.status || '미확인'} <button type="button" data-delete-model="rack" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>정의된 랙 없음</li>';
   const scenarios = state.namedScenarios.map((item) => `<li><button type="button" data-load-scenario="${item.id}">${escapeText(item.name)}</button> <button type="button" data-delete-model="scenario" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>저장한 시나리오 없음</li>';
   openEditorPanel('서비스 생존성 검증 설정', `
-    <p class="editor-hint">서비스 요구조건과 함께 장애 도메인, 랙 전력·U를 검증합니다. 비어 있는 근거는 통과로 처리하지 않습니다.</p>
+    <p class="editor-hint">서비스 수용 기준과 함께 장애 도메인, 랙 전력·U를 검증합니다. 비어 있는 근거는 통과로 치지 않습니다.</p>
     <div class="verification-columns">
       <section><h3>서비스</h3><ul>${services}</ul><form class="editor-form" data-editor-form="service"><label>이름<input name="name" required maxlength="80"></label><label>최소 전달률 (%)<input name="ratio" type="number" min="1" max="100" value="100"></label>${checkList('demandIds', topology.demands, '검증할 수요')}<button type="submit">서비스 추가</button><p class="editor-error"></p></form></section>
       <section><h3>장애 도메인</h3><ul>${domains}</ul><form class="editor-form" data-editor-form="failure-domain"><label>이름<input name="name" required maxlength="80"></label>${checkList('deviceIds', topology.devices, '함께 멈출 장비')}${checkList('linkIds', topology.links, '함께 멈출 링크')}<button type="submit">장애 도메인 추가</button><p class="editor-error"></p></form></section>
@@ -1648,7 +1648,7 @@ async function exportPng() {
 function saveProject() {
   downloadText('rack-mesh-project.json', serializeProject(topology, { ...state, baseline: baselineSnapshot }));
   documentHistory.markSaved();
-  showToast('versioned 프로젝트 JSON을 저장했습니다.');
+  showToast('프로젝트 JSON을 저장했습니다.');
 }
 
 async function readFile(input) {
@@ -1685,13 +1685,13 @@ function handleEditorAction(action) {
   if (action === 'distribute-x' && state.selection.length > 2) { topology = distributeSelection(topology, state.selection, 'x'); commitTopology('선택한 요소를 가로로 분배했습니다.'); }
   if (action === 'annotation-connect') {
     const endpoints = state.selection.filter(({ type }) => type === 'device' || type === 'shape');
-    if (endpoints.length !== 2) { showToast('주석 연결선에는 장비 또는 도형 두 개를 선택하세요.'); return; }
+    if (endpoints.length !== 2) { showToast('주석 연결선을 그릴 장비나 도형을 두 개 선택하세요.'); return; }
     topology = addConnector(topology, { source: endpoints[0].id, target: endpoints[1].id, kind: 'annotation' }); commitTopology('계산에서 제외되는 주석 연결선을 추가했습니다.');
   }
   if (action === 'map-device') {
     const selected = state.selection.length === 1 && state.selection[0].type === 'shape' ? state.selection[0] : null;
     const shape = selected && topology.diagram?.shapes?.find(({ id }) => id === selected.id);
-    if (!shape) { showToast('장비 의미를 붙일 도형 하나를 선택하세요.'); return; }
+    if (!shape) { showToast('장비로 지정할 도형을 하나 선택하세요.'); return; }
     let deviceId = `device-${shape.id}`; let suffix = 2;
     while (topology.devices.some(({ id }) => id === deviceId)) deviceId = `device-${shape.id}-${suffix++}`;
     openDeviceForm({ name: shape.text || '가져온 장비', deviceId, zone: 'UNASSIGNED', position: { x: shape.x + shape.width / 2, y: shape.y + shape.height / 2 }, mapShapeId: shape.id });
@@ -2524,7 +2524,7 @@ element('component-palette').addEventListener('pointerup', (event) => {
   const point = canvasPoint(event);
   const drag = endPaletteDrag();
   if (!drag.ghost) { createDeviceFromPalette(drag.kind, nextDevicePosition()); return; }
-  if (!point.inside) { showToast('토폴로지 영역에 놓아야 장비가 생성됩니다.'); return; }
+  if (!point.inside) { showToast('캔버스 안에 놓아야 장비가 만들어집니다.'); return; }
   createDeviceFromPalette(drag.kind, point);
 });
 element('component-palette').addEventListener('pointercancel', endPaletteDrag);

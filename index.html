@@ -55,7 +55,7 @@
         </div>
       </section>
 
-      <section class="editor-deck" aria-label="토폴로지 편집 도구">
+      <section class="editor-deck" aria-label="설계 편집 도구">
         <div class="editor-tools" role="toolbar" aria-label="설계 편집">
           <button type="button" data-editor-action="new">설계 템플릿</button>
           <button type="button" data-editor-action="undo" disabled aria-label="실행 취소">실행 취소</button>
@@ -70,7 +70,7 @@
           <button type="button" data-editor-action="align-left">왼쪽 정렬</button>
           <button type="button" data-editor-action="distribute-x">가로 분배</button>
           <button type="button" data-editor-action="annotation-connect">주석 연결</button>
-          <button type="button" data-editor-action="map-device">도형을 장비로</button>
+          <button type="button" data-editor-action="map-device">장비로 지정</button>
           <button type="button" data-editor-action="demand">트래픽 수요</button>
           <button type="button" data-editor-action="workload">워크로드 조건</button>
           <button type="button" data-editor-action="verification">검증 설정</button>
@@ -100,7 +100,7 @@
       </section>
 
       <section class="mobile-fault-tray" aria-label="빠른 장애 주입">
-        <div><span class="section-code">QUICK FAILURE</span><strong>토폴로지를 보며 장애 주입</strong></div>
+        <div><span class="section-code">QUICK FAILURE</span><strong>설계를 보며 장애 주입</strong></div>
         <button type="button" data-quick-failure="fw-a" aria-pressed="false">FW A <span>UP</span></button>
         <button type="button" data-quick-failure="fw-b" aria-pressed="false">FW B <span>UP</span></button>
         <a href="#failure-heading">전체 목록</a>
@@ -120,11 +120,11 @@
             <button type="button" role="tab" id="tab-failure" data-panel-tab="failure" aria-controls="panel-failure" aria-selected="false" tabindex="-1">장애 주입</button>
           </div>
           <div id="panel-palette" role="tabpanel" aria-labelledby="tab-palette">
-            <p class="panel-note">아이콘을 캔버스로 끌어다 놓으세요. 클릭하면 빈 자리에 놓입니다. 한계값은 인스펙터에서 채웁니다.</p>
+            <p class="panel-note">아이콘을 캔버스로 끌어다 놓거나, 클릭해서 빈 자리에 놓으세요. 한계값은 장비 검사에서 채웁니다.</p>
             <div class="component-palette" id="component-palette"></div>
           </div>
           <div id="panel-failure" role="tabpanel" aria-labelledby="tab-failure" hidden>
-            <p class="panel-note">장비나 링크를 끄면 활성 경로로 부하를 다시 분배합니다.</p>
+            <p class="panel-note">장비나 링크를 끄면 살아 있는 경로로 부하를 다시 나눕니다.</p>
             <p class="failure-grade" id="failure-grade" aria-live="polite">계산 중</p>
             <div class="failure-list" id="failure-list"></div>
           </div>
@@ -152,7 +152,7 @@
             <div class="mobile-pan-cue" aria-hidden="true"><span>←</span> 좌우로 탐색 <span>→</span></div>
             <div class="topology-stage" id="topology-stage">
             <div class="topology-canvas" id="topology-canvas">
-              <svg class="link-layer" id="link-layer" viewBox="0 0 940 580" role="img" aria-label="장비 연결 링크"></svg>
+              <svg class="link-layer" id="link-layer" viewBox="0 0 940 580" role="img" aria-label="장비를 잇는 링크"></svg>
               <div class="diagram-layer" id="diagram-layer" aria-label="도형과 주석"></div>
               <div class="node-layer" id="node-layer"></div>
               <div class="selection-marquee" id="selection-marquee" hidden></div>
@@ -183,7 +183,7 @@
           <span class="section-code">BASELINE COMPARISON</span>
           <h2 id="comparison-heading">설계 변화</h2>
         </div>
-        <p>기준선은 최초 활성 상태에 고정됩니다.</p>
+        <p>기준선은 설계를 불러온 시점에 고정됩니다.</p>
       </header>
       <div class="comparison-grid" id="comparison-grid"></div>
     </section>
