@@ -940,6 +940,16 @@ async function verify(viewport, screenshot, interact = false) {
     assert.equal(await page.evaluate(() => !document.getElementById('selection-marquee').hidden), false,
       'the selection box must disappear with the pointer');
 
+    // 빈 곳에서 오른쪽 버튼을 누르면 브라우저 메뉴가 뜨면 안 된다. macOS 는 누르는 순간 그것을
+    // 여는데, 그러면 포인터 잡기가 풀려 밀기가 시작하자마자 죽는다. 헤드리스는 네이티브 메뉴를
+    // 열지 않아 스크롤만 재면 이 회귀를 놓친다 - 기본 동작이 막혔는지를 직접 잰다.
+    const menuBlocked = await page.evaluate((spot) => new Promise((done) => {
+      const area = document.querySelector('.topology-scroll');
+      area.addEventListener('contextmenu', (event) => done(event.defaultPrevented), { once: true });
+      area.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: spot.x, clientY: spot.y }));
+    }), emptySpot);
+    assert.equal(menuBlocked, true, 'right-pressing empty space must not open the browser menu, or the pan dies at once');
+
     // 오른쪽 드래그가 화면을 민다.
     await page.mouse.move(emptySpot.x, emptySpot.y);
     await page.mouse.down({ button: 'right' });

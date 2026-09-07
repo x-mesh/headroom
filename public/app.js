@@ -2496,7 +2496,6 @@ topologyScroll.addEventListener('pointermove', (event) => {
     return;
   }
   if (!panState || event.pointerId !== panState.pointerId) return;
-  if (Math.hypot(event.clientX - panState.startX, event.clientY - panState.startY) > 4) panMoved = true;
   topologyScroll.scrollLeft = panState.left - (event.clientX - panState.startX);
   topologyScroll.scrollTop = panState.top - (event.clientY - panState.startY);
 });
@@ -2521,12 +2520,11 @@ topologyScroll.addEventListener('pointerup', (event) => {
   }
   endPan();
 });
-// 오른쪽 버튼으로 화면을 민 뒤에는 브라우저가 컨텍스트 메뉴를 띄운다. 민 것과 부른 것을
-// 구분해, 실제로 움직였을 때만 메뉴를 막는다 - 노드 위 오른쪽 클릭 메뉴는 그대로 열려야 한다.
-let panMoved = false;
+// 빈 곳의 오른쪽 버튼은 화면을 미는 손잡이다. macOS 는 누르는 순간 브라우저 메뉴를 여는데,
+// 그러면 포인터 잡기가 풀리며 pointercancel 이 와서 밀기가 시작하자마자 죽는다. 그래서 움직인
+// 뒤에 막는 것으로는 늦다 - 빈 곳에서는 누르는 순간부터 막는다. 자원 위 메뉴는 각자 열린다.
 topologyScroll.addEventListener('contextmenu', (event) => {
-  if (!panMoved) return;
-  panMoved = false;
+  if (event.target.closest('.mesh-node, .link-hit, .diagram-shape')) return;
   event.preventDefault();
 }, true);
 topologyScroll.addEventListener('pointercancel', () => { selectionBoxState = null; element('selection-marquee').hidden = true; endPan(); });
