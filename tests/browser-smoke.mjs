@@ -968,6 +968,26 @@ async function verifyNumberMotion() {
 
   const moving = await sampleMotion(2000);
   assert.ok(moving.axis.length >= 2, `떨림이 켜져 있는데 값이 그대로입니다: ${moving.axis.join(' ')}`);
+
+  // 사용률만 떨고 부하는 그대로면 한쪽만 살아 있는 것처럼 보인다. 그리고 떨리는 값이 자릿수까지
+  // 정하면 10.0G 가 9.85G 와 10.2G 사이를 오가며 열 너비가 춤춘다 - 움직임이 아니라 고장이다.
+  const loads = await page.evaluate(async () => {
+    const cells = [...document.querySelectorAll('.node-axis em[data-live-load]')];
+    const seen = cells.map((cell) => new Set([cell.textContent]));
+    const widths = cells.map((cell) => new Set([cell.textContent.length]));
+    await new Promise((done) => {
+      const started = performance.now();
+      const tick = () => {
+        cells.forEach((cell, index) => { seen[index].add(cell.textContent); widths[index].add(cell.textContent.length); });
+        (performance.now() - started < 2000 ? requestAnimationFrame(tick) : done());
+      };
+      requestAnimationFrame(tick);
+    });
+    return { total: cells.length, moved: seen.filter((set) => set.size > 1).length, resized: widths.filter((set) => set.size > 1).length };
+  });
+  assert.ok(loads.total > 0, '노드 칸의 부하 숫자를 찾지 못했습니다');
+  assert.equal(loads.moved, loads.total, `부하 숫자 ${loads.total}개 중 ${loads.moved}개만 떨립니다`);
+  assert.equal(loads.resized, 0, `부하 숫자 ${loads.resized}개가 글자 수까지 바뀌어 열이 흔들립니다`);
   assert.equal(moving.headline.length, 1, `헤드라인 숫자는 흔들리지 않아야 한다: ${moving.headline.join(' ')}`);
 
   // 끄면 멈춘다. 켜 둔 채로는 값을 적을 수 없으므로 끌 수 있어야 한다.

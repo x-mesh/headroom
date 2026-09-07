@@ -28,12 +28,16 @@ export const nodeAxisLabel = (key) => axisCatalog[key]?.nodeLabel || key.replace
 export const zonePath = (zone) => String(zone || '').split('/').map((part) => part.trim()).filter(Boolean);
 
 /** 노드 폭 안에 들어가도록 단위를 떼고 5자 이내로 줄인다. 단위는 축 이름 열이 지시한다. */
-export function formatNodeValue(value) {
+export function formatNodeValue(value, reference = value) {
   if (value == null || !Number.isFinite(value)) return '—';
   if (value === 0) return '0';
-  const [factor, suffix] = SI_STEPS.find(([step]) => Math.abs(value) >= step) || [1, ''];
+  // 단위와 소수 자리는 정착값이 정한다. 떨리는 값이 자릿수까지 정하면 10.0G 가 9.85G 와
+  // 10.2G 사이를 오가며 열 너비가 춤춘다 - 움직임이 아니라 고장으로 읽힌다.
+  const anchor = Number.isFinite(reference) ? reference : value;
+  const [factor, suffix] = SI_STEPS.find(([step]) => Math.abs(anchor) >= step) || [1, ''];
   const scaled = value / factor;
-  return `${scaled >= 100 ? Math.round(scaled) : scaled.toFixed(scaled >= 10 ? 1 : 2)}${suffix}`;
+  const scaledAnchor = anchor / factor;
+  return `${scaledAnchor >= 100 ? Math.round(scaled) : scaled.toFixed(scaledAnchor >= 10 ? 1 : 2)}${suffix}`;
 }
 
 export function formatNodePercent(value) {

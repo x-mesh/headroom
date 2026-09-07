@@ -37,10 +37,13 @@ const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 const element = (id) => document.getElementById(id);
 const formatPercent = (value, signed = false) => value == null ? '미확인' : `${signed && value > 0 ? '+' : ''}${Math.round(value * 100)}%`;
-const formatCompact = (value, unit) => {
+// reference 는 자릿수와 단위를 정하는 기준이다. 떨리는 값이 그것까지 정하면 1 Gbps 언저리에서
+// Mbps 와 Gbps 를 오가며 글자 수가 바뀐다. 값만 흔들리고 모양은 고정돼야 읽힌다.
+const formatCompact = (value, unit, reference = value) => {
   if (value == null) return '미확인';
-  if (unit === 'bps') return value >= 1e9 ? `${(value / 1e9).toFixed(value >= 10e9 ? 0 : 1)} Gbps` : `${(value / 1e6).toFixed(0)} Mbps`;
-  if (unit === 'pps') return value >= 1e6 ? `${(value / 1e6).toFixed(2)} Mpps` : `${(value / 1e3).toFixed(0)} Kpps`;
+  const anchor = reference ?? value;
+  if (unit === 'bps') return anchor >= 1e9 ? `${(value / 1e9).toFixed(anchor >= 10e9 ? 0 : 1)} Gbps` : `${(value / 1e6).toFixed(0)} Mbps`;
+  if (unit === 'pps') return anchor >= 1e6 ? `${(value / 1e6).toFixed(2)} Mpps` : `${(value / 1e3).toFixed(0)} Kpps`;
   if (unit === 'cps') return `${(value / 1e3).toFixed(0)} Kcps`;
   if (unit === 'sessions') return `${(value / 1e3).toFixed(0)} K`;
   return new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 1 }).format(value);
@@ -425,10 +428,13 @@ function vendorBadge(device) {
 function nodeAxisRow(device, key, axis) {
   // unknown·invalid 축에는 data-live-util을 붙이지 않는다. 텔레메트리가 미확인 값을 숫자로 덮어쓰면 안 된다.
   const live = axis.utilization == null ? '' : ` data-live-util="${axis.utilization}" data-live-seed="${escapeAttribute(device.id)}:${key}"`;
+  // 사용률만 떨고 부하는 그대로면 한쪽만 살아 있는 것처럼 보인다. 한계를 몰라 사용률이
+  // 미확인인 축에도 부하는 알 수 있으므로, 부하는 부하대로 따라간다.
+  const liveLoad = Number.isFinite(axis.load) ? ` data-live-load="${axis.load}" data-live-seed="${escapeAttribute(device.id)}:${key}-load"` : '';
   const percent = axis.status === 'unknown' ? '\u2014' : axis.status === 'invalid' ? 'ERR' : formatPercent(axis.utilization);
   // 막대 후보가 쓰는 값. unknown 축은 넘기지 않아 막대가 그려지지 않는다.
   const meter = axis.utilization == null ? '' : ` style="--util:${Math.min(axis.utilization, 1.5)}"`;
-  return `<span class="node-axis" data-axis-state="${axis.status}"${key === device.bindingAxis ? ' data-binding=""' : ''}${meter}><i>${STATE_TOKEN[axis.status] || '?'}</i><b>${escapeText(nodeAxisLabel(key))}</b><em>${formatNodeValue(axis.load)}</em><s${live}>${percent}</s></span>`;
+  return `<span class="node-axis" data-axis-state="${axis.status}"${key === device.bindingAxis ? ' data-binding=""' : ''}${meter}><i>${STATE_TOKEN[axis.status] || '?'}</i><b>${escapeText(nodeAxisLabel(key))}</b><em${liveLoad}>${formatNodeValue(axis.load)}</em><s${live}>${percent}</s></span>`;
 }
 
 // 축 토큰은 시각 축약이라 읽히면 소음이다. 접근 가능한 이름은 요약만 담고 흔들리는 값을 넣지 않는다.
@@ -1015,15 +1021,20 @@ const liveNodes = () => document.querySelectorAll('[data-live-util], [data-live-
 function liveTarget(node) {
   const raw = node.dataset.liveUtil ?? node.dataset.liveLoad;
   const value = raw === '' || raw == null ? Number.NaN : Number(raw);
-  return { seed: node.dataset.liveSeed, value, load: node.dataset.liveUnit != null };
+  // 같은 숫자를 세 가지 모양으로 쓴다. 백분율, 인스펙터의 단위 붙은 부하, 노드 칸의 짧은 부하.
+  const kind = node.dataset.liveUtil != null ? 'percent' : node.dataset.liveUnit != null ? 'unit' : 'compact';
+  return { seed: node.dataset.liveSeed, value, kind, load: kind !== 'percent' };
 }
-function paintLive(node, value, load) {
-  const text = load ? `${formatCompact(value, node.dataset.liveUnit)} load` : formatPercent(value);
+function paintLive(node, value, kind) {
+  const settled = Number(node.dataset.liveUtil ?? node.dataset.liveLoad);
+  const text = kind === 'percent' ? formatPercent(value)
+    : kind === 'unit' ? `${formatCompact(value, node.dataset.liveUnit, settled)} load`
+    : formatNodeValue(value, settled);
   if (node.textContent !== text) node.textContent = text;
   // 백분율은 1%포인트 단위로만 바뀌어서, 그것만으로는 움직임으로 읽히지 않는다. 막대는 그
   // 사이를 이어 준다 - 눈이 실제로 잡는 것은 자릿수가 아니라 길이다. 인스펙터 미터는 끌어서
   // 한계값을 정하는 손잡이라 건드리지 않는다.
-  const row = load ? null : node.closest('.node-axis');
+  const row = kind === 'percent' ? node.closest('.node-axis') : null;
   if (row) row.style.setProperty('--util', String(Math.min(Math.max(value, 0), 1.5)));
 }
 
@@ -1054,20 +1065,21 @@ function stepMotion(now) {
   const phase = now / MOTION.driftCadence;
   let running = false;
   for (const node of liveNodes()) {
-    const { seed, value, load } = liveTarget(node);
+    const { seed, value, kind } = liveTarget(node);
     if (!seed || !Number.isFinite(value)) continue;
     const tween = liveTweens.get(seed);
     if (tween) {
       const progress = Math.min(1, (now - tween.start) / MOTION.tween);
-      paintLive(node, tween.from + (tween.to - tween.from) * (1 - (1 - progress) ** 3), load);
+      paintLive(node, tween.from + (tween.to - tween.from) * (1 - (1 - progress) ** 3), kind);
       if (progress >= 1) liveTweens.delete(seed); else running = true;
       continue;
     }
     // 떨림은 헤드라인 숫자에 걸지 않는다(DESIGN.md). 고정된 비교 패널과 다른 말을 하면
     // 읽는 사람은 어느 쪽을 적어야 할지 알 수 없다.
-    if (!drifting || node.closest('.binding-callout')) { paintLive(node, value, load); continue; }
+    if (!drifting || node.closest('.binding-callout')) { paintLive(node, value, kind); continue; }
     const wave = telemetryWave(seed, phase, MOTION.amplitude);
-    paintLive(node, Math.max(0, load ? value * (1 + wave) : value + wave), load);
+    // 백분율에는 퍼센트포인트로 더하고, 부하 수치에는 비율로 곱한다.
+    paintLive(node, Math.max(0, kind === 'percent' ? value + wave : value * (1 + wave)), kind);
   }
   if (running || drifting) motionFrame = requestAnimationFrame(stepMotion);
 }
