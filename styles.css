@@ -162,6 +162,13 @@ button { color: inherit; }
 .editor-panel .template-item:hover { border-color: var(--signal-deep); background: var(--surface-raised); box-shadow: 0 4px 12px color-mix(in srgb, var(--panel-deep) 12%, transparent); }
 .editor-panel .template-item:focus-visible { outline: 2px solid var(--signal); outline-offset: -1px; }
 .template-item strong { font: 600 13px/1.25 var(--font-ui); }
+/* 지금 붙어 있는 값은 목록에서 바로 찾을 수 있어야 한다. 색만이 아니라 라벨로도 말한다. */
+.editor-panel .template-item[data-current] { border-color: var(--signal-deep); background: var(--surface-raised); }
+.template-grade[data-grade="current"] { color: var(--signal-deep); }
+.template-item em { color: var(--text); font-style: normal; font: 500 10px/1.5 var(--font-data); }
+.swap-note { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.swap-detach { margin-left: auto; min-height: 32px; padding: 0 12px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); font: 500 11px/1 var(--font-ui); cursor: pointer; }
+.swap-detach:hover { border-color: var(--line); color: var(--text); }
 .template-item span { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .template-item em { color: var(--signal-deep); font-style: normal; font-size: 10px; line-height: 1.5; }
 .demand-manager-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; }.demand-manager-head .editor-hint { margin: 0; }.demand-manager-head button { border-color: var(--signal-deep); background: var(--signal); }

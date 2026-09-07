@@ -52,9 +52,11 @@ async function verifyCanvasEditing() {
   const someNode = page.locator('.mesh-node:not(.disabled)').first();
   await someNode.click({ button: 'right' });
   await page.waitForSelector('#context-menu [role="menuitem"]');
-  assert.deepEqual(await page.locator('#context-menu [role="menuitem"]').allTextContents(), ['삭제', '복제', '여기서 링크 시작', '장애 주입']);
+  // 카탈로그가 있는 클래스에는 장비 선택이, 없는 클래스에는 나오지 않는다.
+  assert.deepEqual(await page.locator('#context-menu [role="menuitem"]').allTextContents(),
+    ['삭제', '장비 고르기', '복제', '여기서 링크 시작', '장애 주입']);
   await page.keyboard.press('ArrowDown');
-  assert.equal(await page.evaluate(() => document.activeElement?.dataset?.contextAction), 'duplicate', 'arrow keys move through the menu');
+  assert.equal(await page.evaluate(() => document.activeElement?.dataset?.contextAction), 'swap', 'arrow keys move through the menu');
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => document.querySelector('#context-menu')?.hidden);
   await page.keyboard.press('Shift+F10');
@@ -270,6 +272,26 @@ async function verify(viewport, screenshot, interact = false) {
   await page.locator('[data-editor-action="undo"]').click();
   await page.locator('[data-editor-action="undo"]').click();
   await page.waitForFunction((before) => document.querySelector('[data-axis-limit]')?.textContent === before, limitBefore);
+
+  // 장비를 바꾸는 것은 인스펙터까지 가지 않고 자리에서 하는 일이다.
+  await page.locator('[data-device-id="fw-a"]').click({ button: 'right' });
+  await page.waitForFunction(() => !document.querySelector('#context-menu')?.hidden);
+  assert.equal(await page.locator('[data-context-action="swap"]').count(), 1, 'a class with a catalogue must offer the swap in place');
+  await page.locator('[data-context-action="swap"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-swap-catalog]'));
+  const choices = await page.locator('[data-swap-catalog]').count();
+  assert.ok(choices >= 20, `고를 수 있는 조건이 ${choices}개뿐입니다.`);
+  await page.locator('#swap-search').fill('ASA');
+  await page.waitForFunction(() => document.querySelectorAll('[data-swap-catalog]:not([hidden])').length < 20);
+  const narrowed = await page.locator('[data-swap-catalog]:not([hidden])').count();
+  assert.ok(narrowed > 0 && narrowed < choices, '검색이 조건 목록을 좁혀야 합니다.');
+  await page.locator('[data-swap-catalog]:not([hidden])').first().click();
+  await page.waitForFunction(() => document.querySelector('#toast')?.textContent.includes('바꿨습니다'));
+  assert.match(await page.locator('#toast').textContent(), /FW A를 .+으?로 바꿨습니다/, 'the toast must name what it became, with the right particle');
+  assert.match(await page.locator('[data-device-id="fw-a"] .node-model').textContent(), /Firewall/);
+  // 같은 메뉴에서 되돌릴 수 있어야 한다. 데이터시트를 뗀 뒤에는 고르기로 이름이 바뀐다.
+  await page.locator('[data-editor-action="undo"]').click();
+  await page.waitForFunction(() => !document.querySelector('#toast')?.textContent.includes('바꿨습니다'));
 
   assert.equal(await page.locator('.failure-switch').count(), 20, 'every device and link must be failable, not two classes');
   assert.match(await page.locator('#failure-grade').textContent(), /단일 장애점 \d+개/, 'the panel must grade the design before anything is turned off');

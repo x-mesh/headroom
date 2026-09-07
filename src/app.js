@@ -102,7 +102,7 @@ function persistWorkingCopy() {
 
 // 받침에 따라 조사를 고른다. 한글이 아니면 받침 없는 쪽으로 읽는다.
 // 종성 ㄹ 은 '으로'가 아니라 '로'를 쓴다. '이/가'에는 그 예외가 없다.
-const PARTICLES = { subject: ['이', '가'], instrumental: ['으로', '로'] };
+const PARTICLES = { subject: ['이', '가'], object: ['을', '를'], instrumental: ['으로', '로'] };
 function withParticle(word, kind) {
   const [withBatchim, without] = PARTICLES[kind];
   const last = String(word).codePointAt(String(word).length - 1);
@@ -1063,6 +1063,50 @@ function openTemplatePicker() {
   element('template-search').focus();
 }
 
+// 카탈로그의 장비를 자리에서 바꾼다. 프로필까지 한 장의 카드로 펼치는 이유는, 고르는 단위가
+// 장비가 아니라 "어느 조건에서 잰 값이냐"이기 때문이다. 같은 장비도 조건이 다르면 다른 숫자다.
+function openDeviceSwapPicker(id) {
+  const device = deviceById(id);
+  if (!device) return;
+  const entries = catalogFor(device.kind);
+  const cards = entries.flatMap((entry) => entry.profiles.map((profile) => {
+    const current = device.spec?.catalogId === entry.id && device.spec?.profileId === profile.id;
+    const limits = Object.entries(profile.limits)
+      .map(([axis, value]) => `${axisCatalog[axis]?.nodeLabel || axis} ${value == null ? '미확인' : formatCompact(value, axisCatalog[axis]?.unit)}`)
+      .join(' · ');
+    const haystack = [entry.vendor, entry.model, profile.label, profile.note, limits].join(' ').toLowerCase();
+    return `<button type="button" class="template-item" data-swap-catalog="${escapeAttribute(entry.id)}" data-swap-profile="${escapeAttribute(profile.id)}"
+      data-search="${escapeAttribute(haystack)}"${current ? ' data-current="" aria-current="true"' : ''}>
+      ${current ? '<b class="template-grade" data-grade="current">지금 이 값</b>' : ''}
+      <strong>${escapeText(`${entry.vendor} ${entry.model}`)}</strong>
+      <span>${escapeText(profile.label)}</span>
+      <em>${escapeText(limits)}</em>
+      ${profile.note ? `<span class="swap-note">${escapeText(profile.note)}</span>` : ''}
+    </button>`;
+  })).join('');
+  openEditorPanel(`${resourceName(device)} · 장비 선택`, `<p class="editor-hint">같은 장비라도 측정 조건이 다르면 다른 숫자입니다. 조건째로 고르세요. 고른 값은 워크로드 조건과 대조해 적용 가능한지 판정합니다.</p>
+    <div class="template-head">
+      <label class="template-search"><span class="visually-hidden">장비 검색</span>
+        <input type="search" id="swap-search" placeholder="제조사, 모델, 조건으로 검색 (예: 1518, IPS, ASA)" autocomplete="off"></label>
+      <p class="template-count" id="swap-count" aria-live="polite">${entries.reduce((n, entry) => n + entry.profiles.length, 0)}개</p>
+      ${device.spec ? '<button type="button" class="swap-detach" data-swap-detach>데이터시트를 떼고 직접 입력으로</button>' : ''}
+    </div>
+    <div class="template-list">${cards}</div>`);
+  element('swap-search').focus();
+}
+
+function filterSwapChoices(query) {
+  const needle = query.trim().toLowerCase();
+  let shown = 0;
+  const items = [...document.querySelectorAll('[data-swap-catalog]')];
+  for (const item of items) {
+    const match = !needle || item.dataset.search.includes(needle);
+    item.hidden = !match;
+    if (match) shown += 1;
+  }
+  element('swap-count').textContent = needle ? `${shown}개 일치` : `${items.length}개`;
+}
+
 function filterTemplates(query) {
   const needle = query.trim().toLowerCase();
   let shown = 0;
@@ -1325,7 +1369,12 @@ function endLinkDraft() {
 function contextItemsFor(resource, type) {
   const failed = type === 'device' ? state.disabledDevices.has(resource.id) : state.disabledLinks.has(resource.id);
   const items = [{ id: 'delete', label: '삭제', danger: true }];
-  if (type === 'device') items.push({ id: 'duplicate', label: '복제' }, { id: 'connect', label: '여기서 링크 시작' });
+  if (type === 'device') {
+    // 장비를 바꾸는 것은 인스펙터까지 가지 않고 자리에서 하는 일이다. 그 클래스에 카탈로그가
+    // 있을 때만 내놓는다 — 고를 것이 없는 항목을 띄우지 않는다.
+    if (catalogFor(resource.kind).length) items.push({ id: 'swap', label: resource.spec ? '장비 바꾸기' : '장비 고르기' });
+    items.push({ id: 'duplicate', label: '복제' }, { id: 'connect', label: '여기서 링크 시작' });
+  }
   items.push({ id: 'fault', label: failed ? '장애 복구' : '장애 주입' });
   return items;
 }
@@ -1365,6 +1414,7 @@ function runContextAction(action) {
   const undo = (message) => () => { topology = previous; state.selectedId = id; commitTopology(message); };
   try {
     if (action === 'fault') { toggleFailure(type, id); return; }
+    if (action === 'swap') { openDeviceSwapPicker(id); return; }
     if (action === 'connect') { state.editorMode = 'connect'; state.connectSource = id; renderTopology(); renderEditorMode(); showToast('연결할 두 번째 장비를 선택하세요.'); return; }
     if (action === 'delete') {
       const name = resourceName(resource);
@@ -1629,6 +1679,7 @@ element('editor-panel-content').addEventListener('submit', (event) => {
 });
 element('editor-panel-content').addEventListener('input', (event) => {
   if (event.target.id === 'template-search') filterTemplates(event.target.value);
+  if (event.target.id === 'swap-search') filterSwapChoices(event.target.value);
 });
 element('editor-panel-content').addEventListener('change', (event) => {
   const form = event.target.closest('form[data-editor-form="device"]');
@@ -1701,7 +1752,7 @@ for (const type of ['pointerup', 'pointercancel']) {
     axisDrag = null;
     if (!limit) { renderInspector(); return; }
     applyAxisLimit(id, axis, limit);
-    commitTopology(`${resourceName(resourceById(id)) || id}의 ${axisCatalog[axis]?.label || axis} 한계를 ${formatCompact(limit, axisCatalog[axis]?.unit)}로 정했습니다.`);
+    commitTopology(`${resourceName(resourceById(id)) || id}의 ${axisCatalog[axis]?.label || axis} 한계를 ${withParticle(formatCompact(limit, axisCatalog[axis]?.unit), 'instrumental')} 정했습니다.`);
   });
 }
 
@@ -1720,7 +1771,7 @@ element('inspector-content').addEventListener('keydown', (event) => {
   const next = snapLimit(current * step, event.shiftKey);
   if (!next || next === current) return;
   applyAxisLimit(id, axis, next);
-  commitTopology(`${resourceName(resourceById(id)) || id}의 ${axisCatalog[axis]?.label || axis} 한계를 ${formatCompact(next, axisCatalog[axis]?.unit)}로 정했습니다.`);
+  commitTopology(`${resourceName(resourceById(id)) || id}의 ${axisCatalog[axis]?.label || axis} 한계를 ${withParticle(formatCompact(next, axisCatalog[axis]?.unit), 'instrumental')} 정했습니다.`);
   document.querySelector(`[data-axis-drag="${axis}"][data-axis-resource="${id}"]`)?.focus();
 });
 
@@ -1737,6 +1788,21 @@ element('inspector-content').addEventListener('click', (event) => {
 });
 
 element('editor-panel-content').addEventListener('click', (event) => {
+  const choice = event.target.closest('[data-swap-catalog]');
+  const detach = event.target.closest('[data-swap-detach]');
+  if (choice || detach) {
+    const id = state.selectedId;
+    const name = resourceName(resourceById(id)) || id;
+    try {
+      if (detach) { applySpec(topology, id, null); closeEditorPanel(); commitTopology(`${name}의 데이터시트 값을 떼고 직접 입력으로 돌렸습니다.`); return; }
+      const entry = catalogEntry(choice.dataset.swapCatalog);
+      const profile = catalogProfile(entry.id, choice.dataset.swapProfile);
+      applySpec(topology, id, { ...buildSpec(entry, profile), vendor: entry.vendor, model: entry.model });
+      closeEditorPanel();
+      commitTopology(`${withParticle(name, 'object')} ${withParticle(`${entry.vendor} ${entry.model} · ${profile.label}`, 'instrumental')} 바꿨습니다.`);
+    } catch (error) { showToast(error.message); }
+    return;
+  }
   if (event.target.closest('[data-workload-action="clear"]')) {
     setWorkloadConditions(topology, Object.fromEntries([...WORKLOAD_FIELDS.map(({ key }) => [key, null]), ['features_enabled', null]]));
     closeEditorPanel();
