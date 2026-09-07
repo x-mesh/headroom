@@ -752,3 +752,13 @@ button { color: inherit; }
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
   .packet-dot { display: none; }
 }
+
+/* 방향마다 한계가 다른 링크에만 뜬다. 축 목록과 같은 리듬을 쓰되 한 단 들여 부속임을 보인다. */
+.direction-list { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.link-direction { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.link-direction strong { min-width: 88px; font-size: 11px; letter-spacing: 0.04em; }
+.link-direction strong small { display: block; font-size: 9px; font-weight: 400; color: var(--muted); letter-spacing: 0; }
+.link-direction span { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.link-direction span b { color: var(--text); font-weight: 600; }
+.link-direction span[data-status="warning"] { color: var(--amber); }
+.link-direction span[data-status="overloaded"] { color: var(--danger); }

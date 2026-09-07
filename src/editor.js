@@ -368,6 +368,14 @@ export function updateLink(topology, id, patch) {
   if (!link) throw new Error(`Link ${id} does not exist`);
   const next = structuredClone(link);
   if (patch.capacityBps != null) next.capacity.forwarding_bps = finite(patch.capacityBps, 'Link capacity', { min: Number.EPSILON });
+  // 방향별 값을 남겨 둔 채 공통 용량만 고치면, 사용자가 방금 적은 숫자를 덮어쓰기가 조용히 이긴다.
+  // 그래서 폼이 방향을 함께 보내고, 비워 둔 방향은 공통 용량으로 되돌린다.
+  if (patch.capacityByDirection !== undefined) {
+    const byDirection = Object.fromEntries(['forward', 'reverse']
+      .filter((direction) => patch.capacityByDirection?.[direction])
+      .map((direction) => [direction, normalizeCapacity(patch.capacityByDirection[direction], `Link ${direction} capacity`)]));
+    if (Object.keys(byDirection).length) next.capacityByDirection = byDirection; else delete next.capacityByDirection;
+  }
   for (const side of ['source', 'target']) {
     if (!Object.hasOwn(patch, `${side}Port`)) continue;
     const portId = patch[`${side}Port`];
@@ -378,6 +386,7 @@ export function updateLink(topology, id, patch) {
     next[`${side}Port`] = portId;
   }
   for (const side of ['source', 'target']) delete link[`${side}Port`];
+  delete link.capacityByDirection;
   Object.assign(link, next);
   return link;
 }

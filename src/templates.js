@@ -1,7 +1,7 @@
 // 아키텍처 템플릿. 각 템플릿은 서로 다른 축이 먼저 차는 구성을 보여준다.
 // PRD 5.3 은 프리셋 자체를 이 도구의 교육 콘텐츠로 규정한다.
 import { cloneTopology } from './data.js';
-import { acceptEvidence, addDemand, addDevice, addLink, applySpec, createEmptyTopology } from './editor.js';
+import { acceptEvidence, addDemand, addDevice, addLink, applySpec, createEmptyTopology, setWorkloadConditions } from './editor.js';
 import { buildSpec, catalogEntry, catalogProfile } from './devices/catalog.js';
 
 // 8-튜플은 짧아서 설계 하나가 한눈에 읽힌다. 그 성질을 버리지 않는다. 튜플에 담기지 않는 것
@@ -431,6 +431,83 @@ function dualStack() {
   });
 }
 
+function asymWan() {
+  const topology = createEmptyTopology('비대칭 가입자 회선');
+  place(topology, [
+    ['branch-lan', 'BRANCH LAN', 'switch', 'BRANCH', 150, 290, { forwarding_bps: 40e9, forwarding_pps: 6e6 }],
+    ['cpe', 'CPE', 'router', 'BRANCH', 380, 290, { forwarding_bps: 2e9, forwarding_pps: 400e3 }],
+    // 통신사 망은 우리가 재지 않는다. external 로 선언하면 적어 준 축만 판정하고, 모르는
+    // 패킷 처리량을 0 으로 지어내지 않는다.
+    { id: 'carrier', name: 'CARRIER', kind: 'cloud', zone: 'WAN', position: { x: 620, y: 290 }, limits: { forwarding_bps: 100e9 }, external: true },
+    ['hq', 'HQ', 'vm', 'HQ', 860, 290, { nic_bps: 25e9, nic_pps: 4e6 }],
+  ]);
+  connect(topology, [
+    ['branch-lan', 'cpe', 10e9],
+    // source 가 cpe 이므로 정방향이 올려보내기다. 가입자 회선은 이 방향이 훨씬 좁다.
+    { id: 'cpe-carrier', source: 'cpe', target: 'carrier', capacity: { forwarding_bps: 1e9, forwarding_pps: 1e6 },
+      capacityByDirection: { forward: { forwarding_bps: 200e6 }, reverse: { forwarding_bps: 1e9 } } },
+    ['carrier', 'hq', 10e9],
+  ]);
+  addDemand(topology, { id: 'download', name: '내려받기', source: 'hq', target: 'branch-lan',
+    load: { forwarding_bps: 700e6, forwarding_pps: 120e3 } });
+  addDemand(topology, { id: 'upload', name: '야간 백업', source: 'branch-lan', target: 'hq',
+    load: { forwarding_bps: 170e6, forwarding_pps: 30e3 } });
+  return topology;
+}
+
+function serviceSla() {
+  const topology = createEmptyTopology('서비스 수용 기준');
+  const gateway = { forwarding_bps: 20e9, forwarding_pps: 3e6, new_sessions_per_sec: 120e3, concurrent_sessions: 2e6 };
+  place(topology, [
+    { id: 'internet', name: 'INTERNET', kind: 'cloud', zone: 'EDGE', position: { x: 110, y: 290 }, limits: { forwarding_bps: 100e9 }, external: true },
+    ['fw-a', 'FW A', 'firewall', 'SECURITY', 330, 170, gateway],
+    ['fw-b', 'FW B', 'firewall', 'SECURITY', 330, 410, gateway],
+    ['lb-a', 'LB A', 'lb', 'SERVICE', 560, 170, gateway],
+    ['lb-b', 'LB B', 'lb', 'SERVICE', 560, 410, gateway],
+    ...repeat(3, (n, index) => [`web-${n}`, `WEB 0${n}`, 'web', `RACK 0${n}`, 800, 140 + index * 150,
+      { nic_bps: 25e9, nic_pps: 4e6, new_sessions_per_sec: 44.6e3 }]),
+  ]);
+  connect(topology, [
+    ...mesh(['internet'], ['fw-a', 'fw-b'], 40e9),
+    ...mesh(['fw-a', 'fw-b'], ['lb-a', 'lb-b'], 20e9),
+    ...mesh(['lb-a', 'lb-b'], ['web-1', 'web-2', 'web-3'], 25e9),
+  ]);
+  addDemand(topology, { id: 'banking', name: '인터넷뱅킹', source: 'internet', target: 'web-1',
+    load: { forwarding_bps: 9e9, forwarding_pps: 1.4e6, new_sessions_per_sec: 90e3, concurrent_sessions: 1.4e6 } });
+  // 경고선을 낮추면 아직 넘지 않은 축도 일찍 노랗게 뜬다. 이 설계는 그 선을 스스로 정한다.
+  topology.warningThreshold = 0.65;
+  return declare(topology, {
+    services: [{
+      id: 'svc-banking', name: '인터넷뱅킹', demandIds: ['banking'], requiredDeliveryRatio: 0.99,
+      endpointGroups: [{ id: 'web-pool', name: '웹 풀', members: ['web-1', 'web-2', 'web-3'], minAvailable: 2 }],
+    }],
+  });
+}
+
+function datasheetPerimeter() {
+  const topology = createEmptyTopology('데이터시트로 짠 경계');
+  place(topology, [
+    { id: 'internet', name: 'INTERNET', kind: 'cloud', zone: 'EDGE', position: { x: 110, y: 290 }, limits: { forwarding_bps: 40e9 }, external: true },
+    // 한계값을 손으로 적지 않는다. 카탈로그가 데이터시트에서 옮긴 값과 그것을 잰 조건을 함께 준다.
+    { id: 'fg', name: 'FG 100F', kind: 'firewall', zone: 'EDGE', position: { x: 320, y: 290 }, spec: ['fortinet-fortigate-100f', 'fw-1518'] },
+    { id: 'pa', name: 'PA-3410', kind: 'firewall', zone: 'DMZ', position: { x: 530, y: 290 }, spec: ['paloalto-pa-3410', 'firewall-appmix'] },
+    ['core', 'CORE SW', 'switch', 'CORE', 740, 290, { forwarding_bps: 80e9, forwarding_pps: 12e6 }],
+    ['app-1', 'APP 01', 'web', 'RACK 01', 950, 180, { nic_bps: 25e9, nic_pps: 4e6, new_sessions_per_sec: 60e3 }],
+    ['app-2', 'APP 02', 'web', 'RACK 02', 950, 400, { nic_bps: 25e9, nic_pps: 4e6, new_sessions_per_sec: 60e3 }],
+  ]);
+  connect(topology, [
+    ['internet', 'fg', 20e9], ['fg', 'pa', 20e9], ['pa', 'core', 20e9],
+    ['core', 'app-1', 25e9], ['core', 'app-2', 25e9],
+  ]);
+  for (const n of [1, 2]) {
+    addDemand(topology, { id: `svc-${n}`, name: `서비스 0${n}`, source: 'internet', target: `app-${n}`,
+      load: { forwarding_bps: 7e9, forwarding_pps: 1.1e6, new_sessions_per_sec: 22e3, concurrent_sessions: 400e3 } });
+  }
+  // 데이터시트 값은 조건과 함께여야 숫자다. 우리 트래픽의 조건을 적어 두어야 대조가 시작된다.
+  setWorkloadConditions(topology, { packet_size_bytes: 1518, transport: 'udp', features_enabled: [] });
+  return topology;
+}
+
 export const templates = [
   {
     id: 'dual-fabric', name: '이중 팹릭 API 클러스터',
@@ -677,6 +754,45 @@ export const templates = [
       observe: '사이트 안은 넉넉한데 사이트 간 회선이 109%가 됩니다.',
     },
     build: disasterRecovery,
+  },
+  {
+    id: 'asym-wan', name: '비대칭 가입자 회선',
+    grade: { verdict: 'single-point', severs: 4 },
+    summary: '내려받기와 올려보내기의 용량이 다른 지사 회선입니다.',
+    teaches: '같은 링크인데 방향마다 한계가 다릅니다. 이 회선은 내려받기 1 Gbps, 올려보내기 200 Mbps입니다. 부하가 네 배 작은 올려보내기 쪽이 먼저 85%에 닿습니다 — 야간 백업이 지사 회선을 죽이는 이유입니다. CARRIER는 외부망으로 선언했으므로 우리가 적어 준 대역폭 하나만 판정하고, 모르는 패킷 처리량은 0이 아니라 미확인으로 둡니다.',
+    tags: ['회선', '방향', '업로드', 'WAN', '지사'],
+    experiment: {
+      prompt: '부하가 20% 늘면 이 회선의 어느 방향이 먼저 넘을까요?',
+      action: { type: 'scale', value: 1.2, label: '배율 1.20배' },
+      observe: '내려받기는 84%로 아직 여유가 있는데 같은 회선의 올려보내기가 102%로 넘칩니다. 회선 용량은 숫자 하나가 아닙니다.',
+    },
+    build: asymWan,
+  },
+  {
+    id: 'service-sla', name: '서비스 수용 기준',
+    grade: { verdict: 'partial' },
+    summary: '장비 사용률이 아니라 선언한 서비스 기준으로 판정하는 구성입니다.',
+    teaches: '이 설계는 경고선을 80%가 아니라 65%로 잡았고, 인터넷뱅킹을 수용 기준 99%, 웹 3대 중 2대 이상 살아 있을 것으로 선언했습니다. 그래서 판정을 장비가 아니라 서비스가 합니다. 장비가 101%로 빨개도 서비스는 통과일 수 있고, 배율을 1.6배까지 올려야 수용 기준이 무너집니다. 100%를 넘으면 곧 장애라는 말은 수용 기준을 정하지 않았을 때만 참입니다.',
+    tags: ['서비스', '수용 기준', 'SLA', '경고선', '금융'],
+    experiment: {
+      prompt: 'WEB 01이 멈추면 이 서비스는 기준을 지킬까요?',
+      action: { type: 'fault-device', id: 'web-1', label: 'WEB 01 장애 실험' },
+      observe: '남은 WEB 두 대가 101%로 빨갛게 뜨는데 서비스 판정은 통과입니다. 초당 800건이 거절되지만 선언한 수용 기준 안이기 때문입니다.',
+    },
+    build: serviceSla,
+  },
+  {
+    id: 'datasheet-perimeter', name: '데이터시트로 짠 경계',
+    grade: { verdict: 'single-point', severs: 8 },
+    summary: '카탈로그 데이터시트 값을 그대로 붙이고 우리 트래픽 조건과 대조하는 구성입니다.',
+    teaches: '카탈로그에서 방화벽 두 대를 붙였습니다. 근거 레코드 8개 중 계산에 들어간 것은 1개입니다. 포티넷의 20 Gbps는 1518바이트 UDP에 기능을 켜지 않고 잰 값이고, 이 설계의 워크로드 조건이 그것과 같아서 씁니다. 팔로알토의 값은 App-ID와 로깅을 켠 조건에서 잰 것이라 조건이 맞지 않고, 두 장비의 세션 축은 데이터시트가 어떻게 쟀는지 밝히지 않아 미확인입니다. 왼쪽 워크로드 조건에서 프레임 크기를 64로 바꿔 보세요 — 지금 쓰는 20 Gbps가 조건 불일치로 바뀝니다.',
+    tags: ['데이터시트', '근거', '측정 조건', '방화벽', '미확인'],
+    experiment: {
+      prompt: '부하가 40% 늘면 이 두 방화벽 중 무엇을 말할 수 있을까요?',
+      action: { type: 'scale', value: 1.4, label: '배율 1.40배' },
+      observe: '포티넷의 처리량이 98%까지 오르는 것이 보입니다. 같은 화면의 팔로알토는 배율을 아무리 올려도 사용률이 나오지 않습니다 — 그 값은 다른 조건에서 잰 것이라 이 설계에 쓸 수 있는지 아직 말할 수 없습니다.',
+    },
+    build: datasheetPerimeter,
   },
   {
     id: 'blank', name: '빈 설계',

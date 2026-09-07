@@ -10,8 +10,11 @@ import { serializeProject } from '../src/project.js';
 const percentsIn = (text) => [...String(text).matchAll(/(\d+)%/g)].map((match) => Number(match[1]));
 
 function utilizations(result) {
+  // 링크의 평면 축은 바쁜 쪽 방향만 말한다. 방향마다 한계가 다른 회선은 인스펙터가 두 방향을
+  // 나란히 펴 보이므로, 문구가 인용할 수 있는 값도 그만큼 넓다.
+  const axesOf = (resource) => [resource.axes, ...Object.values(resource.directions || {}).map(({ axes }) => axes)];
   return new Set([...result.devices, ...result.links]
-    .flatMap((resource) => Object.values(resource.axes || {}))
+    .flatMap((resource) => axesOf(resource).flatMap((axes) => Object.values(axes || {})))
     .map((axis) => (axis.utilization == null ? null : Math.round(axis.utilization * 100)))
     .filter((value) => value != null));
 }
@@ -124,5 +127,17 @@ test('the verdict a design claims on its card is the verdict the sweep reaches',
     assert.equal(template.grade.verdict, sweep.grade, `${template.id} 의 판정`);
     // 단일 장애점만 개수를 카드에 적는다. 나머지는 개수를 말하지 않으므로 적어 두지 않는다.
     assert.equal(template.grade.severs, sweep.grade === 'single-point' ? sweep.severs : undefined, `${template.id} 의 단절 개수`);
+  }
+});
+
+test('a design answers what fills up first, or it has nothing to show', () => {
+  for (const { id } of templates) {
+    if (id === 'blank') continue;
+    const result = calculateScenario(buildTemplate(id), { scale: 1 });
+    const binding = [...result.devices, ...result.links].find((resource) => resource.id === result.summary.bindingResourceId);
+    assert.ok(binding, `${id} 에 병목이 없습니다.`);
+    // 모든 축이 미확인이면 화면 제목이 "무엇이 먼저 차는가"에 답하지 못한다. 데이터시트로 짠
+    // 설계가 워크로드 조건을 채운 채로 배포되는 이유가 이것이다.
+    assert.notEqual(binding.axes[result.summary.bindingAxis]?.utilization, null, `${id}: 병목 축에 사용률이 없습니다.`);
   }
 });
