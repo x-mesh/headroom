@@ -161,6 +161,8 @@ const INK = {
 const STATE_INK = { healthy: INK.cyan, warning: INK.amber, overloaded: INK.danger, unknown: INK.unknown, invalid: INK.danger, disabled: INK.danger };
 const LINK_INK = { healthy: INK.cyan, warning: INK.amber, overloaded: INK.danger, unknown: INK.unknown, invalid: INK.danger, disabled: INK.danger, 'severed-path': INK.danger };
 const LINK_DASH = { unknown: '5 4', invalid: '2 3', disabled: '7 7', 'severed-path': '2 6' };
+// 굵기가 심각도를 말한다. styles.css 의 .link 사다리와 같은 값이다 — 한쪽을 바꾸면 다른 쪽도 바꾼다.
+const LINK_WIDTH = { healthy: 1, unknown: 1.5, warning: 2.5, overloaded: 4, invalid: 2.5, disabled: 2, 'severed-path': 2 };
 
 // 화면의 노드 규격과 같다(styles.css .mesh-node). 캔버스와 그림이 어긋나면 둘 중 하나가 거짓말이다.
 const NODE = { width: 104, symbolH: 42, glyphW: 88, glyphH: 40, railW: 92, rowH: 13, headH: 12, modelH: 11, metaH: 11 };
@@ -271,7 +273,7 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
     const mid = { x: (points[half - 1].x + points[half].x) / 2, y: (points[half - 1].y + points[half].y) / 2 };
     const label = !link ? (edge.label || '')
       : link.severed ? 'DOWN' : formatNodePercent(link.axes?.forwarding_bps?.utilization ?? null);
-    return `<polyline points="${points.map((p) => `${fmt(p.x)},${fmt(p.y)}`).join(' ')}" fill="none" stroke="${stroke}" stroke-width="${status === 'overloaded' ? 3 : 2}"${dash}/>`
+    return `<polyline points="${points.map((p) => `${fmt(p.x)},${fmt(p.y)}`).join(' ')}" fill="none" stroke="${stroke}" stroke-width="${LINK_WIDTH[status] ?? 1}"${dash}/>`
       + (label ? text(mid.x, mid.y - 7, label, { size: 9, fill: status && status !== 'healthy' ? stroke : INK.muted, anchor: 'middle', halo: true }) : '');
   }).join('');
 

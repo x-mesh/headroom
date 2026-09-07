@@ -683,10 +683,13 @@ function renderTopology() {
   const devices = new Map(current.devices.map((item) => [item.id, item]));
   // 끊긴 demand 가 무장애였다면 지났을 링크. 살아 있지만 이 트래픽은 지나지 못한다.
   const severedPathLinks = new Set(current.demands.flatMap(({ severedPaths }) => (severedPaths || []).flatMap(({ links }) => links)));
-  const groupMarkup = groupBoxes(current.devices).map((group) => `<g class="topology-group" data-depth="${group.depth}">
+  // 상자는 링크 아래, 이름표는 링크 위. 셋을 한 덩어리로 그리면 선이 RACK 03 같은 이름을 갈라
+  // 놓아 어느 랙인지 읽을 수 없다. 상자를 위로 올리면 이번엔 상자 안의 링크가 가려진다.
+  const boxes = groupBoxes(current.devices);
+  const groupMarkup = boxes.map((group) => `<g class="topology-group" data-depth="${group.depth}">
       <rect class="group-frame" x="${group.x}" y="${group.y}" width="${group.width}" height="${group.height}"></rect>
-      <text class="group-label" x="${group.x + 11}" y="${group.y + 13}">${escapeText(group.label)}</text>
     </g>`).join('');
+  const groupLabels = boxes.map((group) => `<text class="group-label" x="${group.x + 11}" y="${group.y + 13}">${escapeText(group.label)}</text>`).join('');
   const endpointPoint = (id) => devices.get(id)?.position || (() => {
     const shape = topology.diagram?.shapes?.find((item) => item.id === id);
     return shape ? { x: shape.x + shape.width / 2, y: shape.y + shape.height / 2 } : null;
@@ -717,7 +720,7 @@ function renderTopology() {
       ${packetDots}
       <text class="link-label"${link.severed ? '' : ` data-live-util="${utilization ?? ''}" data-live-seed="${link.id}"`} x="${middleX}" y="${middleY}" text-anchor="middle">${link.severed ? 'DOWN' : formatPercent(utilization)}</text>
     </g>`;
-  }).join('') + diagramConnectors;
+  }).join('') + diagramConnectors + groupLabels;
 
   const selectionHas = (type, id) => state.selection.some((item) => item.type === type && item.id === id)
     || type === 'shape' && state.selection.some((item) => item.type === 'group'
