@@ -23,6 +23,20 @@ async function verifyCanvasEditing() {
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}\n${String(error.stack).split("\n").slice(1, 4).join("\n")}`));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   await page.evaluate(() => document.fonts.ready);
+  // 시작 방법은 좌측 상단 한곳에 모으되, 가장 흔한 템플릿 시작은 한 번 눌러 연다.
+  assert.equal(await page.locator('#new-design-button').textContent(), '설계 시작');
+  await page.locator('#start-menu-button').click();
+  assert.equal(await page.locator('#start-menu').isVisible(), true);
+  assert.equal(await page.locator('#start-menu [data-editor-action="new"]').count(), 1);
+  assert.equal(await page.locator('#start-menu [data-editor-action="new-blank"]').count(), 1);
+  assert.equal(await page.locator('#start-menu [data-editor-action="open"]').count(), 1);
+  assert.equal(await page.locator('#start-menu [data-editor-action="import-drawio"]').count(), 1);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#start-menu').isHidden(), true);
+  await page.locator('#project-menu-button').click();
+  assert.equal(await page.locator('#project-menu [data-editor-action="open"]').count(), 0);
+  assert.equal(await page.locator('#project-menu [data-editor-action="import-drawio"]').count(), 0);
+  await page.keyboard.press('Escape');
 
   // 링크 위에 노드가 겹칠 수 있으니 실제로 링크가 잡히는 지점을 찾는다.
   const linkHit = await page.evaluate(() => {
@@ -90,9 +104,11 @@ async function verifyCanvasEditing() {
   await page.locator('[data-editor-action="redo"]').click();
   assert.equal(await page.locator('.diagram-shape').count(), 1);
   const svgDownload = page.waitForEvent('download');
+  await page.locator('#export-menu-button').click();
   await page.locator('[data-editor-action="export-svg"]').click();
   assert.match((await svgDownload).suggestedFilename(), /\.svg$/);
   const pngDownload = page.waitForEvent('download');
+  await page.locator('#export-menu-button').click();
   await page.locator('[data-editor-action="export-png"]').click();
   assert.match((await pngDownload).suggestedFilename(), /\.png$/);
 
@@ -123,7 +139,7 @@ async function verifyBackendPool() {
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`pool console: ${message.text()}`); });
   page.on('pageerror', (error) => failures.push(`pool pageerror: ${error.message}`));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
-  await page.locator('[data-editor-action="new"]').click();
+  await page.locator('#new-design-button').click();
   await page.locator('[data-template="dual-stack"]').click();
 
   await page.locator('[data-editor-action="device"]').click();
@@ -268,6 +284,15 @@ async function verify(viewport, screenshot, interact = false) {
     assert.equal(await picked(), want, why);
   }
 
+  // 그룹을 만들면 그 그룹이 곧바로 선택되어 해제할 수 있어야 한다. 장비만 묶은 그룹은
+  // 캔버스에서 다시 집을 별도 표식이 없으므로, 이 선택 전환이 빠지면 해제 경로가 막힌다.
+  await page.locator('[data-device-id="fw-a"]').click();
+  await page.locator('[data-device-id="fw-b"]').click({ modifiers: ['Shift'] });
+  await page.locator('[data-editor-action="group"]').click();
+  assert.equal(await page.locator('[data-editor-action="ungroup"]').isDisabled(), false, 'a newly created group must be ready to ungroup');
+  await page.locator('[data-editor-action="ungroup"]').click();
+  assert.equal(await page.locator('[data-editor-action="group"]').isDisabled(), false, 'ungrouping must reselect its members');
+
   // 여럿을 고른 채 하나를 끌면 나머지도 같이 따라와야 한다. 놓는 순간에는 원래도 전부
   // 옮겨졌지만, 끄는 동안 잡은 것만 움직여서 나머지는 안 딸려온다고 읽혔다.
   const spots = () => page.evaluate(() => Object.fromEntries(['fw-a', 'fw-b', 'spine-a'].map((id) => {
@@ -377,13 +402,14 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForFunction(() => {
       const spot = document.querySelector('#tour-spot');
       if (spot.hidden) return true;
-      const top = Math.round(spot.getBoundingClientRect().top);
-      const settled = window.__tourSettle === top;
-      window.__tourSettle = top;
+      const rect = spot.getBoundingClientRect();
+      const signature = [rect.left, rect.top, rect.width, rect.height].map(Math.round).join(':');
+      const settled = window.__tourSettle === signature;
+      window.__tourSettle = signature;
       return settled;
     }, null, { polling: 120 });
     // 실선 박스는 실제 조작 대상 위에 있어야 하고, 설명 상자가 그것을 덮으면 안 된다.
-    assert.equal(await page.evaluate(() => {
+    await page.waitForFunction(() => {
       const spot = document.querySelector('#tour-spot');
       if (spot.hidden) return true;
       const box = document.querySelector('#tour').getBoundingClientRect();
@@ -391,7 +417,7 @@ async function verify(viewport, screenshot, interact = false) {
       const inView = rect.top >= -1 && rect.bottom <= window.innerHeight + 1 && rect.width > 4 && rect.height > 4;
       const clear = box.right < rect.left || box.left > rect.right || box.bottom < rect.top || box.top > rect.bottom;
       return inView && clear;
-    }), true, `${step}단계의 실선 박스가 화면 밖이거나 설명 상자에 가렸습니다.`);
+    }, null, { timeout: 3000 });
     if (!await page.locator('#tour-spot').evaluate((node) => node.hidden)) spotted += 1;
     const last = await page.locator('[data-tour="next"]').textContent() === '닫기';
     await page.locator('[data-tour="next"]').click();
@@ -424,8 +450,9 @@ async function verify(viewport, screenshot, interact = false) {
   // 장비를 바꾸는 것은 인스펙터까지 가지 않고 자리에서 하는 일이다.
   await page.locator('[data-device-id="fw-a"]').click({ button: 'right' });
   await page.waitForFunction(() => !document.querySelector('#context-menu')?.hidden);
-  assert.equal(await page.locator('[data-context-action="swap"]').count(), 1, 'a class with a catalogue must offer the swap in place');
-  await page.locator('[data-context-action="swap"]').click();
+  const swap = page.locator('[data-context-action="swap"]');
+  await swap.waitFor({ state: 'visible' });
+  await swap.click();
   await page.waitForFunction(() => document.querySelector('[data-swap-catalog]'));
   const choices = await page.locator('[data-swap-catalog]').count();
   assert.ok(choices >= 20, `고를 수 있는 조건이 ${choices}개뿐입니다.`);
@@ -496,6 +523,7 @@ async function verify(viewport, screenshot, interact = false) {
       rows.every((row) => row.dataset.axisState === 'unknown')), true, 'nothing is calculated until the conditions can be compared');
 
     // 워크로드 조건을 적으면 같은 조건에서 잰 축이 판정을 통과하고 계산에 들어간다.
+    await page.locator('#analysis-menu-button').click();
     await page.locator('[data-editor-action="workload"]').click();
     await page.locator('input[name="packet_size_bytes"]').fill('1518');
     await page.locator('input[name="transport"]').fill('udp');
@@ -539,7 +567,7 @@ async function verify(viewport, screenshot, interact = false) {
     // 내보낸 그림은 화면과 같은 심볼·축·판정을 담는다. 이름표 상자가 아니다.
     const [svgDownload] = await Promise.all([
       page.waitForEvent('download'),
-      page.locator('[data-editor-action="export-svg"]').click(),
+      page.locator('#export-menu-button').click().then(() => page.locator('[data-editor-action="export-svg"]').click()),
     ]);
     const exported = await readTextFile(await svgDownload.path(), 'utf8');
     assert.match(exported, /엔진 \d+\.\d+\.\d+/, 'the exported frame must say which engine computed it');
@@ -578,7 +606,7 @@ async function verify(viewport, screenshot, interact = false) {
 
     // 새 설계는 템플릿 목록을 연다. 각 템플릿은 서로 다른 축이 먼저 차는 구성이다.
     const beforePanel = await page.evaluate(() => Math.round(document.querySelector('.main-grid').getBoundingClientRect().top));
-    await page.locator('[data-editor-action="new"]').click();
+    await page.locator('#new-design-button').click();
     assert.ok(await page.locator('.template-item').count() >= 16, 'the picker must offer architectures, not just a blank sheet');
     // 목록이 길어지면 검색이 필요하다.
     await page.locator('#template-search').fill('TLS');
@@ -598,7 +626,7 @@ async function verify(viewport, screenshot, interact = false) {
       'the editor panel must float over the page, not push it down');
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('#editor-panel').isHidden(), true, 'escape must close the panel');
-    await page.locator('[data-editor-action="new"]').click();
+    await page.locator('#new-design-button').click();
     await page.locator('[data-template="inline-lb"]').click();
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 5);
     assert.equal(await page.locator('#toast [data-toast-undo]').count(), 1, 'replacing a design must offer an undo instead of a confirm');
@@ -651,7 +679,7 @@ async function verify(viewport, screenshot, interact = false) {
     assert.ok(boxed >= 2, `상자가 선을 ${boxed}개만 담았습니다. 상자는 지나가는 선을 집어야 합니다.`);
     await page.keyboard.press('Escape');
 
-    await page.locator('[data-editor-action="new"]').click();
+    await page.locator('#new-design-button').click();
     await page.locator('[data-template="blank"]').click();
     await page.waitForFunction(() => document.querySelector('#scenario-subtitle')?.textContent.startsWith('사용자 설계'));
     assert.equal(await page.locator('#scenario-title').textContent(), '빈 설계', 'the header must name the design that is open');
@@ -667,11 +695,12 @@ async function verify(viewport, screenshot, interact = false) {
     // 되돌리기가 실제로 되돌려야 한다.
     await page.locator('#toast [data-toast-undo]').click();
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 5);
-    await page.locator('[data-editor-action="new"]').click();
+    await page.locator('#new-design-button').click();
     await page.locator('[data-template="blank"]').click();
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 0);
     assert.equal(await page.locator('.mesh-node').count(), 0);
     assert.match(await page.locator('#inspector-content').textContent(), /장비가 없습니다/);
+    await page.locator('#tab-palette').click();
     // 폼이 물어보는 한계 축은 클래스를 따른다. 스위치는 처리량, 서버는 NIC 다.
     for (const [name, kind, axis] of [['Source A', 'switch', 'forwarding_bps'], ['Target A', 'server', 'nic_bps']]) {
       await page.locator('[data-editor-action="device"]').click();
@@ -728,6 +757,7 @@ async function verify(viewport, screenshot, interact = false) {
     await demandEditor.locator('[name="forwarding_bps"]').fill('2000000000');
     await demandEditor.locator('button[type="submit"]').click();
     assert.equal(await page.locator('[data-editor-form="demand-edit"] [name="forwarding_bps"]').inputValue(), '2000000000');
+    await page.locator('#analysis-menu-button').click();
     await page.locator('[data-editor-action="verification"]').click();
     const serviceForm = page.locator('[data-editor-form="service"]');
     await serviceForm.locator('[name="name"]').fill('Public API');
@@ -735,6 +765,7 @@ async function verify(viewport, screenshot, interact = false) {
     await serviceForm.locator('button[type="submit"]').click();
     assert.match(await page.locator('[data-editor-form="service"]').locator('xpath=preceding-sibling::ul[1]').textContent(), /Public API/);
     const downloadPromise = page.waitForEvent('download');
+    await page.locator('#project-menu-button').click();
     await page.locator('[data-editor-action="save"]').click();
     const download = await downloadPromise;
     const downloadPath = await download.path();
@@ -801,17 +832,58 @@ async function verify(viewport, screenshot, interact = false) {
     assert.equal(await page.locator('#panel-failure').isHidden(), true, 'switching tabs must hide the failure panel');
     assert.equal(await page.locator('#failure-count').isHidden(), true, 'the active-fault badge belongs to the failure tab');
     assert.equal(await page.locator('.palette-item').count(), 22, 'the palette covers the classes a real design uses');
-    assert.equal(await page.locator('.palette-group').count(), 4, 'the palette groups its classes so a long list stays findable');
+    assert.equal(await page.locator('.palette-group').count(), 5, 'the palette keeps device classes and modeling tools in distinct groups');
+    assert.equal(await page.locator('[data-palette-group-toggle="네트워크"]').getAttribute('aria-expanded'), 'true');
+    assert.equal(await page.locator('[data-palette-group-toggle="보안 · 트래픽"]').getAttribute('aria-expanded'), 'false');
+    await page.locator('[data-palette-group-toggle="보안 · 트래픽"]').click();
+    assert.equal(await page.locator('[data-palette-group-toggle="보안 · 트래픽"]').getAttribute('aria-expanded'), 'true',
+      'a component group can be expanded without changing the selected tab');
+    await page.locator('[data-palette-group-toggle="보안 · 트래픽"]').click();
     assert.ok(await page.evaluate(() => [...document.querySelectorAll('.palette-item use')]
-      .every((use) => document.querySelector(use.getAttribute('href')) && use.getBBox().width > 0)), 'every palette symbol must resolve');
+      .filter((use) => use.closest('.palette-group-items')?.hidden !== true)
+      .every((use) => document.querySelector(use.getAttribute('href')) && use.getBBox().width > 0)), 'every visible palette symbol must resolve');
     // 스텐실이 클래스를 구별해 주지 못하는 자리에서는 손으로 그린 심볼이 앞선다.
     for (const [kind, id] of [['mail', '#glyph-mail'], ['waf', '#glyph-waf'], ['ips', '#glyph-ips'], ['vpn', '#glyph-vpn'], ['server', '#icon-server'], ['db', '#icon-db']]) {
-      assert.equal(await page.locator(`[data-palette-kind="${kind}"] use`).getAttribute('href'), id,
+      assert.equal(await page.locator(`.palette-item[data-palette-kind="${kind}"] use`).getAttribute('href'), id,
         `${kind} must draw the symbol that tells its class apart`);
     }
+    // 접힌 클래스는 사양 없는 일반 장비다. 펼친 목록은 실제 카탈로그 프로필을 배치한다.
+    const switchCount = await page.locator('.mesh-node').count();
+    await page.locator('.palette-family [data-palette-kind="switch"]:not([data-palette-catalog])').click();
+    await page.waitForFunction((before) => document.querySelectorAll('.mesh-node').length === before + 1, switchCount);
+    assert.equal(await page.locator('.mesh-node.selected .node-model').count(), 0, 'the folded switch stays generic');
+    assert.ok(await page.locator('.mesh-node.selected .node-axis').evaluateAll((rows) => rows.every((row) => row.dataset.axisState === 'unknown')),
+      'the generic switch keeps every limit unknown');
 
-    await page.locator('[data-palette-kind="firewall"]').scrollIntoViewIfNeeded();
-    const paletteItem = await page.locator('[data-palette-kind="firewall"]').boundingBox();
+    await page.locator('[data-palette-expand="switch"]').click();
+    assert.equal(await page.locator('#palette-catalog-switch').isHidden(), false);
+    const catalogChoices = await page.locator('#palette-catalog-switch [data-palette-catalog]').count();
+    assert.ok(catalogChoices >= 7, 'the switch family exposes each catalog profile');
+    await page.locator('[data-palette-search-input="switch"]').fill('7050SDX4');
+    assert.equal(await page.locator('#palette-catalog-switch [data-palette-catalog]:visible').count(), 1, 'search narrows the model profiles');
+    assert.match(await page.locator('#palette-catalog-switch [data-palette-result-count]').textContent(), /1개 일치/);
+    const profiledCount = await page.locator('.mesh-node').count();
+    await page.locator('#palette-catalog-switch [data-palette-catalog]:visible').click();
+    await page.waitForFunction((before) => document.querySelectorAll('.mesh-node').length === before + 1, profiledCount);
+    assert.equal(await page.locator('.mesh-node.selected .node-model').textContent(), '7050SDX4-48D8');
+    assert.match(await page.locator('#toast').textContent(), /프로필을 적용/);
+
+    await page.locator('[data-palette-search-input="switch"]').fill('Nexus 93180');
+    const nexusItem = page.locator('#palette-catalog-switch [data-palette-catalog]:visible');
+    const nexusBox = await nexusItem.boundingBox();
+    const modelDrop = await page.locator('.topology-scroll').boundingBox();
+    const beforeModelDrag = await page.locator('.mesh-node').count();
+    await page.mouse.move(nexusBox.x + nexusBox.width / 2, nexusBox.y + nexusBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(modelDrop.x + modelDrop.width / 2, modelDrop.y + modelDrop.height / 2, { steps: 10 });
+    await page.mouse.up();
+    await page.waitForFunction((before) => document.querySelectorAll('.mesh-node').length === before + 1, beforeModelDrag);
+    assert.equal(await page.locator('.mesh-node.selected .node-model').textContent(), 'Nexus 93180YC-FX',
+      'dragging a catalog result keeps the selected model');
+
+    await page.locator('[data-palette-group-toggle="보안 · 트래픽"]').click();
+    await page.locator('.palette-item[data-palette-kind="firewall"]').scrollIntoViewIfNeeded();
+    const paletteItem = await page.locator('.palette-item[data-palette-kind="firewall"]').boundingBox();
     const canvasBox = await page.locator('#topology-canvas').boundingBox();
     await page.mouse.move(paletteItem.x + paletteItem.width / 2, paletteItem.y + paletteItem.height / 2);
     await page.mouse.down();
@@ -819,7 +891,7 @@ async function verify(viewport, screenshot, interact = false) {
     assert.equal(await page.locator('.palette-ghost').count(), 1, 'dragging must show a ghost');
     assert.ok(await page.locator('.topology-scroll').evaluate((node) => node.classList.contains('drop-target')), 'the topology area must mark itself as a drop target');
     await page.mouse.up();
-    await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 3);
+    await page.waitForFunction((before) => document.querySelectorAll('.mesh-node').length === before + 1, beforeModelDrag + 1);
     const dropped = await page.evaluate(() => {
       const node = document.querySelector('.mesh-node.selected');
       return { left: node.style.left, top: node.style.top, glyph: node.querySelector('use').getAttribute('href'),
@@ -842,8 +914,9 @@ async function verify(viewport, screenshot, interact = false) {
     const beyond = Math.min(scrolledCanvas.y + scrolledCanvas.height + 60, scrollBox.y + scrollBox.height - 20);
     assert.ok(beyond > scrolledCanvas.y + scrolledCanvas.height, 'the fixture needs slack below the canvas to drop into');
     const beforeEdgeDrop = await page.evaluate(() => Math.round(parseFloat(getComputedStyle(document.querySelector('#topology-canvas')).height)));
-    await page.locator('[data-palette-kind="storage"]').scrollIntoViewIfNeeded();
-    const edgeItem = await page.locator('[data-palette-kind="storage"]').boundingBox();
+    await page.locator('[data-palette-group-toggle="서버 · 스토리지"]').click();
+    await page.locator('.palette-item[data-palette-kind="storage"]').scrollIntoViewIfNeeded();
+    const edgeItem = await page.locator('.palette-item[data-palette-kind="storage"]').boundingBox();
     await page.mouse.move(edgeItem.x + edgeItem.width / 2, edgeItem.y + edgeItem.height / 2);
     await page.mouse.down();
     await page.mouse.move(scrolledCanvas.x + 300, beyond, { steps: 10 });
@@ -851,8 +924,9 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForFunction((base) => parseFloat(getComputedStyle(document.querySelector('#topology-canvas')).height) > base, beforeEdgeDrop);
     assert.equal(await page.locator('.palette-ghost').count(), 0, 'the ghost must not outlive a drop past the canvas edge');
 
-    await page.locator('[data-palette-kind="server"]').click();
-    await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 5);
+    const beforeServer = await page.locator('.mesh-node').count();
+    await page.locator('.palette-item[data-palette-kind="server"]').click();
+    await page.waitForFunction((before) => document.querySelectorAll('.mesh-node').length === before + 1, beforeServer);
     const placed = await page.evaluate(() => {
       const nodes = [...document.querySelectorAll('.mesh-node')].map((node) => ({ x: parseFloat(node.style.left), y: parseFloat(node.style.top) }));
       const last = nodes.at(-1);
@@ -1082,7 +1156,7 @@ async function verify(viewport, screenshot, interact = false) {
     // 응답은 되돌아온다. 요청 점과 같은 모양으로 그리면 returnPath 로 응답을 옮겨 놓고도 그림은
     // 예전과 같아져, 무엇이 달라졌는지 화면에서 읽히지 않는다. 응답을 적은 설계에서만 잰다 -
     // 적지 않은 설계의 역방향은 0 이 아니라 미확인이고, 모르는 양을 움직이는 점으로 그리지 않는다.
-    await page.locator('[data-editor-action="new"]').click();
+    await page.locator('#new-design-button').click();
     await page.locator('[data-template="dsr-farm"]').click();
     await page.waitForFunction(() => document.querySelectorAll('.packet-dot.response').length > 0);
     const flows = await page.evaluate(() => ({
@@ -1099,7 +1173,7 @@ async function verify(viewport, screenshot, interact = false) {
     // 붙고 끌면 마디가 생겨야 한다. 두 번 누르면 그 마디가 사라져 자동 경로로 돌아간다.
     // 도면을 갈아 끼우므로 interact 의 맨 끝에 둔다 - 앞에 두면 뒤따르는 단계가 앞 도면의
     // 장비를 찾지 못하고, 앞에서 재 둔 빈 자리도 빈 자리가 아니게 된다.
-    await page.locator('[data-editor-action="new"]').click();
+    await page.locator('#new-design-button').click();
     await page.locator('[data-template="three-tier"]').click();
     await page.waitForFunction(() => document.querySelectorAll('.link-hit').length >= 4);
     await page.locator('.zoom-control [data-zoom="fit"]').click();

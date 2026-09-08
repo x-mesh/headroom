@@ -526,24 +526,76 @@ const PALETTE = [
 ];
 const PALETTE_DRAG_THRESHOLD = 4;
 let paletteDrag = null;
+let expandedPaletteKind = null;
+const expandedPaletteGroups = new Set(['네트워크']);
 let linkDraft = null;
 let contextTarget = null;
 let pendingDeviceImport = null;
 
+function paletteCatalog(kind, label) {
+  const entries = catalogFor(kind);
+  if (!entries.length) return '';
+  const choices = entries.flatMap((entry) => entry.profiles.map((profile) => {
+    const limits = Object.entries(profile.limits)
+      .map(([axis, value]) => `${axisCatalog[axis]?.nodeLabel || axis} ${value == null ? '미확인' : formatCompact(value, axisCatalog[axis]?.unit)}`)
+      .join(' · ');
+    const haystack = [entry.vendor, entry.model, profile.label, profile.note, limits].join(' ').toLowerCase();
+    return `<button type="button" class="palette-model" data-palette-kind="${escapeAttribute(kind)}" data-palette-catalog="${escapeAttribute(entry.id)}" data-palette-profile="${escapeAttribute(profile.id)}" data-palette-search="${escapeAttribute(haystack)}" aria-label="${escapeAttribute(`${entry.vendor} ${entry.model} · ${profile.label} 추가`)}">
+      <span class="palette-model-glyph"><svg aria-hidden="true" focusable="false"><use href="#${symbolFor(kind).id}"></use></svg></span>
+      <span class="palette-model-copy"><strong>${escapeText(`${entry.vendor} ${entry.model}`)}</strong><span>${escapeText(profile.label)}</span><small>${escapeText(limits)}</small></span>
+    </button>`;
+  })).join('');
+  const count = entries.reduce((total, entry) => total + entry.profiles.length, 0);
+  return `<section class="palette-catalog" id="palette-catalog-${escapeAttribute(kind)}" data-palette-catalog-panel="${escapeAttribute(kind)}"${expandedPaletteKind === kind ? '' : ' hidden'}>
+    <label class="palette-search"><span class="visually-hidden">${escapeText(label)} 검색</span><input type="search" data-palette-search-input="${escapeAttribute(kind)}" placeholder="제조사, 모델, 역할, 조건 검색" autocomplete="off"></label>
+    <div class="palette-catalog-meta"><span>${escapeText(label)} · 특정 모델과 측정 프로필</span><output data-palette-result-count>${count}개</output></div>
+    <div class="palette-models">${choices}</div>
+    <p class="palette-empty" hidden>일치하는 ${escapeText(label)} 모델이 없습니다.</p>
+  </section>`;
+}
+
 function renderPalette() {
   const counts = PALETTE.reduce((map, item) => map.set(item.group, (map.get(item.group) || 0) + 1), new Map());
-  let group = null;
-  let index = 0;
-  element('component-palette').innerHTML = PALETTE.map((item) => {
-    const heading = item.group === group ? '' : `<h3 class="palette-group">${escapeText(item.group)}</h3>`;
-    index = item.group === group ? index + 1 : 0;
-    group = item.group;
-    // 2열 격자에서 홀수 그룹의 마지막 칸은 빈 자리로 남는다. 그 항목을 한 줄로 늘려 메운다.
-    const wide = counts.get(item.group) % 2 === 1 && index === counts.get(item.group) - 1 ? ' data-wide=""' : '';
-    return `${heading}<button type="button" class="palette-item"${wide} data-palette-kind="${item.kind}" aria-label="${escapeAttribute(item.label)} 추가">
-    <span class="palette-glyph"><svg aria-hidden="true" focusable="false"><use href="#${symbolFor(item.kind).id}"></use></svg></span><span class="palette-label">${escapeText(item.label)}</span><span class="palette-kind">${item.kind.toUpperCase()}</span>
-  </button>`;
+  const groups = PALETTE.reduce((result, item) => {
+    if (!result.has(item.group)) result.set(item.group, []);
+    result.get(item.group).push(item);
+    return result;
+  }, new Map());
+  const groupsHtml = [...groups].map(([groupName, items], groupIndex) => {
+    const open = expandedPaletteGroups.has(groupName);
+    const itemsHtml = items.map((item, itemIndex) => {
+      // 2열 격자에서 홀수 그룹의 마지막 칸은 빈 자리로 남는다. 그 항목을 한 줄로 늘려 메운다.
+      const wide = counts.get(item.group) % 2 === 1 && itemIndex === items.length - 1 ? ' data-wide=""' : '';
+      const button = `<button type="button" class="palette-item"${wide} data-palette-kind="${item.kind}" aria-label="${escapeAttribute(`${item.label} 추가`)}">
+        <span class="palette-glyph"><svg aria-hidden="true" focusable="false"><use href="#${symbolFor(item.kind).id}"></use></svg></span><span class="palette-label">${escapeText(item.label)}</span><span class="palette-kind">${item.kind.toUpperCase()}</span>
+      </button>`;
+      const hasCatalog = catalogFor(item.kind).length > 0;
+      const detailControl = hasCatalog
+        ? `<button type="button" class="palette-expand" data-palette-expand="${escapeAttribute(item.kind)}" aria-expanded="${expandedPaletteKind === item.kind}" aria-controls="palette-catalog-${escapeAttribute(item.kind)}" aria-label="${escapeAttribute(`${item.label} 모델 ${expandedPaletteKind === item.kind ? '접기' : '펼치기'}`)}"><span aria-hidden="true"></span></button>`
+        : '<span class="palette-expand-placeholder" aria-hidden="true"></span>';
+      return `<div class="palette-family" data-wide>
+        <div class="palette-family-head">${button}${detailControl}</div>
+        ${hasCatalog ? paletteCatalog(item.kind, item.label) : ''}
+      </div>`;
+    }).join('');
+    return `<section class="palette-group" data-palette-group="${escapeAttribute(groupName)}">
+      <button type="button" class="palette-group-toggle" data-palette-group-toggle="${escapeAttribute(groupName)}" aria-expanded="${open}" aria-controls="palette-group-${groupIndex}"><span>${escapeText(groupName)}</span><i aria-hidden="true"></i></button>
+      <div class="palette-group-items" id="palette-group-${groupIndex}"${open ? '' : ' hidden'}>${itemsHtml}</div>
+    </section>`;
   }).join('');
+  const toolsHtml = `<section class="palette-group palette-modeling">
+    <p class="palette-static-title">연결 · 도형 · 모델링</p>
+    <div class="palette-tools">
+      <button type="button" data-editor-action="device"><strong>직접 입력 장비</strong><small>종류와 한계값을 직접 작성</small></button>
+      <button type="button" data-editor-action="connect"><strong>장비 링크</strong><small>두 장비를 차례로 선택</small></button>
+      <button type="button" data-editor-action="annotation-connect"><strong>주석 연결</strong><small>설명선을 연결</small></button>
+      <button type="button" data-editor-action="shape-rect"><strong>사각형</strong><small>영역을 표시</small></button>
+      <button type="button" data-editor-action="shape-ellipse"><strong>타원</strong><small>영역을 표시</small></button>
+      <button type="button" data-editor-action="shape-text"><strong>텍스트</strong><small>설명을 추가</small></button>
+      <button type="button" data-editor-action="demand"><strong>트래픽 수요</strong><small>수요를 정의</small></button>
+    </div>
+  </section>`;
+  element('component-palette').innerHTML = `${groupsHtml}${toolsHtml}`;
 }
 
 function setLeftPanel(name) {
@@ -625,16 +677,24 @@ function nextDeviceName(kind) {
   return `${kind.toUpperCase()} ${Date.now()}`;
 }
 
-function createDeviceFromPalette(kind, position) {
+function createDeviceFromPalette(kind, position, catalogId = null, profileId = null) {
   const preset = PALETTE.find((item) => item.kind === kind);
   if (!preset) return;
   try {
+    const entry = catalogId ? catalogEntry(catalogId) : null;
+    const profile = entry ? catalogProfile(catalogId, profileId) : null;
+    if (catalogId && (!entry || !profile || (entry.kind !== kind && !entry.kinds?.includes(kind)))) throw new Error('선택한 장비 프로필을 찾을 수 없습니다.');
     const device = addDevice(topology, {
       name: nextDeviceName(kind), kind, limits: preset.limits, position,
     });
+    let detail = '장비 검사에서 한계값을 입력하세요.';
+    if (entry && profile) {
+      applySpec(topology, device.id, { ...buildSpec(entry, profile), vendor: entry.vendor, model: entry.model });
+      detail = `${entry.vendor} ${entry.model} · ${profile.label} 프로필을 적용했습니다.`;
+    }
     state.selectedId = device.id;
     closeEditorPanel();
-    commitTopology(`${device.name} 장비를 추가했습니다. 장비 검사에서 한계값을 입력하세요.`);
+    commitTopology(`${device.name} 장비를 추가했습니다. ${detail}`);
   } catch (error) { showToast(error.message); }
 }
 
@@ -1258,7 +1318,27 @@ function renderEditorMode() {
   // 빈 곳을 그냥 끌면 화면이 밀리고 Shift 를 누른 채 끌어야 선택 상자가 나온다.
   const labels = { select: 'SELECT · DRAG TO BOX · RIGHT-DRAG TO PAN · SHIFT+CLICK TO ADD', connect: state.connectSource ? `CONNECT · ${state.connectSource.toUpperCase()} → SELECT TARGET` : 'CONNECT · SELECT SOURCE' };
   element('editor-mode').lastChild.textContent = labels[state.editorMode] || state.editorMode.toUpperCase();
-  document.querySelector('[data-editor-action="connect"]').setAttribute('aria-pressed', String(state.editorMode === 'connect'));
+  document.querySelector('[data-editor-action="connect"]')?.setAttribute('aria-pressed', String(state.editorMode === 'connect'));
+  const editableSelection = state.selection.filter(({ type }) => type === 'device' || type === 'shape');
+  const count = editableSelection.length;
+  const selectedShape = count === 1 && state.selection[0].type === 'shape';
+  const selectedGroup = state.selection.length === 1 && state.selection[0].type === 'group';
+  const rules = {
+    group: [count >= 2, '장비 또는 도형을 2개 이상 선택하세요.'],
+    ungroup: [selectedGroup, '그룹 하나를 선택하세요.'],
+    'align-left': [count >= 2, '장비 또는 도형을 2개 이상 선택하세요.'],
+    'distribute-x': [count >= 3, '장비 또는 도형을 3개 이상 선택하세요.'],
+    'map-device': [selectedShape, '가져온 도형 하나를 선택하세요.'],
+  };
+  for (const [action, [enabled, hint]] of Object.entries(rules)) {
+    const button = document.querySelector(`[data-editor-action="${action}"]`);
+    if (!button) continue;
+    button.disabled = !enabled;
+    if (enabled) { button.removeAttribute('title'); button.removeAttribute('aria-describedby'); }
+    else { button.title = hint; button.setAttribute('aria-describedby', 'editor-selection-hint'); }
+  }
+  const selectedLabel = count ? `${count}개 선택됨` : '선택 없음';
+  element('editor-selection-hint').textContent = `${selectedLabel}. 그룹과 정렬은 여러 요소를 선택해야 합니다.`;
 }
 
 // 데이터시트 값은 특정 조건에서 잰 숫자다. 그 조건과 대조할 우리 워크로드를 적지 않으면
@@ -1361,9 +1441,9 @@ function tourTargets() {
 const TOUR_STEPS = [
   {
     title: '설계 템플릿',
-    target: '[data-editor-action="new"]',
+    target: '#project-menu-button',
     // 개수를 못 박으면 설계를 더할 때마다 안내가 틀린 말을 한다. 목록에서 센다.
-    text: () => `여기서 시작합니다. ${templates.length}개 설계가 들어 있고 각각 먼저 차는 축이 다릅니다. 3-tier 웹, DMZ 이중 방화벽, IoT 게이트웨이처럼 실제 구성을 골라 열 수 있습니다.`,
+    text: () => `프로젝트 메뉴에서 시작합니다. ${templates.length}개 설계가 들어 있고 각각 먼저 차는 축이 다릅니다. 3-tier 웹, DMZ 이중 방화벽, IoT 게이트웨이처럼 실제 구성을 골라 열 수 있습니다.`,
   },
   {
     title: '워크로드 배율',
@@ -1419,12 +1499,12 @@ const TOUR_STEPS = [
   },
   {
     title: '워크로드 조건',
-    target: '[data-editor-action="workload"]',
+    target: '#analysis-menu-button',
     text: () => '데이터시트 숫자는 특정 조건에서 잰 값입니다. 우리 트래픽의 프레임 크기와 전송 계층을 여기 적어야 그 값을 이 설계에 쓸 수 있는지 판정합니다. 적지 않으면 그 축은 미확인으로 남습니다 — 모르는 것을 안전으로 바꾸지 않습니다.',
   },
   {
     title: '결과 내보내기',
-    target: '[data-editor-action="export-svg"]',
+    target: '#export-menu-button',
     text: () => '내보낸 그림에는 배율, 주입한 장애, 엔진 버전, 판정, 미확인 축 수가 함께 찍힙니다. 그래야 위키에 붙인 그림이 어느 조건에서 나온 것인지 남습니다. 프로젝트 저장은 근거와 보정까지 담은 JSON 을 냅니다.',
   },
   {
@@ -1437,6 +1517,7 @@ const TOUR_STEPS = [
 let tour = null;
 
 function startTour() {
+  closeTopMenus();
   closeEditorPanel();
   // 안내가 바꾸는 것은 시나리오 상태뿐이라 그대로 되돌릴 수 있다. 설계 자체는 건드리지 않는다.
   tour = {
@@ -1814,6 +1895,7 @@ async function readFile(input) {
 }
 
 function handleEditorAction(action) {
+  closeTopMenus();
   if (action === 'undo' || action === 'redo') { historyStep(action); return; }
   if (action === 'device') openDeviceForm();
   if (action === 'demand') openDemandManager();
@@ -1827,6 +1909,7 @@ function handleEditorAction(action) {
   if (action === 'export-svg') { downloadText('rack-mesh-diagram.svg', diagramSvg(), 'image/svg+xml'); showToast('계산 결과와 판정을 찍은 SVG로 내보냈습니다.'); }
   if (action === 'export-png') exportPng().catch((error) => showToast(error.message));
   if (action === 'new') openTemplatePicker();
+  if (action === 'new-blank') applyTemplate('blank');
   if (action.startsWith('shape-')) {
     const kind = action.slice(6);
     const label = kind === 'text' ? '설명' : kind === 'ellipse' ? '영역' : '그룹';
@@ -1834,8 +1917,23 @@ function handleEditorAction(action) {
     const shape = topology.diagram.shapes.at(-1); state.selection = [{ type: 'shape', id: shape.id }];
     commitTopology(`${label} 도형을 추가했습니다.`);
   }
-  if (action === 'group' && state.selection.length > 1) { topology = groupSelection(topology, state.selection, '설계 그룹'); commitTopology('선택한 요소를 그룹으로 묶었습니다.'); }
-  if (action === 'ungroup') { topology = ungroupSelection(topology, state.selection); commitTopology('선택한 그룹을 해제했습니다.'); }
+  if (action === 'group' && state.selection.length > 1) {
+    topology = groupSelection(topology, state.selection, '설계 그룹');
+    const group = topology.diagram.groups.at(-1);
+    // 방금 만든 그룹을 선택해야 해제와 다음 편집을 바로 할 수 있다. 장비로만 만든 그룹은
+    // 캔버스에서 그룹을 다시 집을 표식이 없으므로, 이 전환이 없으면 해제할 수 없었다.
+    state.selection = group ? [{ type: 'group', id: group.id }] : state.selection;
+    commitTopology('선택한 요소를 그룹으로 묶었습니다.');
+  }
+  if (action === 'ungroup') {
+    const groups = state.selection.filter(({ type }) => type === 'group')
+      .map(({ id }) => topology.diagram.groups.find((group) => group.id === id)).filter(Boolean);
+    topology = ungroupSelection(topology, state.selection);
+    state.selection = groups.flatMap((group) => group.memberIds.map((id) => (
+      topology.devices.some((device) => device.id === id) ? { type: 'device', id } : { type: 'shape', id }
+    )));
+    commitTopology('선택한 그룹을 해제했습니다.');
+  }
   if (action === 'align-left' && state.selection.length > 1) { topology = alignSelection(topology, state.selection, 'left'); commitTopology('선택한 요소를 왼쪽으로 정렬했습니다.'); }
   if (action === 'distribute-x' && state.selection.length > 2) { topology = distributeSelection(topology, state.selection, 'x'); commitTopology('선택한 요소를 가로로 분배했습니다.'); }
   if (action === 'annotation-connect') {
@@ -2004,6 +2102,7 @@ function selectElement(type, id, additive = false) {
     state.selection = exists ? state.selection.filter((item) => item.type !== type || item.id !== id) : [...state.selection, entry];
   } else state.selection = [entry];
   if (type === 'device' || type === 'link') state.selectedId = id;
+  renderEditorMode();
 }
 
 function handleNodeSelection(id, additive = false) {
@@ -2273,8 +2372,41 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'ArrowLeft') { event.preventDefault(); runTourStep(tour.index - 1); }
 });
 element('reset-button').addEventListener('click', () => { state.disabledDevices.clear(); state.disabledLinks.clear(); state.disabledDomains.clear(); state.scale = 1; element('scale-input').value = '100'; showToast('장애와 배율을 초기화했습니다.'); recalculate(); });
-element('export-button').addEventListener('click', exportResult);
-document.querySelector('.editor-tools').addEventListener('click', (event) => { const button = event.target.closest('[data-editor-action]'); if (button) handleEditorAction(button.dataset.editorAction); });
+function closeTopMenus({ restoreFocus = false } = {}) {
+  document.querySelectorAll('.top-menu-trigger[aria-expanded="true"]').forEach((trigger) => {
+    trigger.setAttribute('aria-expanded', 'false');
+    element(trigger.getAttribute('aria-controls')).hidden = true;
+    if (restoreFocus) trigger.focus();
+  });
+}
+
+function setTopMenu(trigger, open) {
+  closeTopMenus();
+  if (!open) return;
+  const menu = element(trigger.getAttribute('aria-controls'));
+  trigger.setAttribute('aria-expanded', 'true');
+  menu.hidden = false;
+  menu.querySelector('[role="menuitem"]')?.focus();
+}
+
+document.addEventListener('click', (event) => {
+  const trigger = event.target.closest('.top-menu-trigger');
+  if (trigger) { setTopMenu(trigger, trigger.getAttribute('aria-expanded') !== 'true'); return; }
+  const button = event.target.closest('[data-editor-action]');
+  if (button) { closeTopMenus(); handleEditorAction(button.dataset.editorAction); return; }
+  if (event.target.closest('[data-export-action="result"]')) { closeTopMenus(); exportResult(); return; }
+  if (!event.target.closest('.top-menu-wrap')) closeTopMenus();
+});
+
+document.addEventListener('keydown', (event) => {
+  const menu = event.target.closest('.top-menu');
+  if (event.key === 'Escape') { closeTopMenus({ restoreFocus: true }); return; }
+  if (!menu || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+  const items = [...menu.querySelectorAll('[role="menuitem"]')];
+  const current = items.indexOf(document.activeElement);
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (current + (event.key === 'ArrowDown' ? 1 : items.length - 1) + items.length) % items.length;
+  event.preventDefault(); items[next]?.focus();
+});
 element('editor-close').addEventListener('click', closeEditorPanel);
 element('editor-panel-content').addEventListener('submit', (event) => {
   event.preventDefault(); const form = event.target; const data = new FormData(form);
@@ -2669,7 +2801,7 @@ topologyScroll.addEventListener('pointerup', (event) => {
     // 어느 하나를 골라 띄우면 나머지를 고르지 않은 것처럼 읽힌다.
     const only = state.selection.length === 1 ? state.selection[0] : null;
     if (only && (only.type === 'device' || only.type === 'link')) state.selectedId = only.id;
-    selectionBoxState = null; element('selection-marquee').hidden = true; renderTopology(); renderInspector(); return;
+    selectionBoxState = null; element('selection-marquee').hidden = true; renderTopology(); renderInspector(); renderEditorMode(); return;
   }
   endPan();
 });
@@ -2777,7 +2909,7 @@ element('component-palette').addEventListener('pointerdown', (event) => {
   // 끊기면서 고스트가 화면에 남는다.
   event.preventDefault();
   item.setPointerCapture(event.pointerId);
-  paletteDrag = { kind: item.dataset.paletteKind, pointerId: event.pointerId, item, startX: event.clientX, startY: event.clientY, ghost: null };
+  paletteDrag = { kind: item.dataset.paletteKind, catalogId: item.dataset.paletteCatalog || null, profileId: item.dataset.paletteProfile || null, pointerId: event.pointerId, item, startX: event.clientX, startY: event.clientY, ghost: null };
 });
 element('component-palette').addEventListener('pointermove', (event) => {
   if (!paletteDrag || event.pointerId !== paletteDrag.pointerId) return;
@@ -2797,12 +2929,61 @@ element('component-palette').addEventListener('pointerup', (event) => {
   if (!paletteDrag || event.pointerId !== paletteDrag.pointerId) return;
   const point = canvasPoint(event);
   const drag = endPaletteDrag();
-  if (!drag.ghost) { createDeviceFromPalette(drag.kind, nextDevicePosition()); return; }
+  if (!drag.ghost) { createDeviceFromPalette(drag.kind, nextDevicePosition(), drag.catalogId, drag.profileId); return; }
   if (!point.inside) { showToast('캔버스 안에 놓아야 장비가 만들어집니다.'); return; }
-  createDeviceFromPalette(drag.kind, point);
+  createDeviceFromPalette(drag.kind, point, drag.catalogId, drag.profileId);
 });
 element('component-palette').addEventListener('pointercancel', endPaletteDrag);
 element('component-palette').addEventListener('dragstart', (event) => event.preventDefault());
+element('component-palette').addEventListener('click', (event) => {
+  const groupToggle = event.target.closest('[data-palette-group-toggle]');
+  if (groupToggle) {
+    const group = groupToggle.dataset.paletteGroupToggle;
+    expandedPaletteGroups.has(group) ? expandedPaletteGroups.delete(group) : expandedPaletteGroups.add(group);
+    const panel = element(groupToggle.getAttribute('aria-controls'));
+    const open = expandedPaletteGroups.has(group);
+    panel.hidden = !open;
+    groupToggle.setAttribute('aria-expanded', String(open));
+    return;
+  }
+  const expand = event.target.closest('[data-palette-expand]');
+  if (expand) {
+    const kind = expand.dataset.paletteExpand;
+    expandedPaletteKind = expandedPaletteKind === kind ? null : kind;
+    for (const trigger of document.querySelectorAll('[data-palette-expand]')) {
+      const selected = trigger.dataset.paletteExpand === expandedPaletteKind;
+      const panel = element(`palette-catalog-${trigger.dataset.paletteExpand}`);
+      panel.hidden = !selected;
+      trigger.setAttribute('aria-expanded', String(selected));
+      const item = PALETTE.find(({ kind: paletteKind }) => paletteKind === trigger.dataset.paletteExpand);
+      trigger.setAttribute('aria-label', `${item.label} 모델 ${selected ? '접기' : '펼치기'}`);
+    }
+    const panel = element(`palette-catalog-${kind}`);
+    if (!panel.hidden) panel.querySelector('input')?.focus();
+    return;
+  }
+  const action = event.target.closest('[data-editor-action]')?.dataset.editorAction;
+  if (action) { event.stopPropagation(); handleEditorAction(action); return; }
+  // 키보드로 누르면 pointer 시퀀스가 없으므로 클릭에서 같은 배치 동작을 제공한다.
+  if (event.detail === 0) {
+    const item = event.target.closest('[data-palette-kind]');
+    if (item) createDeviceFromPalette(item.dataset.paletteKind, nextDevicePosition(), item.dataset.paletteCatalog || null, item.dataset.paletteProfile || null);
+  }
+});
+element('component-palette').addEventListener('input', (event) => {
+  const input = event.target.closest('[data-palette-search-input]');
+  if (!input) return;
+  const panel = input.closest('[data-palette-catalog-panel]');
+  const needle = input.value.trim().toLowerCase();
+  let shown = 0;
+  for (const item of panel.querySelectorAll('[data-palette-search]')) {
+    const match = !needle || item.dataset.paletteSearch.includes(needle);
+    item.hidden = !match;
+    if (match) shown += 1;
+  }
+  panel.querySelector('[data-palette-result-count]').textContent = needle ? `${shown}개 일치` : `${panel.querySelectorAll('[data-palette-search]').length}개`;
+  panel.querySelector('.palette-empty').hidden = shown !== 0;
+});
 document.addEventListener('pointercancel', endPaletteDrag);
 document.addEventListener('lostpointercapture', () => { if (paletteDrag) endPaletteDrag(); });
 
