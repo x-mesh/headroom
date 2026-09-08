@@ -74,7 +74,36 @@ test('gives the catalog enough structured conditions to judge against', () => {
     }
   }
   assert.ok(withConditions >= 100, `조건을 가진 축 레코드가 ${withConditions}개뿐입니다.`);
-  assert.ok(judgeable >= 30, `워크로드로 판정할 수 있는 축 레코드가 ${judgeable}개뿐입니다.`);
+  assert.ok(judgeable >= 44, `워크로드로 판정할 수 있는 축 레코드가 ${judgeable}개뿐입니다.`);
+});
+
+test('the switch catalog covers the roles the designs actually use switches for', () => {
+  // 설계는 스위치를 스파인과 리프로 쓰는데(dc-pod 12대, clos-paths 15대) 카탈로그에는 48포트
+  // 액세스 스위치 두 종뿐이었다. 역할에 맞는 물건이 없으면 카탈로그가 있어도 고를 수 없다.
+  const switches = deviceCatalog.filter((entry) => entry.kind === 'switch');
+  const labels = switches.flatMap((entry) => entry.profiles.map(({ label }) => label)).join(' ');
+  assert.ok(/스파인/.test(labels), '스파인으로 쓸 스위치가 없습니다');
+  assert.ok(/리프/.test(labels), '리프로 쓸 스위치가 없습니다');
+  // 한 제조사만 있으면 표기 관행의 차이를 보여 줄 수 없다. 그 차이가 이 카탈로그의 요지다.
+  assert.ok(new Set(switches.map(({ vendor }) => vendor)).size >= 2, '스위치 제조사가 하나뿐입니다');
+});
+
+test('a datacenter switch can be judged when the vendor printed its measurement basis', () => {
+  const at = (catalogId, profileId, axis) => {
+    const entry = catalogEntry(catalogId);
+    const profile = entry.profiles.find(({ id }) => id === profileId);
+    return buildSpec(entry, profile).records.find((item) => item.axis === axis);
+  };
+  // Arista 는 각주에 "average packet size of 289 B" 라고 적고 표제 처리량이 편도다.
+  // 그 둘을 구조로 옮겼으므로 같은 조건의 워크로드에서 계산에 들어간다.
+  const arista = { packet_size_bytes: 289, traffic_rate_scope: 'unidirectional' };
+  for (const axis of ['forwarding_bps', 'forwarding_pps']) {
+    assert.equal(evidenceApplicability(at('arista-7050dx4-32s', 'spine-400g', axis), arista), 'applicable', axis);
+  }
+  // 같은 워크로드에서 Cisco 는 갈린다. 용량은 양방향 합계라 기준이 어긋나고(불일치), 패킷 축은
+  // 데이터시트가 기준을 밝히지 않아 미확인이다. 같은 "Tbps" 가 서로 다른 것을 가리킨다.
+  assert.equal(evidenceApplicability(at('cisco-nexus-93180yc-fx', 'leaf-25g', 'forwarding_bps'), arista), 'incompatible');
+  assert.equal(evidenceApplicability(at('cisco-nexus-93180yc-fx', 'leaf-25g', 'forwarding_pps'), arista), 'unknown');
 });
 
 test('lets a switch, a router, and a load balancer be judged, not just a firewall', () => {
