@@ -34,8 +34,10 @@ let suppressNodeClick = false;
 let telemetryTimer;
 const telemetryHistory = new Map();
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const mobileLayout = window.matchMedia('(max-width: 760px)');
 
 const element = (id) => document.getElementById(id);
+if (mobileLayout.matches) document.querySelector('.view-settings')?.removeAttribute('open');
 const formatPercent = (value, signed = false) => value == null ? '미확인' : `${signed && value > 0 ? '+' : ''}${Math.round(value * 100)}%`;
 // reference 는 자릿수와 단위를 정하는 기준이다. 떨리는 값이 그것까지 정하면 1 Gbps 언저리에서
 // Mbps 와 Gbps 를 오가며 글자 수가 바뀐다. 값만 흔들리고 모양은 고정돼야 읽힌다.
@@ -695,6 +697,7 @@ function createDeviceFromPalette(kind, position, catalogId = null, profileId = n
     state.selectedId = device.id;
     closeEditorPanel();
     commitTopology(`${device.name} 장비를 추가했습니다. ${detail}`);
+    openMobileInspector();
   } catch (error) { showToast(error.message); }
 }
 
@@ -1000,7 +1003,7 @@ function renderSpecBlock(resource) {
   const entry = resource.spec ? catalogEntry(resource.spec.catalogId) : null;
   const profile = entry ? catalogProfile(entry.id, resource.spec.profileId) : null;
   return `<div class="spec-block">
-    <span class="spec-code">DATASHEET PROFILE</span>
+    <span class="spec-code">장비와 측정 프로필</span><button type="button" class="spec-search" data-open-swap>검색해서 장비 고르기</button>
     <label>장비<select data-spec-field="catalog"><option value="">직접 입력</option>${entries.map((item) =>
       `<option value="${escapeAttribute(item.id)}"${entry?.id === item.id ? ' selected' : ''}>${escapeText(`${item.vendor} ${item.model}`)}</option>`).join('')}</select></label>
     ${entry ? `<label>측정 조건<select data-spec-field="profile">${entry.profiles.map((item) =>
@@ -1089,17 +1092,42 @@ function renderLimitField(resource, axis) {
   const hint = resource.spec
     ? (datasheet == null ? '이 조건에서는 미확인' : `데이터시트 ${formatCompact(datasheet, catalog.unit)}`)
     : '';
+  const units = limitUnits(axis);
+  const selectedUnit = units[0];
+  const displayed = resource.limits[axis] == null ? '' : resource.limits[axis] / selectedUnit.factor;
+  const suggestions = limitSuggestions(axis);
   return `<label class="limit-field${corrected ? ' corrected' : ''}">
     <span>${escapeText(catalog.label || axis)}${corrected ? ' <b>보정</b>' : ''}</span>
-    <input name="${axis}" type="number" min="0" step="any" placeholder="${escapeAttribute(datasheet == null ? '미확인' : String(datasheet))}" value="${resource.limits[axis] ?? ''}">
+    <span class="unit-input"><input name="${axis}" type="number" min="0" step="any" placeholder="미확인" value="${displayed}"><select name="${axis}__unit" aria-label="${escapeAttribute(catalog.label || axis)} 단위">${units.map(({ label, factor }) => `<option value="${factor}">${label}</option>`).join('')}</select></span>
+    ${suggestions.length ? `<span class="limit-presets">${suggestions.map((value) => `<button type="button" data-limit-axis="${escapeAttribute(axis)}" data-limit-value="${value}">${escapeText(formatCompact(value, catalog.unit))}</button>`).join('')}</span>` : ''}
     ${hint ? `<small>${escapeText(hint)}${corrected ? ` <button type="button" data-reset-axis="${escapeAttribute(axis)}">되돌리기</button>` : ''}</small>` : ''}
   </label>`;
+}
+
+function limitUnits(axis) {
+  const unit = axisCatalog[axis]?.unit;
+  if (unit === 'bps') return [{ label: 'Gbps', factor: 1e9 }, { label: 'Mbps', factor: 1e6 }, { label: 'bps', factor: 1 }];
+  if (unit === 'pps') return [{ label: 'Mpps', factor: 1e6 }, { label: 'Kpps', factor: 1e3 }, { label: 'pps', factor: 1 }];
+  if (unit === 'cps') return [{ label: 'cps', factor: 1 }, { label: 'Kcps', factor: 1e3 }];
+  if (unit === 'sessions') return [{ label: 'K sessions', factor: 1e3 }, { label: 'sessions', factor: 1 }];
+  return [{ label: unit || '값', factor: 1 }];
+}
+
+function limitSuggestions(axis) {
+  return ({ forwarding_bps: [1e9, 10e9, 25e9, 100e9], nic_bps: [1e9, 10e9, 25e9, 100e9], forwarding_pps: [1e6, 10e6, 100e6], new_sessions_per_sec: [1e4, 5e4, 1e5], concurrent_sessions: [1e5, 1e6, 1e7] })[axis] || [];
+}
+
+function setLimitInput(form, axis, baseValue) {
+  const input = form?.querySelector(`input[name="${CSS.escape(axis)}"]`);
+  const unit = form?.querySelector(`select[name="${CSS.escape(axis)}__unit"]`);
+  if (!input || !unit) return;
+  input.value = String(baseValue / Number(unit.value || 1));
 }
 
 function renderDeviceEditor(resource) {
   const fields = Object.keys(resource.limits);
   return `<form class="inspector-editor" data-resource-form="device" data-resource-id="${resource.id}">
-    <h3>장비 한계 편집</h3>
+    <h3>장비 한계 편집</h3><p class="inspector-editor-hint">카탈로그 값을 사용하고 필요한 축만 보정하세요. 직접 입력한 값은 선택한 단위로 저장됩니다.</p>
     <label>이름<input name="name" maxlength="80" required value="${escapeAttribute(resource.name)}"></label>
     <label>영역<input name="zone" maxlength="80" required value="${escapeAttribute(resource.zone)}" placeholder="FABRIC / RACK 04"></label>
     <label>제조사<input name="vendor" maxlength="24" value="${escapeAttribute(resource.vendor || '')}" placeholder="약칭"></label>
@@ -1349,6 +1377,13 @@ const WORKLOAD_FIELDS = [
   { key: 'cipher', label: '암호 스위트', hint: 'rsa2048 · ecdsa_p256 · none', type: 'text' },
   { key: 'test_method', label: '시험 방법', hint: 'enterprise-traffic-mix · appmix 처럼 데이터시트가 이름 붙인 것', type: 'text' },
 ];
+const WORKLOAD_PRESETS = Object.freeze({
+  web: { packet_size_bytes: 1518, transport: 'tcp', cipher: 'none', test_method: 'enterprise-traffic-mix', features_enabled: [] },
+  tls: { packet_size_bytes: 1518, transport: 'tcp', cipher: 'ECDHE-ECDSA-AES128-SHA256', test_method: 'tls', features_enabled: ['tls'] },
+  security: { packet_size_bytes: 1518, transport: 'mixed', cipher: 'none', test_method: 'enterprise-traffic-mix', features_enabled: ['ips', 'application-control', 'logging'] },
+});
+const WORKLOAD_FEATURES = ['ips', 'application-control', 'logging', 'tls', 'ipsec'];
+const checked = (value, expected) => value === expected ? ' checked' : '';
 
 function openWorkloadForm() {
   const conditions = topology.workloadConditions || {};
@@ -1356,20 +1391,27 @@ function openWorkloadForm() {
   const judgement = current.summary.evidenceJudgement;
   const ratio = judgement.ratio == null ? '카탈로그 근거가 붙은 축이 없습니다.'
     : `근거가 붙은 축 ${judgement.withRecords}개 중 ${judgement.judged}개를 판정했습니다 · ${formatPercent(judgement.ratio)}`;
-  openEditorPanel('워크로드 조건', `<form data-editor-form="workload" class="editor-form">
-    <p class="form-hint">이 설계에 실제로 흐르는 트래픽의 조건입니다. 데이터시트가 어떤 조건에서 잰 숫자인지와 대조해, 그 한계값을 이 설계에 쓸 수 있는지 판정합니다. 비워 두면 판정할 수 없어 미확인으로 남습니다.</p>
-    ${WORKLOAD_FIELDS.map(({ key, label, hint, type }) => `<label>${escapeText(label)}
-      <input name="${key}" type="${type}" value="${escapeAttribute(conditions[key] ?? '')}" placeholder="${escapeAttribute(hint)}">
-    </label>`).join('')}
-    <fieldset class="workload-features">
-      <legend>켜 둔 기능</legend>
-      <label class="inline"><input type="radio" name="features_mode" value="unset"${features == null ? ' checked' : ''}> 적지 않음</label>
-      <label class="inline"><input type="radio" name="features_mode" value="none"${Array.isArray(features) && !features.length ? ' checked' : ''}> 없음 (방화벽만)</label>
-      <label class="inline"><input type="radio" name="features_mode" value="list"${Array.isArray(features) && features.length ? ' checked' : ''}> 목록</label>
-      <input name="features_enabled" type="text" value="${escapeAttribute(Array.isArray(features) ? features.join(', ') : '')}" placeholder="ips, application-control, logging">
-    </fieldset>
-    <p class="form-hint"><b>${escapeText(ratio)}</b> 이 도구가 못 하면 안 되는 일은 맞다고 말하는 것이 아니라 맞는지 아닌지 말하는 것입니다.</p>
-    <div class="form-actions"><button type="submit">적용</button><button type="button" data-workload-action="clear">모두 지우기</button></div>
+  const selectedFeatures = Array.isArray(features) ? features : [];
+  const customFeatures = selectedFeatures.filter((item) => !WORKLOAD_FEATURES.includes(item));
+  openEditorPanel('데이터시트 비교 조건', `<form data-editor-form="workload" class="workload-form">
+    <div class="workload-main"><p class="form-hint">실제 트래픽 조건을 데이터시트의 측정 조건과 대조합니다. 가까운 프리셋을 고르고 필요한 값만 바꾸세요.</p>
+      <fieldset class="choice-block workload-presets"><legend>조건 프리셋</legend>
+        <button type="button" data-workload-preset="web">일반 웹/API<small>1518B · TCP</small></button><button type="button" data-workload-preset="tls">TLS 처리<small>ECDSA · TLS</small></button><button type="button" data-workload-preset="security">보안 검사<small>IPS · App control</small></button><button type="button" data-workload-preset="custom">직접 설정<small>현재 값 유지</small></button>
+      </fieldset>
+      <div class="workload-grid">
+        <label>프레임 크기 <span>bytes</span><input name="packet_size_bytes" type="number" min="1" list="packet-size-options" value="${escapeAttribute(conditions.packet_size_bytes ?? '')}" placeholder="64, 512, 1518, 9000"><datalist id="packet-size-options"><option value="64"><option value="128"><option value="256"><option value="512"><option value="1518"><option value="9000"></datalist></label>
+        <fieldset class="choice-block segmented transport-choice"><legend>전송 계층</legend>${['tcp', 'udp', 'mixed'].map((value) => `<label><input type="radio" name="transport" value="${value}"${checked(conditions.transport, value)}><span>${value === 'mixed' ? '혼합' : value.toUpperCase()}</span></label>`).join('')}</fieldset>
+        <label>암호 스위트<input name="cipher" list="cipher-options" value="${escapeAttribute(conditions.cipher ?? '')}" placeholder="없음 또는 검색"><datalist id="cipher-options"><option value="none"><option value="rsa2048"><option value="ecdsa_p256"><option value="ECDHE-ECDSA-AES128-SHA256"></datalist></label>
+        <label>시험 방법<input name="test_method" list="method-options" value="${escapeAttribute(conditions.test_method ?? '')}" placeholder="데이터시트의 시험 이름"><datalist id="method-options"><option value="enterprise-traffic-mix"><option value="appmix"><option value="l4"><option value="tls"></datalist></label>
+      </div>
+      <fieldset class="choice-block workload-features"><legend>켜 둔 기능</legend>
+        <div class="segmented feature-mode"><label><input type="radio" name="features_mode" value="unset"${features == null ? ' checked' : ''}><span>적지 않음</span></label><label><input type="radio" name="features_mode" value="none"${Array.isArray(features) && !features.length ? ' checked' : ''}><span>없음</span></label><label><input type="radio" name="features_mode" value="list"${Array.isArray(features) && features.length ? ' checked' : ''}><span>기능 선택</span></label></div>
+        <div class="feature-chips">${WORKLOAD_FEATURES.map((feature) => `<label><input type="checkbox" name="features_chip" value="${feature}"${selectedFeatures.includes(feature) ? ' checked' : ''}><span>${feature}</span></label>`).join('')}</div>
+        <label class="custom-feature">그 밖의 기능<input name="features_enabled" type="text" value="${escapeAttribute(customFeatures.join(', '))}" placeholder="쉼표로 구분"></label>
+      </fieldset>
+    </div>
+    <aside class="workload-result"><span>판정 가능 범위</span><strong>${escapeText(ratio)}</strong><p>불일치하거나 비어 있는 축은 안전으로 처리하지 않고 미확인으로 남깁니다.</p></aside>
+    <div class="form-actions"><button type="submit">조건 적용</button><button type="button" data-workload-action="clear">모두 지우기</button></div><p class="editor-error"></p>
   </form>`);
 }
 
@@ -1477,6 +1519,7 @@ const TOUR_STEPS = [
       if (!spread) return;
       state.selectedId = spread.device.id;
       state.selection = [{ type: 'device', id: spread.device.id }];
+      openMobileInspector();
     },
   },
   {
@@ -1536,6 +1579,7 @@ function endTour() {
   state.disabledDevices = new Set(restore.devices); state.disabledLinks = new Set(restore.links);
   state.selectedId = restore.selectedId;
   state.selection = restore.selectedId ? [{ type: 'device', id: restore.selectedId }] : [];
+  closeMobileInspector();
   setLeftPanel(restore.leftPanel);
   element('tour-spot').hidden = true;
   element('tour').hidden = true; element('tour').innerHTML = '';
@@ -1847,13 +1891,16 @@ function openVerificationPanel() {
   const domains = (topology.failureDomains || []).map((item) => `<li><b>${escapeText(item.name)}</b> · 자원 ${(item.deviceIds?.length || 0) + (item.linkIds?.length || 0)}개 <button type="button" data-delete-model="domain" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>정의된 장애 도메인 없음</li>';
   const racks = (current.racks || []).map((item) => `<li><b>${escapeText(item.name || item.id)}</b> · 전력 ${item.powerStatus || item.status || '미확인'} · U ${item.spaceStatus || item.status || '미확인'} <button type="button" data-delete-model="rack" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>정의된 랙 없음</li>';
   const scenarios = state.namedScenarios.map((item) => `<li><button type="button" data-load-scenario="${item.id}">${escapeText(item.name)}</button> <button type="button" data-delete-model="scenario" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>저장한 시나리오 없음</li>';
-  openEditorPanel('서비스 생존성 검증 설정', `
+  const counts = { service: (topology.services || []).length, domain: (topology.failureDomains || []).length, rack: (topology.racks || []).length, scenario: state.namedScenarios.length };
+  const tab = state.verificationTab || 'service';
+  openEditorPanel('검증 설정', `
     <p class="editor-hint">서비스 수용 기준과 함께 장애 도메인, 랙 전력·U를 검증합니다. 비어 있는 근거는 통과로 치지 않습니다.</p>
+    <div class="verification-tabs" role="tablist" aria-label="검증 설정 종류">${[['service', '서비스'], ['domain', '장애 도메인'], ['rack', '랙'], ['scenario', '시나리오']].map(([id, label]) => `<button type="button" role="tab" data-verification-tab="${id}" aria-selected="${tab === id}">${label}<span>${counts[id]}</span></button>`).join('')}</div>
     <div class="verification-columns">
-      <section><h3>서비스</h3><ul>${services}</ul><form class="editor-form" data-editor-form="service"><label>이름<input name="name" required maxlength="80"></label><label>최소 전달률 (%)<input name="ratio" type="number" min="1" max="100" value="100"></label>${checkList('demandIds', topology.demands, '검증할 수요')}<button type="submit">서비스 추가</button><p class="editor-error"></p></form></section>
-      <section><h3>장애 도메인</h3><ul>${domains}</ul><form class="editor-form" data-editor-form="failure-domain"><label>이름<input name="name" required maxlength="80"></label>${checkList('deviceIds', topology.devices, '함께 멈출 장비')}${checkList('linkIds', topology.links, '함께 멈출 링크')}<button type="submit">장애 도메인 추가</button><p class="editor-error"></p></form></section>
-      <section><h3>랙</h3><ul>${racks}</ul><form class="editor-form" data-editor-form="rack"><label>이름<input name="name" required maxlength="80"></label><label>전력 예산 (W)<input name="power" type="number" min="1" required></label><label>공간 (U)<input name="units" type="number" min="1" required></label><label>전력 기준<select name="basis"><option value="nameplate">nameplate</option><option value="typical">typical</option><option value="measured">measured</option></select></label>${checkList('deviceIds', topology.devices, '랙 장비')}<button type="submit">랙 추가</button><p class="editor-error"></p></form></section>
-      <section><h3>시나리오</h3><ul>${scenarios}</ul><form class="editor-form" data-editor-form="scenario"><label>이름<input name="name" required maxlength="80"></label><button type="submit">현재 장애·부하 저장</button><p class="editor-error"></p></form></section>
+      <section data-verification-panel="service"${tab === 'service' ? '' : ' hidden'}><h3>서비스 생존성</h3><p>어떤 트래픽을 어느 비율까지 전달해야 하는지 정합니다.</p><ul>${services}</ul><form class="editor-form" data-editor-form="service"><label>이름<input name="name" required maxlength="80"></label><label>최소 전달률 (%)<input name="ratio" type="number" min="1" max="100" value="100"></label>${checkList('demandIds', topology.demands, '검증할 수요')}<button type="submit">서비스 추가</button><p class="editor-error"></p></form></section>
+      <section data-verification-panel="domain"${tab === 'domain' ? '' : ' hidden'}><h3>공통 장애 도메인</h3><p>전원이나 회선처럼 함께 멈추는 자원을 묶습니다.</p><ul>${domains}</ul><form class="editor-form" data-editor-form="failure-domain"><label>이름<input name="name" required maxlength="80"></label>${checkList('deviceIds', topology.devices, '함께 멈출 장비')}${checkList('linkIds', topology.links, '함께 멈출 링크')}<button type="submit">장애 도메인 추가</button><p class="editor-error"></p></form></section>
+      <section data-verification-panel="rack"${tab === 'rack' ? '' : ' hidden'}><h3>랙 수용량</h3><p>장비의 전력과 공간이 랙 예산 안에 드는지 확인합니다.</p><ul>${racks}</ul><form class="editor-form" data-editor-form="rack"><label>이름<input name="name" required maxlength="80"></label><label>전력 예산 (W)<input name="power" type="number" min="1" required></label><label>공간 (U)<input name="units" type="number" min="1" required></label><label>전력 기준<select name="basis"><option value="nameplate">명판값</option><option value="typical">일반 부하</option><option value="measured">실측</option></select></label>${checkList('deviceIds', topology.devices, '랙 장비')}<button type="submit">랙 추가</button><p class="editor-error"></p></form></section>
+      <section data-verification-panel="scenario"${tab === 'scenario' ? '' : ' hidden'}><h3>비교 시나리오</h3><p>현재 장애와 부하 상태를 이름 붙여 다시 불러옵니다.</p><ul>${scenarios}</ul><form class="editor-form" data-editor-form="scenario"><label>이름<input name="name" required maxlength="80"></label><button type="submit">현재 장애·부하 저장</button><p class="editor-error"></p></form></section>
     </div>`);
 }
 
@@ -2116,6 +2163,11 @@ function handleNodeSelection(id, additive = false) {
   }
   selectElement('device', id, additive); renderTopology(); renderInspector();
 }
+
+function openMobileInspector() { if (mobileLayout.matches) element('inspector-panel').classList.add('mobile-open'); }
+function closeMobileInspector() { element('inspector-panel').classList.remove('mobile-open'); }
+element('inspector-close-mobile').addEventListener('click', closeMobileInspector);
+element('mobile-inspector-open').addEventListener('click', openMobileInspector);
 
 element('scale-input').addEventListener('input', (event) => { state.scale = Number(event.target.value) / 100; recalculate({ light: true }); });
 element('scale-input').addEventListener('change', (event) => { state.scale = Number(event.target.value) / 100; recalculate(); });
@@ -2413,7 +2465,7 @@ element('editor-panel-content').addEventListener('submit', (event) => {
   try {
     if (form.dataset.editorForm === 'workload') {
       const mode = data.get('features_mode');
-      const listed = String(data.get('features_enabled') || '').split(',').map((item) => item.trim()).filter(Boolean);
+      const listed = [...data.getAll('features_chip'), ...String(data.get('features_enabled') || '').split(',')].map((item) => String(item).trim()).filter(Boolean);
       const patch = Object.fromEntries(WORKLOAD_FIELDS.map(({ key, type }) => {
         const raw = String(data.get(key) || '').trim();
         return [key, raw === '' ? null : type === 'number' ? Number(raw) : raw];
@@ -2481,6 +2533,7 @@ element('editor-panel-content').addEventListener('input', (event) => {
 element('editor-panel-content').addEventListener('change', (event) => {
   const form = event.target.closest('form[data-editor-form="device"]');
   if (form && event.target.name === 'kind') renderDeviceLimitFields(form);
+  if (event.target.name === 'features_chip' || event.target.name === 'features_enabled') event.target.form?.querySelector('[name="features_mode"][value="list"]')?.click();
 });
 // 막대를 끌어 한계값을 정한다. 끄는 동안은 이 행만 고쳐 그린다 — 전체 재계산은 인스펙터를
 // 다시 만들어 끌던 요소를 없애 버린다. 부하는 이 장비의 한계값에 좌우되지 않으므로(단일 통과
@@ -2511,7 +2564,7 @@ function previewAxisLimit(meter, limit) {
   value.previousSibling.textContent = `${stateLabel(status)} · `;
   row.querySelector(`[data-axis-limit="${axis}"]`).textContent = `${formatCompact(limit, axisCatalog[axis]?.unit)} limit`;
   const field = document.querySelector(`[data-resource-form="device"] input[name="${axis}"]`);
-  if (field) field.value = String(limit);
+  if (field) setLimitInput(field.form, axis, limit);
 }
 
 // 데이터시트가 붙은 장비에서는 한계값 입력이 보정이다. 원본과 같은 값은 보정으로 남기지 않는다.
@@ -2587,6 +2640,18 @@ element('inspector-content').addEventListener('click', (event) => {
 });
 
 element('editor-panel-content').addEventListener('click', (event) => {
+  const verificationTab = event.target.closest('[data-verification-tab]')?.dataset.verificationTab;
+  if (verificationTab) { state.verificationTab = verificationTab; openVerificationPanel(); element('editor-panel-content').querySelector(`[data-verification-tab="${verificationTab}"]`)?.focus(); return; }
+  const workloadPreset = event.target.closest('[data-workload-preset]')?.dataset.workloadPreset;
+  if (workloadPreset && workloadPreset !== 'custom') {
+    const form = event.target.closest('form'); const preset = WORKLOAD_PRESETS[workloadPreset];
+    for (const key of ['packet_size_bytes', 'cipher', 'test_method']) form.elements[key].value = preset[key] ?? '';
+    form.querySelector(`[name="transport"][value="${preset.transport}"]`)?.click();
+    form.querySelector('[name="features_mode"][value="list"]')?.click();
+    for (const chip of form.querySelectorAll('[name="features_chip"]')) chip.checked = preset.features_enabled.includes(chip.value);
+    form.elements.features_enabled.value = '';
+    return;
+  }
   const choice = event.target.closest('[data-swap-catalog]');
   const detach = event.target.closest('[data-swap-detach]');
   if (choice || detach) {
@@ -2666,6 +2731,9 @@ element('inspector-content').addEventListener('change', (event) => {
   } catch (error) { showToast(error.message); }
 });
 element('inspector-content').addEventListener('click', (event) => {
+  if (event.target.closest('[data-open-swap]')) { openDeviceSwapPicker(state.selectedId); return; }
+  const preset = event.target.closest('[data-limit-value]');
+  if (preset) { setLimitInput(preset.closest('form'), preset.dataset.limitAxis, Number(preset.dataset.limitValue)); return; }
   const axis = event.target.closest('[data-reset-axis]')?.dataset.resetAxis;
   if (!axis) return;
   try {
@@ -2678,7 +2746,7 @@ element('inspector-content').addEventListener('submit', (event) => {
   try {
     if (form.dataset.resourceForm === 'device') {
       const id = form.dataset.resourceId;
-      const limits = Object.fromEntries([...data.entries()].filter(([key]) => axisCatalog[key]));
+      const limits = Object.fromEntries([...data.entries()].filter(([key]) => axisCatalog[key]).map(([axis, raw]) => [axis, raw === '' ? '' : Number(raw) * Number(data.get(`${axis}__unit`) || 1)]));
       const device = topology.devices.find((item) => item.id === id);
       updateDevice(topology, id, { name: data.get('name'), zone: data.get('zone'), vendor: data.get('vendor'), model: data.get('model'), ...(device?.spec ? {} : { limits }) });
       // 데이터시트를 붙인 장비에서는 한계값 입력이 보정이다. 원본과 같은 값은 보정으로 남기지 않는다.

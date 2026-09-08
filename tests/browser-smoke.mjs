@@ -254,6 +254,7 @@ async function verify(viewport, screenshot, interact = false) {
   // 카드가 담는 수치는 세 단으로 줄일 수 있다. 줄이는 것은 보이는 것뿐이고 계산은 그대로다.
   // 다만 어느 단에서도 미확인은 숨기지 않는다 - 접어 두면 아는 값만 남아 다 안다고 읽힌다.
   const detail = async (level) => {
+    if (!await page.locator(`[data-node-detail="${level}"]`).isVisible()) await page.locator('.view-settings > summary').click();
     await page.locator(`[data-node-detail="${level}"]`).click();
     await page.waitForTimeout(150);
     return page.evaluate(() => ({
@@ -351,6 +352,7 @@ async function verify(viewport, screenshot, interact = false) {
 
   // 한계값은 숫자를 치는 것보다 막대를 끌어 정하는 편이 이 도구가 답하는 질문에 가깝다.
   await page.locator('[data-device-id="fw-a"]').click();
+  if (viewport.width <= 760) await page.locator('#mobile-inspector-open').click();
   await page.waitForFunction(() => document.querySelector('[data-axis-drag]'));
   const meter = page.locator('[data-axis-drag]').first();
   await meter.scrollIntoViewIfNeeded();
@@ -380,6 +382,7 @@ async function verify(viewport, screenshot, interact = false) {
   await meter.focus();
   await page.keyboard.press('ArrowLeft');
   await page.waitForFunction((before) => document.querySelector('[data-axis-limit]')?.textContent !== before, limitAfter);
+  if (viewport.width <= 760) await page.locator('#inspector-close-mobile').click();
   await page.locator('[data-editor-action="undo"]').click();
   await page.locator('[data-editor-action="undo"]').click();
   await page.waitForFunction((before) => document.querySelector('[data-axis-limit]')?.textContent === before, limitBefore);
@@ -476,6 +479,12 @@ async function verify(viewport, screenshot, interact = false) {
   assert.match(await page.locator('#bottleneck-note').textContent(), /단일 장애점이 \d+개/, 'the note must name the design as single-point');
   assert.ok(await page.locator('.mesh-node', { hasText: 'SPOF' }).count() > 0, 'a single point of failure must be marked on the canvas too');
   if (viewport.width <= 760) {
+    await page.locator('.mesh-node').first().click();
+    await page.locator('#mobile-inspector-open').click();
+    assert.equal(await page.locator('.inspector-panel').evaluate((node) => node.classList.contains('mobile-open')), true, '모바일에서는 선택 장비의 inspector가 하단 sheet로 열려야 한다');
+    assert.equal(await page.locator('#inspector-close-mobile').isVisible(), true);
+    await page.locator('#inspector-close-mobile').click();
+    assert.equal(await page.locator('.inspector-panel').isVisible(), false);
     assert.equal(await page.locator('.mobile-fault-tray').isVisible(), true);
     assert.match(await page.locator('.mobile-pan-cue').textContent(), /좌우로 탐색/);
     await page.locator('[data-quick-failure="fw-a"]').click();
@@ -525,9 +534,10 @@ async function verify(viewport, screenshot, interact = false) {
     // 워크로드 조건을 적으면 같은 조건에서 잰 축이 판정을 통과하고 계산에 들어간다.
     await page.locator('#analysis-menu-button').click();
     await page.locator('[data-editor-action="workload"]').click();
+    assert.equal(await page.locator('[data-workload-preset]').count(), 4, '워크로드는 원시 필드보다 프리셋을 먼저 제안해야 한다');
     await page.locator('input[name="packet_size_bytes"]').fill('1518');
-    await page.locator('input[name="transport"]').fill('udp');
-    await page.locator('input[name="features_mode"][value="none"]').check();
+    await page.locator('input[name="transport"][value="udp"] + span').click();
+    await page.locator('input[name="features_mode"][value="none"] + span').click();
     await page.locator('[data-editor-form="workload"] button[type="submit"]').click();
     await page.waitForFunction(() => document.querySelector('.evidence-state[data-applicability="applicable"]'));
     assert.match(await page.locator('.evidence-state[data-applicability="applicable"]').first().textContent(), /조건 일치/,
@@ -557,6 +567,7 @@ async function verify(viewport, screenshot, interact = false) {
 
     await page.selectOption('[data-spec-field="profile"]', 'fw-1518');
     await page.waitForFunction(() => document.querySelector('input[name="new_sessions_per_sec"]')?.value === '56000');
+    assert.ok(await page.locator('.unit-input select[name="new_sessions_per_sec__unit"]').count(), '한계값은 숫자와 단위를 함께 보여야 한다');
     await page.locator('input[name="new_sessions_per_sec"]').fill('40000');
     await page.locator('[data-resource-form="device"] button[type="submit"]').click();
     await page.waitForFunction(() => document.querySelector('.limit-field.corrected'));
@@ -759,6 +770,8 @@ async function verify(viewport, screenshot, interact = false) {
     assert.equal(await page.locator('[data-editor-form="demand-edit"] [name="forwarding_bps"]').inputValue(), '2000000000');
     await page.locator('#analysis-menu-button').click();
     await page.locator('[data-editor-action="verification"]').click();
+    assert.equal(await page.locator('[data-verification-tab]').count(), 4, '검증 작업은 네 개 탭으로 나뉘어야 한다');
+    assert.equal(await page.locator('[data-verification-panel]:not([hidden])').count(), 1, '검증 폼은 한 번에 하나만 보여야 한다');
     const serviceForm = page.locator('[data-editor-form="service"]');
     await serviceForm.locator('[name="name"]').fill('Public API');
     await serviceForm.locator('[name="demandIds"]').check();

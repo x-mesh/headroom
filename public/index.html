@@ -43,9 +43,9 @@
           <span id="run-state">BASELINE STABLE</span>
         </div>
         <div class="top-actions">
-          <button class="text-button" id="guide-button" type="button" aria-label="이 도구를 읽는 법">사용 안내</button>
+          <button class="text-button" id="guide-button" type="button" aria-label="이 도구를 읽는 법"><span class="action-icon icon-help" aria-hidden="true"></span><span class="action-label">사용 안내</span></button>
           <div class="top-menu-wrap">
-            <button class="text-button top-menu-trigger" id="project-menu-button" type="button" aria-expanded="false" aria-controls="project-menu">프로젝트 <span class="menu-chevron" aria-hidden="true"></span></button>
+            <button class="text-button top-menu-trigger" id="project-menu-button" type="button" aria-expanded="false" aria-controls="project-menu" aria-label="프로젝트 메뉴"><span class="action-icon icon-project" aria-hidden="true"></span><span class="action-label">프로젝트</span> <span class="menu-chevron" aria-hidden="true"></span></button>
             <div class="top-menu" id="project-menu" role="menu" aria-label="프로젝트" hidden>
               <p class="top-menu-heading">프로젝트<span>설계 파일과 외부 자료를 관리합니다.</span></p>
               <div class="top-menu-section"><span>설계 파일</span>
@@ -57,7 +57,7 @@
             </div>
           </div>
           <div class="top-menu-wrap">
-            <button class="text-button top-menu-trigger" id="analysis-menu-button" type="button" aria-expanded="false" aria-controls="analysis-menu">분석 <span class="menu-chevron" aria-hidden="true"></span></button>
+            <button class="text-button top-menu-trigger" id="analysis-menu-button" type="button" aria-expanded="false" aria-controls="analysis-menu" aria-label="분석 메뉴"><span class="action-icon icon-analysis" aria-hidden="true"></span><span class="action-label">분석</span> <span class="menu-chevron" aria-hidden="true"></span></button>
             <div class="top-menu" id="analysis-menu" role="menu" aria-label="분석" hidden>
               <p class="top-menu-heading">분석<span>현재 설계의 조건과 비교 기준을 관리합니다.</span></p>
               <div class="top-menu-section"><span>시나리오</span>
@@ -71,7 +71,7 @@
             </div>
           </div>
           <div class="top-menu-wrap">
-            <button class="solid-button top-menu-trigger" id="export-menu-button" type="button" aria-expanded="false" aria-controls="export-menu">결과 내보내기 <span class="menu-chevron" aria-hidden="true"></span></button>
+            <button class="solid-button top-menu-trigger" id="export-menu-button" type="button" aria-expanded="false" aria-controls="export-menu" aria-label="결과 내보내기 메뉴"><span class="action-icon icon-export" aria-hidden="true"></span><span class="action-label">결과 내보내기</span> <span class="menu-chevron" aria-hidden="true"></span></button>
             <div class="top-menu" id="export-menu" role="menu" aria-label="결과 내보내기" hidden>
               <p class="top-menu-heading">결과 내보내기<span>분석용 데이터 또는 공유용 그림을 선택합니다.</span></p>
               <div class="top-menu-section">
@@ -181,7 +181,8 @@
                 <button type="button" data-zoom="fit">맞춤</button>
               </div>
               <div class="topology-live-status"><span><i></i> DETERMINISTIC MODEL</span><div class="path-readout" id="path-readout">2 DEMANDS · 4 ACTIVE PATHS</div></div>
-              <div class="layout-control" id="class-control" aria-label="클래스 배지 표시"></div>
+              <button type="button" class="mobile-inspector-open" id="mobile-inspector-open">선택 장비 검사</button>
+              <details class="view-settings" open><summary>보기 설정</summary><div class="layout-control" id="class-control" aria-label="클래스 배지 표시"></div></details>
             </div>
           </header>
           <div class="topology-scroll">
@@ -201,13 +202,14 @@
           </footer>
         </section>
 
-        <aside class="inspector-panel" aria-labelledby="inspector-heading">
+        <aside class="inspector-panel" id="inspector-panel" aria-labelledby="inspector-heading">
           <header class="panel-heading inspector-heading">
             <div>
               <span class="section-code">AXIS INSPECTOR</span>
               <h2 id="inspector-heading">장비 검사</h2>
             </div>
             <span class="resource-state" id="resource-state">계산 중</span>
+            <button type="button" class="inspector-close-mobile" id="inspector-close-mobile" aria-label="장비 검사 닫기">닫기</button>
           </header>
           <div id="inspector-content" class="inspector-content"></div>
         </aside>
