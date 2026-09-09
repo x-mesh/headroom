@@ -497,6 +497,14 @@ export function calculateScenario(topology, options = {}) {
       // 조건이 맞지 않는 축은 사용자가 수락하면 계산에 쓸 수 있다. 화면이 그 길을 안내한다.
       axes[axis].acceptable = true;
     }
+    for (const [axis, observed] of Object.entries(device.metadata?.observedFloor || {})) {
+      const result = axes[axis];
+      if (!result || !Number.isFinite(observed?.value) || !Number.isFinite(result.limit) || observed.value <= result.limit) continue;
+      // 관측 하한이 등록 한계를 넘으면 어느 쪽이 틀렸는지 알 수 없다. 과부하 수치로
+      // 단정하지 않고 계산에서 빼며, 근거 모순을 결과에 남긴다.
+      validationIssues.push({ resourceId: device.id, axis, category: 'evidence-conflict', reason: 'observed-floor-exceeds-limit' });
+      axes[axis] = { ...result, utilization: null, headroom: null, status: 'unknown', unknownReason: 'evidence-conflict', observedFloor: observed.value };
+    }
     const surge = failover.surge[device.id];
     if (surge && axes.new_sessions_per_sec) {
       axes.new_sessions_per_sec.contributions = { steady: axes.new_sessions_per_sec.load - surge, failoverSurge: surge };
@@ -642,7 +650,7 @@ export function calculateScenario(topology, options = {}) {
   const services = evaluateServices(topology, demandResults, disabledDevices);
   const racks = evaluateRacks(topology);
   unknownCount += racks.filter(({ status }) => status === 'unknown').length;
-  const invalid = validationIssues.some(({ category }) => category !== 'applicability') || demandResults.some(({ validity }) => validity === 'invalid');
+  const invalid = validationIssues.some(({ category }) => category !== 'applicability' && category !== 'evidence-conflict') || demandResults.some(({ validity }) => validity === 'invalid');
   const evidenceUnknown = devices.filter(({ active }) => active).some(({ axes }) => Object.values(axes).some(({ evidenceApplicability: status }) => status === 'unknown' || status === 'incompatible'));
   const failed = unreachable.length > 0 || demandResults.some((demand) => demand.deliveredRatio < 1 - EPSILON || demand.admissionRatio < 1 - EPSILON);
   const evaluationStatus = invalid ? 'invalid' : !topology.demands.length ? 'not-ready'
@@ -666,7 +674,9 @@ export function calculateScenario(topology, options = {}) {
       refusedSessionsPerSec: demandResults.reduce((sum, item) => sum + (item.sessionAdmission?.refusedPerSec || 0), 0),
       overloadedCount: activeResources.filter(({ primaryStatus }) => primaryStatus === 'overloaded').length,
       warningCount: activeResources.filter(({ primaryStatus }) => primaryStatus === 'warning').length,
-      activeFaults: disabledDevices.size + disabledLinks.size,
+      // 도메인은 내부에서 여러 장비·링크로 펼치지만, 화면의 활성 장애 수는 사용자가 주입한
+      // 장애 단위로 센다. 같은 도메인의 구성원 수만큼 부풀리면 한 번의 실험이 여러 번으로 보인다.
+      activeFaults: new Set(options.disabledDevices || []).size + new Set(options.disabledLinks || []).size + new Set(options.disabledDomains || []).size,
       growthLadder: growthLadder(activeResources, scale, warningThreshold),
       evidenceJudgement: { ...evidenceJudgement, ratio: evidenceJudgement.withRecords ? evidenceJudgement.judged / evidenceJudgement.withRecords : null },
     },
@@ -787,39 +797,32 @@ export function compareScenarios(baseline, current) {
 //
 // demand 의 출발지나 목적지인 장비는 끄면 당연히 끊긴다. 그건 이중화 문제가 아니므로
 // endpoint 로 표시하고 단일 장애점 집계에서 뺀다.
-export function sweepSingleFaults(topology, options = {}) {
-  const base = { scale: options.scale ?? 1, ...(options.strictPaths ? { strictPaths: true } : {}) };
-  // demand 는 endpoint 로 적히기도 하고 경로를 직접 나열하기도 한다. 후자는 각 경로의 양 끝이 출발지·목적지다.
-  const endpoints = new Set(topology.demands.flatMap((demand) => [demand.source, demand.target,
-    ...(demand.paths || []).flatMap(({ devices }) => [devices?.[0], devices?.at(-1)])]).filter(Boolean));
-  const resources = [];
-  const baseline = calculateScenario(topology, base);
+function singleFaultCandidates(topology) {
+  return [['device', topology.devices, 'disabledDevices'], ['link', topology.links, 'disabledLinks']].flatMap(([type, items, key]) => items.map((item) => ({ type, item, key })));
+}
 
-  for (const [type, items, key] of [['device', topology.devices, 'disabledDevices'], ['link', topology.links, 'disabledLinks']]) {
-    for (const item of items) {
-      const result = calculateScenario(topology, { ...base, [key]: [item.id] });
-      const partial = result.demands.some(({ deliveredRatio, admissionRatio }) => deliveredRatio != null && deliveredRatio < 1 || admissionRatio < 1);
-      const verdict = result.summary.evaluationStatus === 'invalid' || result.summary.evaluationStatus === 'not-ready' ? 'unknown'
-        : result.summary.unreachableCount > 0 ? 'severs'
-        : result.summary.overloadedCount > 0 || partial ? 'overloads'
-        : 'absorbs';
-      const worstId = result.summary.bindingResourceId;
-      const worst = worstId ? [...result.devices, ...result.links].find(({ id }) => id === worstId) : null;
-      resources.push({
-        id: item.id, type, verdict,
-        // 한계를 모르는 축이 있으면 판정은 상한이다. 모름을 안전으로 바꾸지 않는다.
-        bounded: result.summary.evaluationStatus === 'unknown' || result.demands.some(({ deliveredRatioBound }) => deliveredRatioBound !== 'exact'),
-        endpoint: type === 'device' && (item.external === true || (!topology.services?.length && endpoints.has(item.id) && item.external !== false)),
-        evaluationStatus: result.summary.evaluationStatus,
-        unreachableCount: result.summary.unreachableCount,
-        minDeliveredRatio: result.demands.reduce((min, { deliveredRatio }) => deliveredRatio == null ? min : Math.min(min, deliveredRatio), 1),
-        worstResourceId: worstId,
-        worstAxis: result.summary.bindingAxis,
-        worstUtilization: worst?.axes?.[result.summary.bindingAxis]?.utilization ?? null,
-      });
-    }
-  }
+function singleFaultResult(topology, base, endpoints, { type, item, key }) {
+  const result = calculateScenario(topology, { ...base, [key]: [item.id] });
+  const partial = result.demands.some(({ deliveredRatio, admissionRatio }) => deliveredRatio != null && deliveredRatio < 1 || admissionRatio < 1);
+  const verdict = result.summary.evaluationStatus === 'invalid' || result.summary.evaluationStatus === 'not-ready' ? 'unknown'
+    : result.summary.unreachableCount > 0 ? 'severs'
+      : result.summary.overloadedCount > 0 || partial ? 'overloads' : 'absorbs';
+  const worstId = result.summary.bindingResourceId;
+  const worst = worstId ? [...result.devices, ...result.links].find(({ id }) => id === worstId) : null;
+  return {
+    id: item.id, type, verdict,
+    bounded: result.summary.evaluationStatus === 'unknown' || result.demands.some(({ deliveredRatioBound }) => deliveredRatioBound !== 'exact'),
+    endpoint: type === 'device' && (item.external === true || (!topology.services?.length && endpoints.has(item.id) && item.external !== false)),
+    evaluationStatus: result.summary.evaluationStatus,
+    unreachableCount: result.summary.unreachableCount,
+    minDeliveredRatio: result.demands.reduce((min, { deliveredRatio }) => deliveredRatio == null ? min : Math.min(min, deliveredRatio), 1),
+    worstResourceId: worstId,
+    worstAxis: result.summary.bindingAxis,
+    worstUtilization: worst?.axes?.[result.summary.bindingAxis]?.utilization ?? null,
+  };
+}
 
+function summarizeSingleFaults(topology, baseline, resources) {
   const counted = resources.filter(({ endpoint }) => !endpoint);
   const severs = counted.filter(({ verdict }) => verdict === 'severs').length;
   const overloads = counted.filter(({ verdict }) => verdict === 'overloads').length;
@@ -827,14 +830,188 @@ export function sweepSingleFaults(topology, options = {}) {
   const bounded = counted.filter(({ verdict, bounded: b }) => verdict === 'absorbs' && b).length;
   const grade = !counted.length || ['invalid', 'not-ready'].includes(baseline.summary.evaluationStatus) || counted.some(({ verdict }) => verdict === 'unknown') ? 'unknown'
     : severs > 0 ? 'single-point'
-    : overloads > 0 ? 'partial'
-    : bounded > 0 || baseline.summary.evaluationStatus === 'unknown' ? 'unknown'
-    : 'redundant';
+      : overloads > 0 ? 'partial'
+        : bounded > 0 || baseline.summary.evaluationStatus === 'unknown' ? 'unknown' : 'redundant';
   return { resources, severs, overloads, absorbs, bounded, endpoints: resources.length - counted.length, grade,
     evaluationBoundary: topology.services?.length ? 'declared-services; explicitly external devices excluded' : 'legacy-demand-endpoints-excluded; service survival not asserted' };
 }
 
-export function createExport(topology, scenario, baseline) {
+export function createSingleFaultSweepTask(topology, options = {}) {
+  const base = { scale: options.scale ?? 1, ...(options.strictPaths ? { strictPaths: true } : {}) };
+  // demand 는 endpoint 로 적히기도 하고 경로를 직접 나열하기도 한다. 후자는 각 경로의 양 끝이 출발지·목적지다.
+  const endpoints = new Set(topology.demands.flatMap((demand) => [demand.source, demand.target,
+    ...(demand.paths || []).flatMap(({ devices }) => [devices?.[0], devices?.at(-1)])]).filter(Boolean));
+  const baseline = calculateScenario(topology, base);
+  const candidates = singleFaultCandidates(topology);
+  const resources = [];
+  let cursor = 0;
+  return {
+    total: candidates.length,
+    get completed() { return cursor; },
+    get done() { return cursor === candidates.length; },
+    step(count = 1) {
+      const stop = Math.min(cursor + count, candidates.length);
+      while (cursor < stop) resources.push(singleFaultResult(topology, base, endpoints, candidates[cursor++]));
+      return this.done ? this.result : null;
+    },
+    get result() { return this.done ? summarizeSingleFaults(topology, baseline, resources) : null; },
+  };
+}
+
+export function sweepSingleFaults(topology, options = {}) {
+  const task = createSingleFaultSweepTask(topology, options);
+  task.step(task.total);
+  return task.result;
+}
+
+// 단일 장애 스윕의 등급은 현재 배율에서의 전달 여부를, 생존 배수는 장애 뒤 어느 배율까지
+// 용량이 남는지를 각각 말한다. 같은 후보 집합을 써야 두 결과가 서로 다른 대상을 가리키지 않는다.
+function survivalEndpoints(topology) {
+  return [...new Set(topology.demands.flatMap((demand) => [demand.source, demand.target,
+    ...(demand.paths || []).flatMap(({ devices }) => [devices?.[0], devices?.at(-1)])]).filter(Boolean))].sort();
+}
+
+function finalizeSurvivalMultiplier(topology, options, endpointIds, candidates, worst) {
+  if (!worst) return { status: 'unavailable', multiplier: null, worstFault: null, bounded: candidates.some(({ bounded }) => bounded), unresolvedCount: 0, endpointIds, evaluated: candidates.length, candidates: candidates.length, services: [] };
+  const scale = options.scale ?? 1;
+  const worstScenario = topology.services?.length
+    ? calculateScenario(topology, { scale, ...(worst.type === 'device' ? { disabledDevices: [worst.id] } : { disabledLinks: [worst.id] }), ...(options.strictPaths ? { strictPaths: true } : {}) })
+    : null;
+  const services = (worstScenario?.services || []).map((service) => {
+    const demands = (service.demandIds || []).map((id) => worstScenario.demands.find((demand) => demand.id === id)).filter(Boolean);
+    return { id: service.id, name: service.name || service.id, status: service.status, requiredDeliveryRatio: service.requiredDeliveryRatio ?? 1,
+      deliveredRatio: demands.length ? Math.min(...demands.map(({ deliveredRatio }) => deliveredRatio ?? 0)) : null,
+      admissionRatio: demands.length ? Math.min(...demands.map(({ admissionRatio }) => admissionRatio ?? 0)) : null,
+      bounded: demands.some(({ deliveredRatioBound }) => deliveredRatioBound !== 'exact') };
+  });
+  return {
+    status: worst.verdict === 'severs' ? 'severed' : worst.multiplier < 1 - EPSILON ? 'capacity-insufficient' : 'survives',
+    multiplier: worst.multiplier, worstFault: { id: worst.id, type: worst.type, verdict: worst.verdict },
+    bounded: worst.bounded, unresolvedCount: worst.unresolvedCount, endpointIds, evaluated: candidates.length, candidates: candidates.length, services,
+  };
+}
+
+export function createSurvivalMultiplierTask(topology, options = {}) {
+  const scale = options.scale ?? 1;
+  const sweep = options.sweep ?? sweepSingleFaults(topology, { scale, strictPaths: options.strictPaths });
+  // 서비스 선언 유무와 무관하게 수요의 양 끝은 인프라 장애 후보가 아니다. 기존 스윕은
+  // 서비스 생존 판정을 위해 이를 포함할 수 있으므로, 생존 배수의 후보 경계는 여기서 고정한다.
+  const endpointIds = survivalEndpoints(topology);
+  const endpoints = new Set(endpointIds);
+  const candidates = sweep.resources.filter(({ endpoint, type, id }) => !endpoint && !(type === 'device' && endpoints.has(id)));
+  let worst = null;
+  let cursor = 0;
+  const inspect = (candidate) => {
+    const fault = candidate.type === 'device' ? { disabledDevices: [candidate.id] } : { disabledLinks: [candidate.id] };
+    // 경로 단절은 부하를 줄여도 회복되지 않는다. 사다리를 다시 계산하지 않는다.
+    const scenario = candidate.verdict === 'severs' ? null : calculateScenario(topology, { scale, ...fault, ...(options.strictPaths ? { strictPaths: true } : {}) });
+    const ladder = scenario?.summary.growthLadder;
+    const multiplier = candidate.verdict === 'severs' ? 0 : ladder?.rungs[0]?.breachScale ?? null;
+    const bounded = candidate.bounded || Boolean(ladder?.unresolved.length);
+    const entry = { id: candidate.id, type: candidate.type, verdict: candidate.verdict, multiplier, bounded, unresolvedCount: ladder?.unresolved.length ?? 0 };
+    if (multiplier == null) return;
+    if (!worst || multiplier < worst.multiplier - EPSILON || (Math.abs(multiplier - worst.multiplier) <= EPSILON && idCompare(entry, worst) < 0)) worst = entry;
+  };
+  return {
+    total: candidates.length,
+    get completed() { return cursor; },
+    get done() { return cursor === candidates.length; },
+    step(count = 1) {
+      const stop = Math.min(cursor + count, candidates.length);
+      while (cursor < stop) inspect(candidates[cursor++]);
+      return this.done ? this.result : null;
+    },
+    get result() { return this.done ? finalizeSurvivalMultiplier(topology, options, endpointIds, candidates, worst) : null; },
+  };
+}
+
+export function calculateSurvivalMultiplier(topology, options = {}) {
+  const task = createSurvivalMultiplierTask(topology, options);
+  task.step(task.total);
+  return task.result;
+}
+
+function idCompare(a, b) { return a.id.localeCompare(b.id) || a.type.localeCompare(b.type); }
+
+function domainResources(domain) {
+  return { devices: [...new Set(domain.deviceIds || [])].sort(), links: [...new Set(domain.linkIds || [])].sort() };
+}
+
+function domainResourceKey(resources) { return `d:${resources.devices.join(',')}|l:${resources.links.join(',')}`; }
+
+function domainVerdict(topology, domainIds, scale, strictPaths) {
+  const result = calculateScenario(topology, { scale, disabledDomains: domainIds, ...(strictPaths ? { strictPaths: true } : {}) });
+  const partial = result.demands.some(({ deliveredRatio, admissionRatio }) => deliveredRatio != null && deliveredRatio < 1 || admissionRatio < 1);
+  const verdict = result.summary.evaluationStatus === 'invalid' || result.summary.evaluationStatus === 'not-ready' ? 'unknown'
+    : result.summary.unreachableCount > 0 ? 'severs'
+      : result.summary.overloadedCount > 0 || partial ? 'overloads' : 'absorbs';
+  const worstId = result.summary.bindingResourceId;
+  const worst = worstId ? [...result.devices, ...result.links].find(({ id }) => id === worstId) : null;
+  return {
+    verdict, bounded: result.summary.evaluationStatus === 'unknown' || result.demands.some(({ deliveredRatioBound }) => deliveredRatioBound !== 'exact'),
+    evaluationStatus: result.summary.evaluationStatus, unreachableCount: result.summary.unreachableCount,
+    minDeliveredRatio: result.demands.reduce((min, { deliveredRatio }) => deliveredRatio == null ? min : Math.min(min, deliveredRatio), 1),
+    worstResourceId: worstId, worstAxis: result.summary.bindingAxis, worstUtilization: worst?.axes?.[result.summary.bindingAxis]?.utilization ?? null,
+  };
+}
+
+// 도메인 kind 는 표시용 라벨이다. 계산 후보와 조합은 kind 를 전혀 읽지 않는다.
+export function createFailureDomainSweepTask(topology, options = {}) {
+  const scale = options.scale ?? 1;
+  const domains = [...(topology.failureDomains || [])].sort((a, b) => a.id.localeCompare(b.id));
+  const singles = [];
+  const resources = options.sweep?.resources || sweepSingleFaults(topology, { scale, strictPaths: options.strictPaths }).resources;
+  const byId = new Map(resources.map((resource) => [resource.id, resource]));
+  const pairs = [];
+  const seen = new Set();
+  const candidates = domains.map((domain) => ({ type: 'single', domain })).concat([]);
+  for (let left = 0; left < domains.length; left += 1) for (let right = left + 1; right < domains.length; right += 1) {
+    const a = domainResources(domains[left]); const b = domainResources(domains[right]);
+    const merged = { devices: [...new Set([...a.devices, ...b.devices])].sort(), links: [...new Set([...a.links, ...b.links])].sort() };
+    // 포함 관계는 N-1 결과와 같고, 같은 자원 집합을 만드는 겹침 조합은 한 번만 계산한다.
+    if (domainResourceKey(merged) === domainResourceKey(a) || domainResourceKey(merged) === domainResourceKey(b)) continue;
+    const key = domainResourceKey(merged); if (seen.has(key)) continue; seen.add(key);
+    candidates.push({ type: 'pair', domainIds: [domains[left].id, domains[right].id], resources: merged });
+  }
+  let cursor = 0;
+  const finalize = () => {
+    const redundancyInvalid = singles.filter((domain) => {
+      const memberIds = [...domain.resources.devices, ...domain.resources.links];
+      return memberIds.length >= 2 && domain.verdict === 'severs'
+        && memberIds.every((id) => ['absorbs', 'overloads'].includes(byId.get(id)?.verdict));
+    }).map((domain) => ({ ...domain, memberIds: [...domain.resources.devices, ...domain.resources.links] }));
+    const rank = { severs: 0, overloads: 1, absorbs: 2, unknown: 3 };
+    pairs.sort((a, b) => (rank[a.verdict] - rank[b.verdict]) || (a.minDeliveredRatio - b.minDeliveredRatio) || a.id.localeCompare(b.id));
+    return { singles, pairs, redundancyInvalid, evaluated: singles.length + pairs.length, domainCount: domains.length };
+  };
+  return {
+    total: candidates.length,
+    get completed() { return cursor; },
+    get done() { return cursor === candidates.length; },
+    step(count = 1) {
+      const stop = Math.min(cursor + count, candidates.length);
+      while (cursor < stop) {
+        const candidate = candidates[cursor++];
+        if (candidate.type === 'single') {
+          const domain = candidate.domain;
+          singles.push({ id: domain.id, name: domain.name, kind: domain.kind ?? 'other', domainIds: [domain.id], resources: domainResources(domain), ...domainVerdict(topology, [domain.id], scale, options.strictPaths) });
+        } else {
+          pairs.push({ id: candidate.domainIds.join('+'), name: candidate.domainIds.join(' + '), domainIds: candidate.domainIds, resources: candidate.resources, ...domainVerdict(topology, candidate.domainIds, scale, options.strictPaths) });
+        }
+      }
+      return this.done ? this.result : null;
+    },
+    get result() { return this.done ? finalize() : null; },
+  };
+}
+
+export function sweepFailureDomains(topology, options = {}) {
+  const task = createFailureDomainSweepTask(topology, options);
+  task.step(task.total);
+  return task.result;
+}
+
+export function createExport(topology, scenario, baseline, options = {}) {
   const compact = (resource) => ({
     id: resource.id, kind: resource.kind ?? 'link', active: resource.active,
     primaryStatus: resource.primaryStatus, bindingAxis: resource.bindingAxis,
@@ -843,6 +1020,14 @@ export function createExport(topology, scenario, baseline) {
     axes: resource.axes,
     ...(resource.directions ? { directions: resource.directions } : {}),
   });
+  const failureSweep = options.sweep && {
+    grade: options.sweep.grade,
+    summary: { severs: options.sweep.severs, overloads: options.sweep.overloads, absorbs: options.sweep.absorbs, bounded: options.sweep.bounded, endpoints: options.sweep.endpoints },
+    singlePointIds: options.sweep.resources.filter(({ verdict, endpoint }) => verdict === 'severs' && !endpoint).map(({ id }) => id),
+    resources: options.sweep.resources.map(({ id, type, verdict, bounded, endpoint, minDeliveredRatio, worstResourceId, worstAxis, worstUtilization }) => ({
+      id, type, verdict, bounded, endpoint, minDeliveredRatio, worstResourceId, worstAxis, worstUtilization,
+    })),
+  };
   return {
     schemaVersion: 3, engineVersion: ENGINE_VERSION, product: 'Rack Mesh',
     exportedAt: new Date().toISOString(), synthetic: Boolean(topology.synthetic),
@@ -859,8 +1044,9 @@ export function createExport(topology, scenario, baseline) {
       workloadScope: structuredClone(topology.workloadScope ?? null),
       haGroups: topology.haGroups ?? [],
     },
-    scenario: { scale: scenario.scale, faults: scenario.faults, summary: scenario.summary, demands: scenario.demands, services: scenario.services, racks: scenario.racks, validationIssues: scenario.validationIssues, failover: scenario.failover },
+    scenario: { scale: scenario.scale, faults: scenario.faults, summary: scenario.summary, demands: scenario.demands, services: scenario.services, racks: scenario.racks, validationIssues: scenario.validationIssues, failover: scenario.failover, ...(options.survivalMultiplier ? { survivalMultiplier: options.survivalMultiplier } : {}) },
     resources: [...scenario.devices, ...scenario.links].map(compact),
     comparison: compareScenarios(baseline, scenario),
+    ...(failureSweep ? { failureSweep } : {}),
   };
 }

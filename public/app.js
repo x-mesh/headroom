@@ -1,7 +1,8 @@
 import { axisCatalog, behaviorCatalog, cloneTopology } from './data.js';
-import { calculateScenario, compareScenarios, createExport, ENGINE_VERSION, sweepSingleFaults } from './engine.js';
+import { calculateScenario, calculateSurvivalMultiplier, compareScenarios, createExport, createFailureDomainSweepTask, createSingleFaultSweepTask, createSurvivalMultiplierTask, ENGINE_VERSION, sweepFailureDomains, sweepSingleFaults } from './engine.js';
 import { acceptEvidence, addDemand, addDevice, addLink, applySpec, clearEvidenceAcceptance, moveDevice, normalizeId, removeDemand, removeDevice, removeLink, setLimitOverride, setWorkloadConditions, updateDemand, updateDevice, updateLink } from './editor.js';
 import { importDeviceDefinition } from './device-import.js';
+import { applyMeasuredLimits, importMeasuredLimits } from './measured-import.js';
 import { parseProject, serializeProject } from './project.js';
 import { GLYPHS, GLYPH_SPRITE } from './glyphs.js';
 import { behaviorToken, cardBox, formatNodeValue, groupBoxes, GROUP_PAD, kindInitial, LINK_ROUTES, linkPath, nodeAxes, nodeAxisLabel, NODE_REACH, nodeView, packetMotion, placeLinkLabels, routeLink, segmentHitsBox, sourceDriftFactor, STATE_TOKEN, symbolFor, zonePath } from './node-view.js';
@@ -15,10 +16,28 @@ import { acceptanceDigest, evidenceApplicability } from './evidence.js';
 
 let topology = cloneTopology();
 const state = { scale: 1, selectedId: 'fw-a', selection: [{ type: 'device', id: 'fw-a' }], disabledDevices: new Set(), disabledLinks: new Set(), disabledDomains: new Set(), namedScenarios: [], editorMode: 'select', connectSource: null, leftPanel: 'palette', zoom: 1, viewMode: 'edit' };
+let panelSelectionExplicit = false;
 let baselineSnapshot = { topology: structuredClone(topology), scenario: { scale: 1, disabledDevices: [], disabledLinks: [], disabledDomains: [] } };
 let baseline = calculateScenario(baselineSnapshot.topology, baselineSnapshot.scenario);
 let current = baseline;
 let sweep = sweepSingleFaults(topology);
+let survival = calculateSurvivalMultiplier(topology, { sweep });
+let domainSweep = sweepFailureDomains(topology);
+let swapPreview = null;
+let swapTarget = null;
+let absorbsExpanded = false;
+let resourceAbsorbsExpanded = false;
+const failureFilter = { query: '', verdict: 'all' };
+// 단일 장애 스윕은 수백 개 후보를 만들 수 있다. 실제 행 높이를 고정해 창 밖의 버튼을 DOM 에
+// 두지 않고도 스크롤 높이와 키보드 순서를 보존한다.
+const FAILURE_VIRTUAL_ROW_HEIGHT = 52;
+const FAILURE_VIRTUAL_THRESHOLD = 24;
+const FAILURE_VIRTUAL_OVERSCAN = 8;
+const failureVirtual = { groups: new Map(), frame: null };
+const PROGRESSIVE_SWEEP_THRESHOLD = 20;
+const PROGRESSIVE_SWEEP_BATCH_SIZE = 24;
+let analysisProgress = null;
+let analysisRun = 0;
 // 훑기가 어느 배율에서 나온 값인지. 슬라이더를 끄는 동안 예보가 뒤처지면 화면이 그렇게 말한다.
 let sweepScale = 1;
 // 훑기가 지금 배율에서 나온 값인지. 슬라이더를 끄는 동안은 뒤처지므로, 그 값을 읽는
@@ -74,10 +93,66 @@ function stateLabel(status) { return ({ healthy: '정상', warning: '주의', ov
 // 장애 예보가 한 배율 뒤처진다. 그 사실을 화면에 표시하고, 슬라이더에서 손을 떼면 전체 경로가 돈다.
 function recalculate({ light = false } = {}) {
   current = calculateScenario(topology, { scale: state.scale, disabledDevices: state.disabledDevices, disabledLinks: state.disabledLinks, disabledDomains: state.disabledDomains });
-  if (!light) { sweep = sweepSingleFaults(topology, { scale: state.scale }); sweepScale = state.scale; }
+  if (!light) startAnalysis();
   render();
   updateTelemetry();
   if (!light) persistWorkingCopy();
+}
+
+function startAnalysis() {
+  analysisRun += 1;
+  const run = analysisRun;
+  const options = { scale: state.scale };
+  const candidates = topology.devices.length + topology.links.length;
+  if (candidates <= PROGRESSIVE_SWEEP_THRESHOLD) {
+    analysisProgress = null;
+    sweep = sweepSingleFaults(topology, options);
+    survival = calculateSurvivalMultiplier(topology, { ...options, sweep });
+    domainSweep = sweepFailureDomains(topology, { ...options, sweep });
+    sweepScale = state.scale;
+    return;
+  }
+  sweep = { resources: [], severs: 0, overloads: 0, absorbs: 0, bounded: 0, endpoints: 0, grade: 'unknown' };
+  survival = { status: 'calculating', multiplier: null, worstFault: null, bounded: false, unresolvedCount: 0, endpointIds: [], evaluated: 0, candidates: 0, services: [] };
+  domainSweep = { singles: [], pairs: [], redundancyInvalid: [], evaluated: 0, domainCount: (topology.failureDomains || []).length };
+  const singleTask = createSingleFaultSweepTask(topology, options);
+  analysisProgress = { label: '단일 장애 스윕', completed: 0, total: singleTask.total };
+  const advance = () => {
+    if (run !== analysisRun) return;
+    singleTask.step(PROGRESSIVE_SWEEP_BATCH_SIZE);
+    analysisProgress = { label: '단일 장애 스윕', completed: singleTask.completed, total: singleTask.total };
+    if (!singleTask.done) { render(); scheduleAnalysis(advance); return; }
+    sweep = singleTask.result;
+    const survivalTask = createSurvivalMultiplierTask(topology, { ...options, sweep });
+    const advanceSurvival = () => {
+      if (run !== analysisRun) return;
+      survivalTask.step(PROGRESSIVE_SWEEP_BATCH_SIZE);
+      analysisProgress = { label: '생존 배수', completed: survivalTask.completed, total: survivalTask.total };
+      if (!survivalTask.done) { render(); scheduleAnalysis(advanceSurvival); return; }
+      survival = survivalTask.result;
+      const domainTask = createFailureDomainSweepTask(topology, { ...options, sweep });
+      const advanceDomains = () => {
+        if (run !== analysisRun) return;
+        domainTask.step(PROGRESSIVE_SWEEP_BATCH_SIZE);
+        analysisProgress = { label: '장애 도메인 스윕', completed: domainTask.completed, total: domainTask.total };
+        if (!domainTask.done) { render(); scheduleAnalysis(advanceDomains); return; }
+        domainSweep = domainTask.result;
+        sweepScale = state.scale;
+        analysisProgress = null;
+        render();
+        updateTelemetry();
+        persistWorkingCopy();
+      };
+      scheduleAnalysis(advanceDomains);
+    };
+    scheduleAnalysis(advanceSurvival);
+  };
+  scheduleAnalysis(advance);
+}
+
+function scheduleAnalysis(callback) {
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(callback, { timeout: 50 });
+  else setTimeout(callback, 0);
 }
 
 function resetScenario() {
@@ -378,8 +453,38 @@ function renderSummary() {
       : growthRung ? `다음 병목 ${resourceName(resourceById(growthRung.resourceId)) || growthRung.resourceId} · ${axisCatalog[growthRung.axis]?.shortLabel || growthRung.axis}` : '다음 한계 없음';
   element('summary-growth').textContent = growth;
   element('summary-growth-binding').textContent = growthBinding;
-  element('summary-faults').textContent = String(summary.activeFaults).padStart(2, '0');
-  element('summary-delta').textContent = `headroom ${formatPercent(comparison.minHeadroomDelta, true)}`;
+  const survivalText = analysisProgress ? `계산 중 ${analysisProgress.completed}/${analysisProgress.total}` : survival.multiplier == null ? '미확정' : `${survival.multiplier.toFixed(2)}×${survival.bounded ? ' 이하' : ''}`;
+  const failedService = survival.services?.find(({ status }) => status === 'fail');
+  const unknownService = !failedService && survival.services?.find(({ status }) => status !== 'pass');
+  const failedServiceRatio = failedService && Math.min(failedService.deliveredRatio ?? 1, failedService.admissionRatio ?? 1);
+  const serviceLabel = failedService
+    ? `${failedService.name} 불통과 · 최악 장애에서 ${formatPercent(failedServiceRatio)} 수용`
+    : unknownService ? `${unknownService.name} 통과 보류 · 한계 미확인` : '';
+  const survivalLabel = analysisProgress ? `${analysisProgress.label} · 전수 계산 중` : survival.worstFault
+    ? `${survival.status === 'severed' ? '단절' : survival.status === 'capacity-insufficient' ? '현재 부하 미달' : '견딤'} · 생존 ${survivalText} · 최악 ${survival.worstFault.id.toUpperCase()}${survival.endpointIds.length ? ` · 끝점 ${survival.endpointIds.length}개 제외` : ''}`
+    : '생존 배수 · 장애 후보 없음';
+  element('summary-growth-binding').textContent = [serviceLabel, growthBinding, survivalLabel].filter(Boolean).join(' · ');
+  const singlePoints = sweep.resources.filter(({ verdict, endpoint }) => verdict === 'severs' && !endpoint);
+  const survivalTile = element('summary-survival');
+  if (summary.activeFaults) {
+    element('summary-fault-label').textContent = '활성 장애';
+    element('summary-faults').textContent = String(summary.activeFaults).padStart(2, '0');
+    element('summary-delta').textContent = `headroom ${formatPercent(comparison.minHeadroomDelta, true)}`;
+    survivalTile.setAttribute('aria-label', `활성 장애 ${summary.activeFaults}개. 장애 목록 열기`);
+  } else if (analysisProgress) {
+    element('summary-fault-label').textContent = '생존성';
+    element('summary-faults').textContent = '…';
+    element('summary-delta').textContent = `${analysisProgress.label} 계산 중`;
+    survivalTile.setAttribute('aria-label', `${analysisProgress.label} 계산 중. 장애 목록 열기`);
+  } else {
+    const exemplar = singlePoints[0] && resourceById(singlePoints[0].id);
+    element('summary-fault-label').textContent = '단일 장애점';
+    element('summary-faults').textContent = String(singlePoints.length).padStart(2, '0');
+    element('summary-delta').textContent = singlePoints.length
+      ? `${resourceName(exemplar) || singlePoints[0].id.toUpperCase()}${singlePoints.length > 1 ? ` 외 ${singlePoints.length - 1}개` : ''}`
+      : '단일 장애점 없음';
+    survivalTile.setAttribute('aria-label', `단일 장애점 ${singlePoints.length}개. 장애 목록 열기`);
+  }
   // 엔진은 0.8 을 넘으면 warning 으로 판정하고 그 수를 summary.warningCount 에 담는데,
   // 상단 상태가 그 값을 보지 않아 주의 자원이 있어도 'BASELINE STABLE' 이라고 말했다.
   const runState = summary.evaluationStatus === 'invalid' ? { text: 'MODEL INVALID', tone: 'danger' }
@@ -404,57 +509,191 @@ function renderSummary() {
 }
 
 // 끄기 전에 결과를 말한다. 하나씩 눌러 보고 되돌리는 수고가 이 도구의 요점이 아니다.
-function faultForecast(verdict) {
+function faultForecast(verdict, { includeBoundary = false } = {}) {
   if (!verdict) return '판정 없음';
-  if (verdict.verdict === 'severs') return verdict.endpoint ? '출발지·목적지 · 끄면 끊김' : '끄면 서비스 단절';
+  let forecast;
+  if (verdict.verdict === 'severs') forecast = verdict.endpoint ? '출발지·목적지 · 끄면 끊김' : '끄면 서비스 단절';
   if (verdict.verdict === 'overloads') {
-    return verdict.minDeliveredRatio < 1
+    forecast = verdict.minDeliveredRatio < 1
       ? `끄면 ${Math.round(verdict.minDeliveredRatio * 100)}%만 전달`
       : `끄면 ${formatPercent(verdict.worstUtilization)} 과부하`;
   }
-  return verdict.bounded ? '끄면 견딤 · 한계 미확인' : '끄면 남은 쪽이 견딤';
+  if (!forecast) forecast = verdict.bounded ? '끄면 견딤 · 한계 미확인' : '끄면 남은 쪽이 견딤';
+  // 도메인 결과는 단절·과부하도 모르는 축의 영향 아래 있다. 이 경계를 숨기면 확정 판정처럼 읽힌다.
+  return includeBoundary && verdict.bounded && !forecast.includes('한계 미확인') ? `${forecast} · 한계 미확인` : forecast;
 }
 
 const FORECAST_RANK = { severs: 0, overloads: 1, absorbs: 2 };
 // 출발지·목적지가 끊는 것은 이중화 문제가 아니므로 뒤로 보낸다. 끊지 않는다면 평범한 항목이다.
 const forecastRank = (verdict) => (verdict?.verdict === 'severs' && verdict.endpoint ? 3 : FORECAST_RANK[verdict?.verdict] ?? 4);
+const forecastDelivery = (verdict) => Number.isFinite(verdict?.minDeliveredRatio) ? verdict.minDeliveredRatio : 1;
+
+function renderVirtualFailureRows() {
+  const panel = document.querySelector('.failure-panel');
+  for (const container of document.querySelectorAll('[data-failure-virtual]')) {
+    const entry = failureVirtual.groups.get(container.dataset.failureVirtual);
+    if (!entry) continue;
+    const count = entry.items.length;
+    const listBox = container.getBoundingClientRect();
+    const panelBox = panel?.getBoundingClientRect();
+    const panelScrolls = panel && panel.scrollHeight > panel.clientHeight;
+    const top = panelScrolls ? panelBox.top : 0;
+    const bottom = panelScrolls ? panelBox.bottom : window.innerHeight;
+    let start = Math.max(0, Math.floor((top - listBox.top) / FAILURE_VIRTUAL_ROW_HEIGHT) - FAILURE_VIRTUAL_OVERSCAN);
+    let end = Math.min(count, Math.ceil((bottom - listBox.top) / FAILURE_VIRTUAL_ROW_HEIGHT) + FAILURE_VIRTUAL_OVERSCAN);
+    if (end <= start) {
+      start = Math.min(Math.max(0, count - 1), start);
+      end = Math.min(count, start + FAILURE_VIRTUAL_OVERSCAN * 2 + 1);
+    }
+    const range = `${start}:${end}`;
+    if (container.dataset.failureVirtualRange === range) continue;
+    container.dataset.failureVirtualRange = range;
+    container.innerHTML = `<ul class="failure-virtual-window" style="transform:translateY(${start * FAILURE_VIRTUAL_ROW_HEIGHT}px)">${entry.items.slice(start, end).map((item, offset) => entry.render(item, start + offset)).join('')}</ul>`;
+  }
+}
+
+function queueVirtualFailureRows() {
+  if (failureVirtual.frame) return;
+  failureVirtual.frame = requestAnimationFrame(() => { failureVirtual.frame = null; renderVirtualFailureRows(); });
+}
+
+function focusVirtualFailureRow(key, index) {
+  const container = document.querySelector(`[data-failure-virtual="${CSS.escape(key)}"]`);
+  if (!container) return;
+  const panel = document.querySelector('.failure-panel');
+  const targetTop = container.getBoundingClientRect().top + index * FAILURE_VIRTUAL_ROW_HEIGHT;
+  if (panel && panel.scrollHeight > panel.clientHeight) {
+    panel.scrollTop += targetTop - panel.getBoundingClientRect().top - panel.clientHeight / 2 + FAILURE_VIRTUAL_ROW_HEIGHT / 2;
+  } else {
+    window.scrollBy(0, targetTop - window.innerHeight / 2 + FAILURE_VIRTUAL_ROW_HEIGHT / 2);
+  }
+  requestAnimationFrame(() => {
+    renderVirtualFailureRows();
+    document.querySelector(`[data-failure-virtual="${CSS.escape(key)}"] [data-failure-index="${index}"] button`)?.focus();
+  });
+}
 
 function renderFailures() {
-  const verdicts = new Map(sweep.resources.map((resource) => [resource.id, resource]));
+  const verdicts = new Map([...sweep.resources, ...domainSweep.singles].map((resource) => [resource.id, resource]));
+  const invalidDomains = domainSweep.redundancyInvalid || [];
   // 예전에는 kind 와 링크 id 패턴으로 걸러 데모 이외의 설계에서는 끌 대상이 거의 없었다.
-  const order = (items) => [...items].sort((a, b) =>
-    forecastRank(verdicts.get(a.id)) - forecastRank(verdicts.get(b.id)) || resourceName(a).localeCompare(resourceName(b)));
+  const order = (items) => [...items].sort((a, b) => {
+    const verdictOrder = forecastRank(verdicts.get(a.id)) - forecastRank(verdicts.get(b.id));
+    if (verdictOrder) return verdictOrder;
+    const deliveryOrder = forecastDelivery(verdicts.get(a.id)) - forecastDelivery(verdicts.get(b.id));
+    return deliveryOrder || a.id.localeCompare(b.id);
+  });
   const groups = [
     { title: '장비', items: order(topology.devices), set: state.disabledDevices, type: 'device' },
     { title: '링크', items: order(topology.links), set: state.disabledLinks, type: 'link' },
-    { title: '장애 도메인', items: topology.failureDomains || [], set: state.disabledDomains, type: 'domain' },
+    { title: '장애 도메인', items: order(topology.failureDomains || []), set: state.disabledDomains, type: 'domain' },
   ];
   element('failure-count').textContent = `${state.disabledDevices.size + state.disabledLinks.size + state.disabledDomains.size} ACTIVE`;
+  if (analysisProgress) {
+    element('failure-grade').textContent = `${analysisProgress.label} 계산 중 ${analysisProgress.completed}/${analysisProgress.total} · 완료 전에는 판정을 표시하지 않습니다.`;
+    element('failure-grade').dataset.grade = 'unknown';
+    element('failure-grade').toggleAttribute('data-stale', false);
+    element('failure-list').toggleAttribute('data-stale', false);
+    element('failure-list').innerHTML = `<p class="failure-empty">${escapeText(analysisProgress.label)} 전수 계산 중 ${analysisProgress.completed}/${analysisProgress.total}</p>`;
+    renderQuickFailure();
+    return;
+  }
   const stale = sweepStale() && sweep.resources.length > 0;
   element('failure-grade').textContent = sweep.resources.length
-    ? `단일 장애점 ${sweep.severs}개 · 용량 부족 ${sweep.overloads}개 · 여유 ${sweep.absorbs}개${stale ? ` · ${sweepScale.toFixed(2)}배 기준` : ''}`
+    ? `단일 장애점 ${sweep.severs}개 · 용량 부족 ${sweep.overloads}개 · 여유 ${sweep.absorbs}개${invalidDomains.length ? ` · 이중화 무효 ${invalidDomains.map(({ name }) => name).join(', ')}` : ''}${stale ? ` · ${sweepScale.toFixed(2)}배 기준` : ''}`
     : '끌 자원이 아직 없습니다.';
   element('failure-grade').dataset.grade = sweep.grade;
   element('failure-grade').toggleAttribute('data-stale', stale);
   // 등급 한 줄만 표시하면 자원별 예보는 옛 배율 값을 지금 값처럼 말한다. 목록 전체에 건다.
   element('failure-list').toggleAttribute('data-stale', stale);
-  element('failure-list').innerHTML = groups.map((group) => `
-    <section class="failure-group">
-      <h3>${group.title}</h3>
-      ${group.items.length ? group.items.map((item) => {
+  const pairs = domainSweep.pairs;
+  const matchesFailureFilter = (item, verdict) => {
+    const name = resourceName(item).toLowerCase();
+    const query = failureFilter.query.trim().toLowerCase();
+    const matchesName = !query || name.includes(query);
+    const matchesVerdict = failureFilter.verdict === 'all'
+      || failureFilter.verdict === verdict?.verdict
+      || failureFilter.verdict === 'unknown' && (verdict?.verdict === 'unknown' || verdict?.bounded);
+    return matchesName && matchesVerdict;
+  };
+  const allRows = [
+    ...topology.devices.map((item) => ({ item, verdict: verdicts.get(item.id) })),
+    ...topology.links.map((item) => ({ item, verdict: verdicts.get(item.id) })),
+    ...(topology.failureDomains || []).map((item) => ({ item, verdict: verdicts.get(item.id) })),
+    ...pairs.map((item) => ({ item, verdict: item })),
+  ];
+  const filteredRows = allRows.filter(({ item, verdict }) => matchesFailureFilter(item, verdict));
+  const filterActive = Boolean(failureFilter.query.trim()) || failureFilter.verdict !== 'all';
+  const filterControls = `<form class="failure-filter" data-failure-filter>
+    <input type="search" value="${escapeAttribute(failureFilter.query)}" placeholder="이름 검색" aria-label="장애 대상 이름 검색">
+    <div role="group" aria-label="장애 판정 필터">${[['all', '전체'], ['severs', '단절'], ['overloads', '용량 부족'], ['absorbs', '견딤'], ['unknown', '한계 미확인']].map(([value, label]) => `<button type="button" data-failure-filter-verdict="${value}" aria-pressed="${failureFilter.verdict === value}">${label}</button>`).join('')}</div>
+    <p data-failure-filter-count>${filterActive ? '필터 적용 중 · ' : ''}전체 ${allRows.length}개 중 ${filteredRows.length}개 표시</p>
+  </form>`;
+  failureVirtual.groups.clear();
+  const renderFailure = (group, item, { index = null, key = '', total = 0 } = {}) => {
         const active = group.set.has(item.id);
         const verdict = verdicts.get(item.id);
         const detail = group.type === 'device' ? item.zone : group.type === 'link' ? formatCompact(item.capacity?.forwarding_bps, 'bps') : `장비 ${item.deviceIds?.length || 0} · 링크 ${item.linkIds?.length || 0}`;
-        return `<button class="failure-switch ${active ? 'active' : ''}" type="button" data-failure-type="${group.type}" data-failure-id="${escapeAttribute(item.id)}" aria-pressed="${active}">
-          <span class="switch-glyph" aria-hidden="true"></span><span><strong>${escapeText(resourceName(item))}</strong><small>${escapeText(detail)}</small><small class="failure-forecast" data-verdict="${escapeAttribute(verdict?.verdict === 'severs' && verdict.endpoint ? 'endpoint' : verdict?.verdict || 'none')}">${escapeText(group.type === 'domain' ? '묶인 자원을 함께 중단' : faultForecast(verdict))}</small></span><span class="switch-state">${active ? 'DOWN' : 'UP'}</span>
-        </button>`;
-      }).join('') : '<p class="failure-empty">아직 없습니다.</p>'}
-    </section>`).join('');
-  document.querySelectorAll('[data-quick-failure]').forEach((button) => {
-    const active = state.disabledDevices.has(button.dataset.quickFailure);
-    button.setAttribute('aria-pressed', String(active));
-    button.querySelector('span').textContent = active ? 'DOWN' : 'UP';
-  });
+        const forecast = faultForecast(verdict, { includeBoundary: group.type === 'domain' });
+        const virtualAttributes = index == null ? '' : ` data-failure-index="${index}" data-failure-group="${escapeAttribute(key)}" aria-posinset="${index + 1}" aria-setsize="${total}"`;
+        const label = `${resourceName(item)}, ${forecast}, ${detail}, 현재 ${active ? 'DOWN' : 'UP'}`;
+        return `<li class="failure-row"${virtualAttributes}><button class="failure-switch ${active ? 'active' : ''}" type="button" data-failure-type="${group.type}" data-failure-id="${escapeAttribute(item.id)}" aria-pressed="${active}" aria-label="${escapeAttribute(label)}">
+          <span class="switch-glyph" aria-hidden="true"></span><span><strong>${escapeText(resourceName(item))}</strong><small class="failure-forecast" data-verdict="${escapeAttribute(verdict?.verdict === 'severs' && verdict.endpoint ? 'endpoint' : verdict?.verdict || 'none')}">${escapeText(forecast)}</small><small>${escapeText(detail)}</small></span><span class="switch-state">${active ? 'DOWN' : 'UP'}</span>
+        </button></li>`;
+  };
+  const renderFailureRows = (group, items, kind) => {
+    if (items.length < FAILURE_VIRTUAL_THRESHOLD) return `<ul class="failure-rows">${items.map((item) => renderFailure(group, item)).join('')}</ul>`;
+    const key = `${group.type}-${kind}`;
+    failureVirtual.groups.set(key, {
+      items,
+      render: (item, index) => renderFailure(group, item, { index, key, total: items.length }),
+    });
+    return `<div class="failure-virtual-list" data-failure-virtual="${key}" style="height:${items.length * FAILURE_VIRTUAL_ROW_HEIGHT}px" role="list" aria-label="${escapeAttribute(group.title)} ${kind === 'absorbs' ? '견딤' : '우선'} 결과 ${items.length}개"></div>`;
+  };
+  const renderGroup = (group) => {
+    const matching = group.items.filter((item) => matchesFailureFilter(item, verdicts.get(item.id)));
+    const candidates = group.type === 'domain' ? matching : matching.filter((item) => verdicts.get(item.id)?.verdict !== 'absorbs');
+    const absorbs = group.type === 'domain' ? [] : matching.filter((item) => verdicts.get(item.id)?.verdict === 'absorbs');
+    return `<section class="failure-group">
+      <h3>${group.title}</h3>
+      ${candidates.length ? renderFailureRows(group, candidates, 'priority') : '<p class="failure-empty">조건에 맞는 항목이 없습니다.</p>'}
+      ${absorbs.length ? `<button type="button" class="failure-collapse" data-failure-resource-absorbs-toggle aria-expanded="${resourceAbsorbsExpanded}">견딤 ${absorbs.length}개 ${resourceAbsorbsExpanded ? '접기' : '펼치기'}</button><div${resourceAbsorbsExpanded ? '' : ' hidden'}>${renderFailureRows(group, absorbs, 'absorbs')}</div>` : ''}
+    </section>`;
+  };
+  element('failure-list').innerHTML = `${filterControls}${groups.map(renderGroup).join('')}<section class="failure-group failure-domain-pairs"><h3>도메인 쌍 N-2</h3>${domainSweep.domainCount ? (() => {
+      const matchingPairs = pairs.filter((item) => matchesFailureFilter(item, item));
+      const critical = matchingPairs.filter(({ verdict }) => verdict !== 'absorbs');
+      const absorbs = matchingPairs.filter(({ verdict }) => verdict === 'absorbs');
+      const pair = (item) => `<div class="failure-pair"><strong>${escapeText(item.name)}</strong><small>${escapeText(faultForecast(item, { includeBoundary: true }))}</small></div>`;
+      return `<p class="failure-empty">검사 ${pairs.length}개 · 단절 ${pairs.filter(({ verdict }) => verdict === 'severs').length}개 · 용량 부족 ${pairs.filter(({ verdict }) => verdict === 'overloads').length}개 · 견딤 ${pairs.filter(({ verdict }) => verdict === 'absorbs').length}개</p>${critical.map(pair).join('')}${absorbs.length ? `<button type="button" class="failure-collapse" data-failure-absorbs-toggle aria-expanded="${absorbsExpanded}">견딤 ${absorbs.length}개 ${absorbsExpanded ? '접기' : '펼치기'}</button><div${absorbsExpanded ? '' : ' hidden'}>${absorbs.map(pair).join('')}</div>` : ''}${!matchingPairs.length ? '<p class="failure-empty">조건에 맞는 도메인 쌍이 없습니다.</p>' : ''}`;
+    })() : '<p class="failure-empty">장애 도메인이 없어 이중 장애를 계산할 수 없습니다.</p>'}</section>`;
+  renderVirtualFailureRows();
+  renderQuickFailure();
+}
+
+function quickFailureTarget() {
+  const invalidDomain = domainSweep.redundancyInvalid?.[0];
+  if (invalidDomain) return { type: 'domain', id: invalidDomain.id, label: resourceName(invalidDomain), reason: '이중화 무효 도메인 실험' };
+  const singlePoint = sweep.resources.find(({ verdict, endpoint }) => verdict === 'severs' && !endpoint);
+  if (singlePoint) return { type: singlePoint.type, id: singlePoint.id, label: resourceName(topology[singlePoint.type === 'device' ? 'devices' : 'links'].find(({ id }) => id === singlePoint.id)), reason: '단일 장애점 실험' };
+  const binding = current.summary.bindingResourceId && current.summary.bindingAxis !== 'forwarding_bps'
+    ? [...topology.devices, ...topology.links].find(({ id }) => id === current.summary.bindingResourceId) : null;
+  return binding ? { type: topology.devices.includes(binding) ? 'device' : 'link', id: binding.id, label: resourceName(binding), reason: '현재 병목 실험' } : null;
+}
+
+function renderQuickFailure() {
+  const tray = document.querySelector('.mobile-fault-tray');
+  const button = tray.querySelector('[data-quick-failure]');
+  const target = quickFailureTarget();
+  if (!target) { button.hidden = true; return; }
+  const active = (target.type === 'device' ? state.disabledDevices : target.type === 'link' ? state.disabledLinks : state.disabledDomains).has(target.id);
+  button.hidden = false;
+  button.dataset.quickFailure = target.id;
+  button.dataset.quickFailureType = target.type;
+  button.setAttribute('aria-pressed', String(active));
+  button.setAttribute('aria-label', `${target.reason}: ${target.label}`);
+  button.innerHTML = `${escapeText(target.label)} <span>${active ? 'DOWN' : 'UP'}</span>`;
+  tray.querySelector('strong').textContent = target.reason;
 }
 
 // 심볼은 스텐실, 클래스는 meta 줄로 확정했다. 배지만 취향이 갈려 토글로 남긴다.
@@ -664,7 +903,8 @@ function renderPalette() {
   element('component-palette').innerHTML = `${groupsHtml}${toolsHtml}`;
 }
 
-function setLeftPanel(name) {
+function setLeftPanel(name, { explicit = false } = {}) {
+  if (explicit) panelSelectionExplicit = true;
   state.leftPanel = name;
   document.querySelectorAll('[data-panel-tab]').forEach((tab) => {
     const selected = tab.dataset.panelTab === name;
@@ -1050,10 +1290,12 @@ function renderTopology() {
     const rows = !brief ? allRows : (keep.length ? keep : allRows.slice(0, 1));
     const hidden = detailView.level === 'full' ? allHidden : allHidden + (allRows.length - rows.length);
     const verdict = sweep.resources.find(({ id }) => id === device.id);
+    const domainSpof = (domainSweep.redundancyInvalid || []).find(({ memberIds }) => memberIds.includes(device.id));
     // 이미 죽은 장비에 "이게 죽으면 끊긴다"와 숨긴 축 개수를 붙이는 것은 소음이다.
     const spof = device.active && !sweepStale() && verdict?.verdict === 'severs' && !verdict.endpoint;
+    const spofLabel = spof ? 'SPOF' : domainSpof ? `SPOF · ${domainSpof.name}` : '';
     const meta = [device.kind.toUpperCase(), behaviorToken(device), zonePath(device.zone).at(-1) || device.zone,
-      spof ? 'SPOF' : '',
+      spofLabel,
       // 없앰에서는 숨긴 개수를 말하지 않는다. 축 블록이 통째로 없어 +2 가 무엇의 2인지 알 수 없다.
       device.active && hidden && detailView.level !== 'off' ? `+${hidden}` : ''].filter(Boolean).join(' \u00b7 ');
     const axes = detailView.level === 'off' ? ''
@@ -1103,7 +1345,7 @@ function renderInspector() {
   }
   const isDevice = 'kind' in resource;
   setInspectorHeading('AXIS INSPECTOR', isDevice ? '장비 검사' : '링크 검사');
-  const source = isDevice ? resource.source : { label: '링크 정격', condition: '방향별 full-duplex capacity' };
+  const source = isDevice ? resource.source || { type: 'estimate', label: '추정값', condition: '조건 미지정' } : { label: '링크 정격', condition: '방향별 full-duplex capacity' };
   element('resource-state').textContent = resource.active ? stateLabel(resource.primaryStatus) : '비활성';
   element('resource-state').style.color = `var(--${resource.active ? ({ overloaded: 'danger', warning: 'amber', invalid: 'danger', unknown: 'unknown', healthy: 'cyan' })[resource.primaryStatus] || 'unknown' : 'danger'})`;
   const binding = resource.axes[resource.bindingAxis];
@@ -1452,6 +1694,9 @@ function axisDraggable(resource, axis, result) {
 
 function renderAxis(axis, result, resourceId, resource = null) {
   const catalog = axisCatalog[axis] || { label: axis, shortLabel: axis, unit: '' };
+  const observed = resource?.metadata?.observedFloor?.[axis];
+  const observedNote = observed
+    ? `<small class="observed-floor">관측 하한 ${escapeText(formatCompact(observed.value, catalog.unit))}${observed.asOf ? ` · ${escapeText(observed.asOf)}` : ''}</small>` : '';
   const width = result.utilization == null ? 0 : Math.max(2, result.utilization * 100);
   const drag = resource && axisDraggable(resource, axis, result);
   // 끌어서 정하는 것은 목표 사용률이고, 저장되는 것은 거기서 나온 한계값이다.
@@ -1463,7 +1708,7 @@ function renderAxis(axis, result, resourceId, resource = null) {
   return `<div class="axis-row ${result.status}"${drag ? ' data-axis-editable=""' : ''}>
     <div class="axis-title"><span>${catalog.label}</span><span>${stateLabel(result.status)} · <b data-live-util="${result.utilization ?? ''}" data-live-seed="${resourceId}:${axis}:percent" data-live-drift="${resourceId}:${axis}" data-live-source-type="${escapeAttribute(result.source?.type || resource?.source?.type || 'estimate')}">${formatPercent(result.utilization)}</b></span></div>
     ${meter}
-    <div class="axis-values"><span data-live-load="${result.load}" data-live-unit="${catalog.unit}" data-live-seed="${resourceId}:${axis}:load" data-live-drift="${resourceId}:${axis}" data-live-source-type="${escapeAttribute(result.source?.type || resource?.source?.type || 'estimate')}">${formatCompact(result.load, catalog.unit)} load</span><span data-axis-limit="${escapeAttribute(axis)}">${formatCompact(result.limit, catalog.unit)} limit</span></div>
+    <div class="axis-values"><span data-live-load="${result.load}" data-live-unit="${catalog.unit}" data-live-seed="${resourceId}:${axis}:load" data-live-drift="${resourceId}:${axis}" data-live-source-type="${escapeAttribute(result.source?.type || resource?.source?.type || 'estimate')}">${formatCompact(result.load, catalog.unit)} load</span><span data-axis-limit="${escapeAttribute(axis)}">${formatCompact(result.limit, catalog.unit)} limit</span></div>${observedNote}
   </div>`;
 }
 
@@ -1994,9 +2239,11 @@ function openTemplatePicker() {
 
 // 카탈로그의 장비를 자리에서 바꾼다. 프로필까지 한 장의 카드로 펼치는 이유는, 고르는 단위가
 // 장비가 아니라 "어느 조건에서 잰 값이냐"이기 때문이다. 같은 장비도 조건이 다르면 다른 숫자다.
-function openDeviceSwapPicker(id) {
+function openDeviceSwapPicker(id, target = null) {
   const device = deviceById(id);
   if (!device) return;
+  const slot = swapSlot(device);
+  swapTarget = target || { id, slotIds: slot.map(({ id: memberId }) => memberId), mode: 'slot' };
   const entries = catalogFor(device.kind);
   const cards = entries.flatMap((entry) => entry.profiles.map((profile) => {
     const current = device.spec?.catalogId === entry.id && device.spec?.profileId === profile.id;
@@ -2013,7 +2260,9 @@ function openDeviceSwapPicker(id) {
       ${profile.note ? `<span class="swap-note">${escapeText(profile.note)}</span>` : ''}
     </button>`;
   })).join('');
+  const scopeChoice = slot.length > 1 ? `<fieldset class="swap-scope"><legend>치환 범위</legend><div class="segmented" role="group" aria-label="치환 범위"><button type="button" data-swap-scope="slot" aria-pressed="${swapTarget.mode === 'slot'}">같은 자리 전체 ${slot.length}대</button><button type="button" data-swap-scope="single" aria-pressed="${swapTarget.mode === 'single'}">${escapeText(resourceName(device))}만</button></div></fieldset>` : '';
   openEditorPanel(`${resourceName(device)} · 장비 선택`, `<p class="editor-hint">같은 장비라도 측정 조건이 다르면 다른 숫자라, 조건째로 고릅니다. 고른 값은 워크로드 조건과 대조해 쓸 수 있는지 판정합니다.</p>
+    ${scopeChoice}
     <div class="template-head">
       <label class="template-search"><span class="visually-hidden">장비 검색</span>
         <input type="search" id="swap-search" placeholder="제조사, 모델, 조건으로 검색 (예: 1518, IPS, ASA)" autocomplete="off"></label>
@@ -2022,6 +2271,121 @@ function openDeviceSwapPicker(id) {
     </div>
     <div class="template-list">${cards}</div>`);
   element('swap-search').focus();
+}
+
+function swapSlot(device) {
+  const catalogId = device.spec?.catalogId;
+  return topology.devices.filter((item) => item.kind === device.kind && (catalogId
+    ? item.spec?.catalogId === catalogId
+    : item.manufacturer === device.manufacturer && item.model === device.model));
+}
+
+function swapBindingLabel(result) {
+  const id = result.summary.bindingResourceId;
+  const resource = id ? [...result.devices, ...result.links].find((item) => item.id === id) : null;
+  if (!resource || !result.summary.bindingAxis) return '알려진 병목 없음';
+  const axis = resource.axes[result.summary.bindingAxis];
+  return `${resourceName(resource)} · ${axisCatalog[result.summary.bindingAxis]?.shortLabel || result.summary.bindingAxis} ${formatPercent(axis?.utilization)}`;
+}
+
+function swapConditionAxes(preview) {
+  return preview.candidate.records
+    .filter((record) => record.value !== null)
+    .map((record) => {
+      const applicability = evidenceApplicability(record, topology.workloadConditions ?? {}, topology.workloadScope ?? null);
+      const accepted = preview.memberIds.every((id) => {
+        const device = preview.topology.devices.find((item) => item.id === id);
+        return device?.accepted?.[record.axis] === acceptanceDigest(record, topology.workloadConditions ?? {}, topology.workloadScope ?? null);
+      });
+      return { record, applicability: accepted ? 'user-asserted' : applicability };
+    });
+}
+
+function swapConditionIssues(preview) {
+  return swapConditionAxes(preview).filter(({ applicability }) => applicability !== 'applicable' && applicability !== 'user-asserted');
+}
+
+function swapRackChange(original, preview) {
+  const before = new Map(original.racks.map((rack) => [rack.id, rack]));
+  const changed = preview.racks.flatMap((rack) => {
+    const previous = before.get(rack.id);
+    if (!previous) return [];
+    const powerChanged = previous.powerWatts !== rack.powerWatts;
+    const unitsChanged = previous.usedU !== rack.usedU;
+    if (!powerChanged && !unitsChanged) return [];
+    const power = powerChanged ? `${formatCompact(previous.powerWatts, 'watts')} → ${formatCompact(rack.powerWatts, 'watts')}` : '변화 없음';
+    const units = unitsChanged ? `${previous.usedU ?? '미확인'}U → ${rack.usedU ?? '미확인'}U` : '변화 없음';
+    return { label: `${rack.name} 전력 ${power} · U ${units}`, failed: rack.status === 'fail' };
+  });
+  if (!changed.length) return '전력·랙 U 변화 없음';
+  return `전력·랙 U · ${changed.map(({ label, failed }) => `${label}${failed ? ' · 랙 예산 초과' : ''}`).join(' / ')}`;
+}
+
+function renderSwapPreview() {
+  if (!swapPreview) return;
+  const device = topology.devices.find((item) => item.id === swapPreview.id);
+  if (!device) return;
+  const currentDevice = swapPreview.currentTopology.devices.find((item) => item.id === swapPreview.id);
+  const currentModel = currentDevice?.model || currentDevice?.name || '현재 장비';
+  const candidateModel = swapPreview.entry.model || '치환 장비';
+  const conditions = swapConditionAxes(swapPreview);
+  const issues = swapConditionIssues(swapPreview);
+  const blocked = issues.length > 0;
+  const original = calculateScenario(swapPreview.currentTopology, scenarioOptions());
+  const preview = calculateScenario(swapPreview.topology, scenarioOptions());
+  const originalSurvival = blocked ? null : calculateSurvivalMultiplier(swapPreview.currentTopology, { scale: state.scale });
+  const previewSurvival = blocked ? null : calculateSurvivalMultiplier(swapPreview.topology, { scale: state.scale });
+  const sourceCounts = new Map();
+  for (const { source, value } of swapPreview.candidate.records) if (value !== null) {
+    const type = source?.type || 'estimate';
+    sourceCounts.set(type, (sourceCounts.get(type) || 0) + 1);
+  }
+  const sourceSummary = [...sourceCounts].map(([type, count]) => `${SOURCE_TYPE_LABEL[type] || type} ${count}축`).join(' · ');
+  const normalMultiplier = (result) => result.summary.growthLadder?.rungs?.[0]?.breachScale ?? null;
+  const formatMultiplier = (value) => value == null ? '미확정' : `${value.toFixed(2)}×`;
+  const conditionRows = conditions.map(({ record, applicability }) => {
+    const measuredConditions = record.conditions ? Object.entries(record.conditions).map(([key, value]) => `${key}=${Array.isArray(value) ? (value.join('+') || '없음') : value}`).join(' · ') : '측정 조건 없음';
+    const label = applicability === 'incompatible' ? '조건 불일치'
+      : applicability === 'unknown' ? '적용 조건 미확인'
+        : applicability === 'user-asserted' ? '사용자가 현재 워크로드 조건에서 수락' : '현재 워크로드에 적용 가능';
+    const accept = ['incompatible', 'unknown'].includes(applicability)
+      ? `<button type="button" data-swap-evidence-accept="${escapeAttribute(record.axis)}">현재 워크로드 조건에서 이 축 수락</button>` : '';
+    return `<span class="evidence-state" data-applicability="${escapeAttribute(applicability)}"><span class="evidence-head"><b>${escapeText(axisCatalog[record.axis]?.label || record.axis)}</b> · ${escapeText(label)}</span><small>${escapeText(measuredConditions)}</small>${accept}</span>`;
+  }).join('');
+  const sameBinding = original.summary.bindingResourceId === preview.summary.bindingResourceId
+    && original.summary.bindingAxis === preview.summary.bindingAxis;
+  const result = blocked
+    ? `<span>후보 근거 ${issues.length}개가 현재 워크로드 조건과 맞는지 확인되지 않았습니다. 수치 비교는 보류합니다.</span>`
+    : `<span><b>${sameBinding ? '병목 그대로' : '병목 이동'}</b> · ${escapeText(sameBinding ? swapBindingLabel(preview) : `${swapBindingLabel(original)} → ${swapBindingLabel(preview)}`)}</span><span>생존 배수 ${escapeText(originalSurvival?.multiplier == null ? '미확정' : `${originalSurvival.multiplier.toFixed(2)}×${originalSurvival.bounded ? ' 이하' : ''}`)} → ${escapeText(previewSurvival?.multiplier == null ? '미확정' : `${previewSurvival.multiplier.toFixed(2)}×${previewSurvival.bounded ? ' 이하' : ''}`)}</span><span>정상시 배수 ${escapeText(formatMultiplier(normalMultiplier(original)))} → ${escapeText(formatMultiplier(normalMultiplier(preview)))}</span><span>과부하 자원 ${original.summary.overloadedCount}개 → ${preview.summary.overloadedCount}개</span><span>${escapeText(swapRackChange(original, preview))}</span>`;
+  const evidenceDetail = `<details class="swap-adjustments"${swapPreview.conditionsExpanded ? ' open' : ''}><summary data-swap-conditions-toggle>측정 조건 미세 조정 <span>${issues.length}</span></summary><p>${issues.length ? '현재 워크로드와 다른 측정 조건을 확인한 뒤, 필요한 축만 수락하세요.' : '후보의 축별 측정 조건과 수락 상태입니다.'}</p><div class="swap-condition-list">${conditionRows}</div></details>`;
+  const asymmetryWarning = swapPreview.memberIds.length < swapPreview.slotIds.length
+    ? `<p class="swap-asymmetry">한 대만 치환합니다. 같은 자리의 용량이 비대칭이 되며, 결과는 이 단계적 교체 상태를 계산합니다.</p>` : '';
+  openEditorPanel(`${resourceName(device)} · 장비 치환`, `<p class="editor-hint">후보를 고르면 즉시 치환 장비 상태가 됩니다. 현재 장비를 눌러 이 치환만 되돌릴 수 있습니다.</p>
+    <div class="swap-variants" role="group" aria-label="치환할 장비 선택"><button type="button" data-swap-variant="current" aria-pressed="${swapPreview.active === 'current'}" aria-label="현재 장비: ${escapeAttribute(currentModel)}" title="현재 장비">${escapeText(currentModel)}</button><span aria-hidden="true">→</span><button type="button" data-swap-variant="candidate" aria-pressed="${swapPreview.active === 'candidate'}" aria-label="치환 장비: ${escapeAttribute(candidateModel)}" title="치환 장비">${escapeText(candidateModel)}</button></div>
+    <div class="swap-preview">${asymmetryWarning}${result}${evidenceDetail}<small>${escapeText(`${swapPreview.entry.vendor} ${swapPreview.entry.model} · ${swapPreview.profile.label}`)} · ${swapPreview.memberIds.length > 1 ? `${swapPreview.memberIds.length}개 같은 자리 함께 치환` : '선택한 한 자리 치환'} · ${escapeText(sourceSummary)}</small></div>`);
+}
+
+function selectSwapVariant(variant, message) {
+  if (!swapPreview || !['current', 'candidate'].includes(variant)) return;
+  if (swapPreview.active === variant) { renderSwapPreview(); return; }
+  swapPreview.active = variant;
+  topology = variant === 'candidate' ? swapPreview.topology : swapPreview.currentTopology;
+  commitTopology(message);
+  renderSwapPreview();
+}
+
+function previewDeviceSwap(id, entry, profile) {
+  const device = topology.devices.find((item) => item.id === id);
+  if (!device) return;
+  const slot = swapSlot(device);
+  const slotIds = swapTarget?.slotIds || slot.map(({ id: memberId }) => memberId);
+  const memberIds = swapTarget?.mode === 'single' ? [id] : slotIds;
+  const candidate = { ...buildSpec(entry, profile), vendor: entry.vendor, model: entry.model };
+  const currentTopology = structuredClone(topology);
+  const previewTopology = structuredClone(currentTopology);
+  for (const memberId of memberIds) applySpec(previewTopology, memberId, candidate);
+  swapPreview = { id, entry, profile, entryId: entry.id, profileId: profile.id, slotIds, memberIds, candidate, currentTopology, topology: previewTopology, active: 'current', conditionsExpanded: false };
+  selectSwapVariant('candidate', `${entry.vendor} ${entry.model} 치환을 활성화했습니다.`);
 }
 
 function filterSwapChoices(query) {
@@ -2165,9 +2529,28 @@ function checkList(name, items, label) {
   return `<fieldset><legend>${escapeText(label)}</legend>${items.map((item) => `<label><input type="checkbox" name="${name}" value="${escapeAttribute(item.id)}"> ${escapeText(item.name || item.id)}</label>`).join('')}</fieldset>`;
 }
 
+// zone 과 rack 은 도메인의 근거가 될 수 있지만 도메인 그 자체는 아니다. 제안은 화면에만
+// 존재하고, 사용자가 수락하기 전에는 계산 후보나 장애 판정을 전혀 바꾸지 않는다.
+function domainSuggestions() {
+  const memberIds = new Set((topology.failureDomains || []).flatMap((domain) => domain.deviceIds || []));
+  const byZone = new Map();
+  for (const device of topology.devices) {
+    const zone = zonePath(device.zone).at(-1);
+    if (!zone) continue;
+    const members = byZone.get(zone) || []; members.push(device); byZone.set(zone, members);
+  }
+  return [...byZone.entries()].filter(([, devices]) => devices.length > 1 && devices.every(({ id }) => !memberIds.has(id)))
+    .map(([name, devices]) => ({ id: normalizeId(`suggested-${name}`), name, deviceIds: devices.map(({ id }) => id).sort() }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 function openVerificationPanel() {
   const services = (topology.services || []).map((item) => `<li><b>${escapeText(item.name)}</b> · demand ${item.demandIds.length}개 · ${(item.requiredDeliveryRatio ?? 1) * 100}% <button type="button" data-delete-model="service" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>정의된 서비스 없음</li>';
   const domains = (topology.failureDomains || []).map((item) => `<li><b>${escapeText(item.name)}</b> · 자원 ${(item.deviceIds?.length || 0) + (item.linkIds?.length || 0)}개 <button type="button" data-delete-model="domain" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>정의된 장애 도메인 없음</li>';
+  const suggestions = domainSuggestions();
+  const suggestionList = suggestions.length
+    ? `<aside class="domain-suggestions"><strong>도메인 제안</strong><p>같은 영역의 자원이 아직 도메인에 없습니다. 수락 전에는 계산에 반영하지 않습니다.</p>${suggestions.map((item) => `<button type="button" data-domain-suggestion="${escapeAttribute(item.id)}">${escapeText(item.name)} · 장비 ${item.deviceIds.length}개를 도메인으로 추가</button>`).join('')}</aside>`
+    : '';
   const racks = (current.racks || []).map((item) => `<li><b>${escapeText(item.name || item.id)}</b> · 전력 ${item.powerStatus || item.status || '미확인'} · U ${item.spaceStatus || item.status || '미확인'} <button type="button" data-delete-model="rack" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>정의된 랙 없음</li>';
   const scenarios = state.namedScenarios.map((item) => `<li><button type="button" data-load-scenario="${item.id}">${escapeText(item.name)}</button> <button type="button" data-delete-model="scenario" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>저장한 시나리오 없음</li>';
   const counts = { service: (topology.services || []).length, domain: (topology.failureDomains || []).length, rack: (topology.racks || []).length, scenario: state.namedScenarios.length };
@@ -2177,7 +2560,7 @@ function openVerificationPanel() {
     <div class="verification-tabs" role="tablist" aria-label="검증 설정 종류">${[['service', '서비스'], ['domain', '장애 도메인'], ['rack', '랙'], ['scenario', '시나리오']].map(([id, label]) => `<button type="button" role="tab" data-verification-tab="${id}" aria-selected="${tab === id}">${label}<span>${counts[id]}</span></button>`).join('')}</div>
     <div class="verification-columns">
       <section data-verification-panel="service"${tab === 'service' ? '' : ' hidden'}><h3>서비스 생존성</h3><p>어떤 트래픽을 어느 비율까지 전달해야 하는지 정합니다.</p><ul>${services}</ul><form class="editor-form" data-editor-form="service"><label>이름<input name="name" required maxlength="80"></label><label>최소 전달률 (%)<input name="ratio" type="number" min="1" max="100" value="100"></label>${checkList('demandIds', topology.demands, '검증할 수요')}<button type="submit">서비스 추가</button><p class="editor-error"></p></form></section>
-      <section data-verification-panel="domain"${tab === 'domain' ? '' : ' hidden'}><h3>공통 장애 도메인</h3><p>전원이나 회선처럼 함께 멈추는 자원을 묶습니다.</p><ul>${domains}</ul><form class="editor-form" data-editor-form="failure-domain"><label>이름<input name="name" required maxlength="80"></label>${checkList('deviceIds', topology.devices, '함께 멈출 장비')}${checkList('linkIds', topology.links, '함께 멈출 링크')}<button type="submit">장애 도메인 추가</button><p class="editor-error"></p></form></section>
+      <section data-verification-panel="domain"${tab === 'domain' ? '' : ' hidden'}><h3>공통 장애 도메인</h3><p>전원이나 회선처럼 함께 멈추는 자원을 묶습니다.</p>${suggestionList}<ul>${domains}</ul><form class="editor-form" data-editor-form="failure-domain"><label>이름<input name="name" required maxlength="80"></label>${checkList('deviceIds', topology.devices, '함께 멈출 장비')}${checkList('linkIds', topology.links, '함께 멈출 링크')}<button type="submit">장애 도메인 추가</button><p class="editor-error"></p></form></section>
       <section data-verification-panel="rack"${tab === 'rack' ? '' : ' hidden'}><h3>랙 수용량</h3><p>장비의 전력과 공간이 랙 예산 안에 드는지 확인합니다.</p><ul>${racks}</ul><form class="editor-form" data-editor-form="rack"><label>이름<input name="name" required maxlength="80"></label><label>전력 예산 (W)<input name="power" type="number" min="1" required></label><label>공간 (U)<input name="units" type="number" min="1" required></label><label>전력 기준<select name="basis"><option value="nameplate">명판값</option><option value="typical">일반 부하</option><option value="measured">실측</option></select></label>${checkList('deviceIds', topology.devices, '랙 장비')}<button type="submit">랙 추가</button><p class="editor-error"></p></form></section>
       <section data-verification-panel="scenario"${tab === 'scenario' ? '' : ' hidden'}><h3>비교 시나리오</h3><p>현재 장애와 부하 상태를 이름 붙여 다시 불러옵니다.</p><ul>${scenarios}</ul><form class="editor-form" data-editor-form="scenario"><label>이름<input name="name" required maxlength="80"></label><button type="submit">현재 장애·부하 저장</button><p class="editor-error"></p></form></section>
     </div>`);
@@ -2231,9 +2614,16 @@ function handleEditorAction(action) {
   if (action === 'save') saveProject();
   if (action === 'open') element('project-file-input').click();
   if (action === 'import-device') element('device-file-input').click();
+  if (action === 'import-measured-limits') element('measured-limits-file-input').click();
   if (action === 'import-drawio') element('drawio-file-input').click();
-  if (action === 'export-svg') { downloadText('rack-mesh-diagram.svg', diagramSvg(), 'image/svg+xml'); showToast('계산 결과와 판정을 찍은 SVG로 내보냈습니다.'); }
-  if (action === 'export-png') exportPng().catch((error) => showToast(error.message));
+  if (action === 'export-svg') {
+    if (analysisProgress) showToast(`${analysisProgress.label} 계산 중 ${analysisProgress.completed}/${analysisProgress.total} · 완료 후 내보낼 수 있습니다.`);
+    else { downloadText('rack-mesh-diagram.svg', diagramSvg(), 'image/svg+xml'); showToast('계산 결과와 판정을 찍은 SVG로 내보냈습니다.'); }
+  }
+  if (action === 'export-png') {
+    if (analysisProgress) showToast(`${analysisProgress.label} 계산 중 ${analysisProgress.completed}/${analysisProgress.total} · 완료 후 내보낼 수 있습니다.`);
+    else exportPng().catch((error) => showToast(error.message));
+  }
   if (action === 'new') openTemplatePicker();
   if (action === 'new-blank') applyTemplate('blank');
   if (action.startsWith('shape-')) createShapeAtVisibleCanvasCenter(action.slice(6));
@@ -2274,9 +2664,18 @@ function handleEditorAction(action) {
 function toggleFailure(type, id) {
   cancelTeaser();
   const set = type === 'device' ? state.disabledDevices : type === 'link' ? state.disabledLinks : state.disabledDomains;
-  set.has(id) ? set.delete(id) : set.add(id);
-  showToast(`${id.toUpperCase()} ${set.has(id) ? '비활성화' : '복구'} · 경로 재계산 완료`);
+  const before = current.summary.minHeadroom;
+  const active = !set.has(id);
+  active ? set.add(id) : set.delete(id);
+  showToast(`${id.toUpperCase()} ${active ? '비활성화' : '복구'} · 경로 재계산 완료`);
   recalculate();
+  const after = current.summary.minHeadroom;
+  const target = type === 'domain' ? topology.failureDomains?.find((domain) => domain.id === id) : topology[type === 'device' ? 'devices' : 'links'].find((resource) => resource.id === id);
+  const name = resourceName(target) || id;
+  const beforeText = formatPercent(before);
+  const afterText = formatPercent(after);
+  const delta = before == null || after == null ? '' : ` ${formatPercent(after - before, true)} 변화`;
+  element('failure-change-live').textContent = `${name} ${active ? '장애를 주입했습니다' : '장애를 복구했습니다'}. 최소 headroom ${beforeText}에서 ${afterText}.${delta}`;
 }
 
 let toastUndo = null;
@@ -2291,7 +2690,8 @@ function showToast(message, undo = null) {
 }
 
 function exportResult() {
-  const payload = createExport(topology, current, baseline);
+  if (analysisProgress) { showToast(`${analysisProgress.label} 계산 중 ${analysisProgress.completed}/${analysisProgress.total} · 완료 후 내보낼 수 있습니다.`); return; }
+  const payload = createExport(topology, current, baseline, { survivalMultiplier: survival, sweep });
   const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
   const anchor = document.createElement('a');
   anchor.href = url; anchor.download = 'rack-mesh-scenario.json'; anchor.click();
@@ -2445,9 +2845,30 @@ element('mobile-inspector-open').addEventListener('click', openMobileInspector);
 element('scale-input').addEventListener('input', (event) => { const value = Number(event.target.value) / 100; cancelTeaser(); state.scale = value; event.target.value = String(value * 100); recalculate({ light: true }); });
 element('scale-input').addEventListener('change', (event) => { const value = Number(event.target.value) / 100; cancelTeaser(); state.scale = value; event.target.value = String(value * 100); recalculate(); });
 element('failure-list').addEventListener('click', (event) => {
+  if (event.target.closest('[data-failure-absorbs-toggle]')) { absorbsExpanded = !absorbsExpanded; renderFailures(); return; }
+  if (event.target.closest('[data-failure-resource-absorbs-toggle]')) { resourceAbsorbsExpanded = !resourceAbsorbsExpanded; renderFailures(); return; }
+  const filter = event.target.closest('[data-failure-filter-verdict]');
+  if (filter) { failureFilter.verdict = filter.dataset.failureFilterVerdict; renderFailures(); return; }
   const button = event.target.closest('[data-failure-id]');
   if (button) toggleFailure(button.dataset.failureType, button.dataset.failureId);
 });
+element('failure-list').addEventListener('input', (event) => {
+  const input = event.target.closest('[data-failure-filter] input');
+  if (input) { failureFilter.query = input.value; renderFailures(); }
+});
+element('failure-list').addEventListener('keydown', (event) => {
+  const row = event.target.closest('[data-failure-group][data-failure-index]');
+  if (!row || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+  const total = Number(row.getAttribute('aria-setsize'));
+  const index = Number(row.dataset.failureIndex);
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? total - 1 : Math.max(0, Math.min(total - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
+  if (next === index) return;
+  event.preventDefault();
+  focusVirtualFailureRow(row.dataset.failureGroup, next);
+});
+document.querySelector('.failure-panel').addEventListener('scroll', queueVirtualFailureRows, { passive: true });
+window.addEventListener('scroll', queueVirtualFailureRows, { passive: true });
+window.addEventListener('resize', queueVirtualFailureRows);
 element('class-control').addEventListener('click', (event) => {
   const badge = event.target.closest('[data-class-badge]')?.dataset.classBadge;
   if (badge) {
@@ -2478,7 +2899,7 @@ element('class-control').addEventListener('click', (event) => {
 });
 document.querySelector('.mobile-fault-tray').addEventListener('click', (event) => {
   const button = event.target.closest('[data-quick-failure]');
-  if (button) toggleFailure('device', button.dataset.quickFailure);
+  if (button && button.dataset.quickFailure) toggleFailure(button.dataset.quickFailureType, button.dataset.quickFailure);
 });
 element('node-layer').addEventListener('click', (event) => {
   const button = event.target.closest('[data-device-id]');
@@ -2963,6 +3384,15 @@ element('inspector-content').addEventListener('click', (event) => {
 element('editor-panel-content').addEventListener('click', (event) => {
   const verificationTab = event.target.closest('[data-verification-tab]')?.dataset.verificationTab;
   if (verificationTab) { state.verificationTab = verificationTab; openVerificationPanel(); element('editor-panel-content').querySelector(`[data-verification-tab="${verificationTab}"]`)?.focus(); return; }
+  const suggestion = event.target.closest('[data-domain-suggestion]');
+  if (suggestion) {
+    const proposal = domainSuggestions().find(({ id }) => id === suggestion.dataset.domainSuggestion);
+    if (!proposal) return;
+    const id = normalizeId(proposal.name);
+    if ((topology.failureDomains || []).some((domain) => domain.id === id)) { showToast('같은 이름의 장애 도메인이 이미 있습니다.'); return; }
+    topology.failureDomains = [...(topology.failureDomains || []), { id, name: proposal.name, deviceIds: proposal.deviceIds, linkIds: [] }];
+    commitTopology(`${proposal.name}의 장비 ${proposal.deviceIds.length}개를 장애 도메인으로 추가했습니다.`); openVerificationPanel(); return;
+  }
   const workloadPreset = event.target.closest('[data-workload-preset]')?.dataset.workloadPreset;
   if (workloadPreset && workloadPreset !== 'custom') {
     const form = event.target.closest('form'); const preset = WORKLOAD_PRESETS[workloadPreset];
@@ -2971,6 +3401,11 @@ element('editor-panel-content').addEventListener('click', (event) => {
     form.querySelector('[name="features_mode"][value="list"]')?.click();
     for (const chip of form.querySelectorAll('[name="features_chip"]')) chip.checked = preset.features_enabled.includes(chip.value);
     form.elements.features_enabled.value = '';
+    return;
+  }
+  const scope = event.target.closest('[data-swap-scope]')?.dataset.swapScope;
+  if (scope && swapTarget) {
+    openDeviceSwapPicker(swapTarget.id, { ...swapTarget, mode: scope });
     return;
   }
   const choice = event.target.closest('[data-swap-catalog]');
@@ -2982,12 +3417,31 @@ element('editor-panel-content').addEventListener('click', (event) => {
       if (detach) { applySpec(topology, id, null); closeEditorPanel(); commitTopology(`${name}의 데이터시트 값을 떼고 직접 입력으로 돌렸습니다.`); return; }
       const entry = catalogEntry(choice.dataset.swapCatalog);
       const profile = catalogProfile(entry.id, choice.dataset.swapProfile);
-      applySpec(topology, id, { ...buildSpec(entry, profile), vendor: entry.vendor, model: entry.model });
-      closeEditorPanel();
-      commitTopology(`${withParticle(name, 'object')} ${withParticle(`${entry.vendor} ${entry.model} · ${profile.label}`, 'instrumental')} 바꿨습니다.`);
+      previewDeviceSwap(id, entry, profile);
     } catch (error) { showToast(error.message); }
     return;
   }
+  const conditionToggle = event.target.closest('[data-swap-conditions-toggle]');
+  if (conditionToggle && swapPreview) {
+    swapPreview.conditionsExpanded = !conditionToggle.closest('details')?.open;
+    return;
+  }
+  const swapAcceptance = event.target.closest('[data-swap-evidence-accept]');
+  if (swapAcceptance) {
+    if (!swapPreview) return;
+    const axis = swapAcceptance.dataset.swapEvidenceAccept;
+    try {
+      for (const id of swapPreview.memberIds) acceptEvidence(swapPreview.topology, id, axis);
+      // 치환 장비가 이미 활성 상태일 때도 수락한 축이 현재 계산에 반영돼야 한다.
+      if (swapPreview.active === 'candidate') {
+        commitTopology(`${axisCatalog[axis]?.label || axis} 근거를 수락했습니다.`);
+        renderSwapPreview();
+      } else selectSwapVariant('candidate', `${axisCatalog[axis]?.label || axis} 근거를 수락하고 치환 장비를 활성화했습니다.`);
+    } catch (error) { showToast(error.message); }
+    return;
+  }
+  const swapVariant = event.target.closest('[data-swap-variant]')?.dataset.swapVariant;
+  if (swapVariant) { selectSwapVariant(swapVariant, swapVariant === 'candidate' ? '치환 장비를 활성화했습니다.' : '현재 장비를 복원했습니다.'); return; }
   if (event.target.closest('[data-workload-action="clear"]')) {
     setWorkloadConditions(topology, Object.fromEntries([...WORKLOAD_FIELDS.map(({ key }) => [key, null]), ['features_enabled', null]]));
     closeEditorPanel();
@@ -3253,6 +3707,14 @@ element('device-file-input').addEventListener('change', async (event) => {
     showToast(`가져오기 실패: ${error.message}`);
   }
 });
+element('measured-limits-file-input').addEventListener('change', async (event) => {
+  try {
+    const text = await readFile(event.target); if (!text) return;
+    const imported = applyMeasuredLimits(topology, importMeasuredLimits(text));
+    topology = imported.topology;
+    commitTopology(`실측 한계 ${imported.applied.length}개 적용 · 관측 하한 ${imported.floors.length}개 보관${imported.unmatched.length ? ` · 미매칭 ${imported.unmatched.length}개` : ''}`);
+  } catch (error) { showToast(`실측 한계 임포트 실패: ${error.message}`); }
+});
 element('drawio-file-input').addEventListener('change', async (event) => {
   try {
     const text = await readFile(event.target); if (!text) return;
@@ -3404,9 +3866,13 @@ document.querySelector('.topology-scroll').addEventListener('wheel', (event) => 
   setZoom(state.zoom * Math.exp(-delta * ZOOM_WHEEL_SENSITIVITY), { x: event.clientX - rect.left, y: event.clientY - rect.top });
 }, { passive: false });
 document.querySelector('a[href="#failure-heading"]').addEventListener('click', () => setLeftPanel('failure'));
+element('summary-survival').addEventListener('click', () => {
+  setLeftPanel('failure', { explicit: true });
+  requestAnimationFrame(() => element('failure-list').scrollIntoView({ block: 'nearest' }));
+});
 document.querySelector('[role="tablist"]').addEventListener('click', (event) => {
   const tab = event.target.closest('[data-panel-tab]');
-  if (tab) setLeftPanel(tab.dataset.panelTab);
+  if (tab) setLeftPanel(tab.dataset.panelTab, { explicit: true });
 });
 document.querySelector('[role="tablist"]').addEventListener('keydown', (event) => {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -3415,7 +3881,7 @@ document.querySelector('[role="tablist"]').addEventListener('keydown', (event) =
   const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? tabs.length - 1 : null;
   const next = step === null ? tabs[event.key === 'Home' ? 0 : tabs.length - 1] : tabs[(current + step) % tabs.length];
   event.preventDefault();
-  setLeftPanel(next.dataset.panelTab);
+  setLeftPanel(next.dataset.panelTab, { explicit: true });
   next.focus();
 });
 
@@ -3520,11 +3986,12 @@ try {
     state.selectedId = project.scenario.selectedId; state.viewMode = project.scenario.viewMode || 'edit';
     state.selection = state.selectedId ? [{ type: topology.links.some(({ id }) => id === state.selectedId) ? 'link' : 'device', id: state.selectedId }] : [];
     baselineSnapshot = project.scenario.baseline || { topology: structuredClone(topology), scenario: scenarioOptions(true) };
-    baseline = calculateScenario(baselineSnapshot.topology, baselineSnapshot.scenario); current = calculateScenario(topology, scenarioOptions()); sweep = sweepSingleFaults(topology, { scale: state.scale }); sweepScale = state.scale;
+    baseline = calculateScenario(baselineSnapshot.topology, baselineSnapshot.scenario); current = calculateScenario(topology, scenarioOptions()); sweep = sweepSingleFaults(topology, { scale: state.scale }); survival = calculateSurvivalMultiplier(topology, { scale: state.scale, sweep }); domainSweep = sweepFailureDomains(topology, { scale: state.scale }); sweepScale = state.scale;
     documentHistory.reset(topology); element('scale-input').value = String(state.scale * 100);
   }
 } catch { try { localStorage.removeItem('rack-mesh-working-copy'); } catch { /* 저장소 접근 자체가 막힌 환경 */ } }
 renderPalette();
+if (!panelSelectionExplicit) state.leftPanel = topology.devices.length || topology.links.length ? 'failure' : 'palette';
 setLeftPanel(state.leftPanel);
 render();
 centerCanvas();

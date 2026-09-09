@@ -1,20 +1,21 @@
 # docs
 
-Rack Mesh 설계 문서 모음. 최상위 PRD는 저장소 루트의 `infra-simulator-prd.md`(v0.5)이고, 이 폴더의 문서들은 모두 그것의 하위 문서다.
+Rack Mesh 설계 문서 모음. 기준 PRD는 이 폴더의 `infra-simulator-prd.md`(v0.5)다. 아래 기능 PRD는 기준 PRD의 계산·데이터 원칙을 바꾸지 않고 구현 순서와 화면 요구사항을 정한다.
 
 ## 읽는 순서
 
 처음 오는 사람은 `infra-simulator-prd.md` 1~5절과 8절을 먼저 읽는다. 1~5절이 계산 모델이고 8절이 벤더 데이터 취급 원칙이다. 8절은 금지 사항이라 나중에 읽으면 이미 어긴 상태가 된다.
 
-구현에 바로 들어가려면 `display-layer-implementation.md`만 읽으면 된다. 그 문서는 단독으로 작업할 수 있게 썼다.
+이어서 `prd-v0.6.md`를 읽어 제품 우선순위와 Phase 1 잔여 요구사항을 확인한다. 기능은 다음 순서로 구현한다. 먼저 `survival-multiplier-prd.md`를 읽어 N-1의 출력 지표를 고정한다. 다음 `domain-sweep-prd.md`로 장애 범위를 도메인과 N-2로 넓힌다. 이어서 `device-substitution-prd.md`로 병목 이동을 비교하고, `measured-import-prd.md`로 실측 근거를 넣는다. 마지막으로 `fault-sweep-surfacing-prd.md`와 `display-layer-improvement-prd.md`로 계산 결과의 첫 화면과 표시 규칙을 정한다.
 
 ## 문서 목록
 
 | 문서 | 성격 | 다루는 것 |
 |---|---|---|
-| `../infra-simulator-prd.md` | 상위 PRD | 계산 모델, 장비 라이브러리 2층 구조, 벤더 데이터 원칙, 검증 전략, 비기능 요구 |
+| `infra-simulator-prd.md` | 기준 PRD | 계산 모델, 장비 라이브러리 2층 구조, 벤더 데이터 원칙, 검증 전략, 비기능 요구 |
+| `prd-v0.6.md` | 방향·Phase 1 개정 | v0.5의 계산·데이터·벤더 원칙을 유지하며, 제품 우선순위와 Phase 1 잔여 요구사항을 정함 |
 | `display-layer-improvement-prd.md` | 개선 PRD | 표시 계층이 엔진 결과를 어떻게 말하는가. 출처 게이트 떨림, 손실 표기, 상태 칩, 정보 서열 |
-| `display-layer-implementation.md` | 구현 명세 | 위 PRD 중 두 항목의 코드 수준 패치. 변경 전후 코드와 테스트 |
+| `display-layer-implementation.md` | 구현 명세 | 패킷 점 속도 정규화와 출처 게이트 떨림의 코드 수준 변경과 검증 |
 | `survival-multiplier-prd.md` | 기능 PRD | 최악 단일 장애 하의 여유 배수. `growthLadder`와 장애 스윕의 조합 |
 | `domain-sweep-prd.md` | 기능 PRD | 장애 도메인 단위 스윕과 N-2. 공유 장애 도메인 판정 |
 | `device-substitution-prd.md` | 기능 PRD | 장비 치환 시뮬레이션. 진단에서 처방으로 |
@@ -34,7 +35,7 @@ Rack Mesh 설계 문서 모음. 최상위 PRD는 저장소 루트의 `infra-simu
 
 ## 지금 상태
 
-전부 v0.1 초안이다. 구현이 확정된 것은 `display-layer-implementation.md` 하나뿐이고 나머지는 검토 전이다.
+기준 PRD는 v0.5 초안이고, 방향·Phase 1 개정은 v0.6 초안이다. 표시 계층 개선 PRD와 기능·IA PRD는 v0.1 초안이다. `display-layer-implementation.md`는 표시 계층 일부의 코드 수준 구현 명세를 제공한다.
 
 상위 PRD의 최대 미결은 13절의 "성능 데이터 수집 방식"이다. `measured-import-prd.md`가 그 미결에 대한 답을 제안한다. 카탈로그 30종을 채우는 방향이 아니라 실제 운영 중인 장비를 실측으로 채우는 방향이다.
 

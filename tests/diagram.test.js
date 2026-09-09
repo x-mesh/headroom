@@ -167,7 +167,7 @@ test('stamps the calculation onto the exported frame', () => {
   const svg = exportDiagramSvg(topology, result, { sweep: sweepSingleFaults(topology), exportedAt: '2026-09-07 08:00' });
 
   // 이 그림이 어느 조건에서 나왔는지. 하나라도 빠지면 근거가 아니라 그림일 뿐이다.
-  for (const fragment of ['배율 1.00배', '장애 web-a', `엔진 ${result.engineVersion}`, '합성 데모', '출처', '조건', 'SYN', '내보냄 2026-09-07 08:00']) {
+  for (const fragment of ['배율 1.00배', '장애 web-a', `엔진 ${result.engineVersion}`, '합성 데모', '출처', '조건', 'SYN', '단일 장애점', '내보냄 2026-09-07 08:00']) {
     assert.ok(svg.includes(fragment), `스탬프에 ${fragment} 가 없습니다.`);
   }
   // 미확인이 있는 결과를 통과로 보이게 하지 않는다.
@@ -182,6 +182,16 @@ test('stamps the calculation onto the exported frame', () => {
   assert.ok(svg.includes('OFFLINE') && svg.includes('DOWN'), '죽은 장비와 그 링크는 숫자가 아니라 상태를 말한다');
   assert.ok(svg.includes('WEB TIER') && svg.includes('DATA TIER'), 'zone 그룹 상자가 그려진다');
   assert.match(svg, /<g transform="translate\([-\d.]+ [-\d.]+\) scale\(/, '장비 심볼이 인라인으로 들어간다');
+});
+
+test('stamps axis evidence counts and conditions without executable markup', () => {
+  const topology = buildTemplate('three-tier');
+  const device = topology.devices[0];
+  device.spec = { records: [{ axis: 'new_sessions_per_sec', value: 42000, source: { type: 'datasheet' }, conditions: { features_enabled: ['ips', 'logging'] } }] };
+  const svg = exportDiagramSvg(topology, calculateScenario(topology));
+  assert.match(svg, /출처 데이터시트 1축/);
+  assert.match(svg, new RegExp(`조건 ${device.name}: features_enabled=ips[+]logging`));
+  assert.doesNotMatch(svg, /<script|<image|foreignObject/);
 });
 
 test('never turns an unknown axis into a number in the exported frame', () => {

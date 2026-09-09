@@ -23,6 +23,14 @@ async function verifyCanvasEditing() {
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}\n${String(error.stack).split("\n").slice(1, 4).join("\n")}`));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   await page.evaluate(() => document.fonts.ready);
+  await page.waitForFunction(() => document.querySelector('#failure-grade')?.textContent.includes('단일 장애점'));
+  const survivalTile = page.locator('#summary-survival');
+  assert.match(await survivalTile.textContent(), /단일 장애점\s*\d+/, '무장애 상태는 활성 장애 0 대신 단일 장애점 수를 보여야 합니다');
+  assert.match(await survivalTile.getAttribute('aria-label'), /단일 장애점 \d+개/, '생존성 타일은 장애 목록으로 가는 목적을 읽어야 합니다');
+  await survivalTile.click();
+  assert.equal(await page.locator('#tab-failure').getAttribute('aria-selected'), 'true', '생존성 타일을 누르면 장애 목록이 열려야 합니다');
+  await page.locator('#tab-palette').click();
+  await page.waitForFunction(() => document.querySelector('#panel-palette')?.hidden === false);
   // 시작 방법은 좌측 상단 한곳에 모으되, 가장 흔한 템플릿 시작은 한 번 눌러 연다.
   assert.equal(await page.locator('#new-design-button').textContent(), '설계 시작');
   await page.locator('#start-menu-button').click();
@@ -170,6 +178,8 @@ async function verifyBackendPool() {
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   await page.locator('#new-design-button').click();
   await page.locator('[data-template="dual-stack"]').click();
+  await page.locator('#tab-palette').click();
+  await page.waitForFunction(() => document.querySelector('#panel-palette')?.hidden === false);
 
   await page.locator('[data-editor-action="device"]').click();
   await page.locator('[data-editor-form="device"] input[name="name"]').fill('WEB 02 복제');
@@ -208,7 +218,7 @@ async function verify(viewport, screenshot, interact = false) {
   page.on('requestfailed', (request) => failures.push(`request: ${request.url()} ${request.failure()?.errorText}`));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   await page.evaluate(() => document.fonts.ready);
-  assert.equal(await page.locator('#summary-faults').textContent(), '00');
+  assert.match(await page.locator('#summary-survival').textContent(), /단일 장애점\s*\d+/);
   // 캔버스 아래가 지금 무엇이 막고 있는지 문장으로 말해야 한다.
   const restingNote = await page.locator('#bottleneck-note').textContent();
   assert.match(restingNote, /가장 빠듯합니다/);
@@ -223,6 +233,15 @@ async function verify(viewport, screenshot, interact = false) {
   await page.locator('[data-editor-action="verification"]').click();
   const verificationCounts = await page.locator('[data-verification-tab] span').allTextContents();
   assert.deepEqual(verificationCounts, ['1', '2', '2', '0'], 'the default scenario exposes service, rack domains, and rack budgets');
+  await page.locator('[data-verification-tab="domain"]').click();
+  const headroomBeforeSuggestion = await page.locator('#summary-headroom').textContent();
+  await page.locator('[data-delete-model="domain"][data-model-id="rack-04"]').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-domain-suggestion]')]
+    .some((suggestion) => suggestion.textContent.includes('RACK 04')));
+  assert.equal(await page.locator('#summary-headroom').textContent(), headroomBeforeSuggestion, 'a domain suggestion does not change the current calculation');
+  await page.locator('[data-domain-suggestion]').filter({ hasText: 'RACK 04' }).click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-delete-model="domain"]').length === 2);
+  assert.equal(await page.locator('#summary-headroom').textContent(), headroomBeforeSuggestion, 'accepting a domain declaration does not change the current calculation');
   await page.locator('#editor-close').click();
   assert.match(await page.locator('#topology-heading').textContent(), /\d+%$/, 'the canvas headline states the answer, not the question');
   assert.equal(await page.locator('#summary-headroom').getAttribute('data-tone'), 'amber', 'headroom is coloured by the engine threshold');
@@ -277,8 +296,22 @@ async function verify(viewport, screenshot, interact = false) {
   const unknownAxis = await page.locator('[data-device-id="api-a"] .node-axis').last().innerText();
   assert.match(unknownAxis, /—/, 'an unknown limit must read as an em dash');
   assert.doesNotMatch(unknownAxis, /\d%/, 'an unknown limit must never read as a percentage');
-  assert.equal(await page.locator('#tab-palette').getAttribute('aria-selected'), 'true', 'the component tab opens first');
-  await page.locator('#tab-failure').click();
+  assert.equal(await page.locator('#tab-failure').getAttribute('aria-selected'), 'true', 'a non-empty design opens on the fault sweep');
+  const failureReadingOrder = await page.locator('[data-failure-type="device"]').first().innerText();
+  assert.ok(failureReadingOrder.indexOf('끄면') < failureReadingOrder.indexOf('FABRIC'), 'the fault verdict must precede the resource zone');
+  const absorbsToggle = page.locator('[data-failure-absorbs-toggle]');
+  if (await absorbsToggle.count()) {
+    assert.equal(await absorbsToggle.getAttribute('aria-expanded'), 'false', 'absorbing N-2 pairs start collapsed');
+    await absorbsToggle.click();
+    assert.equal(await absorbsToggle.getAttribute('aria-expanded'), 'true', 'absorbing N-2 pairs expand on demand');
+  }
+  const resourceAbsorbsToggle = page.locator('[data-failure-resource-absorbs-toggle]');
+  if (await resourceAbsorbsToggle.count()) {
+    assert.equal(await resourceAbsorbsToggle.getAttribute('aria-expanded'), 'false', 'absorbing resources start collapsed');
+    assert.match(await resourceAbsorbsToggle.first().textContent(), /견딤 \d+개 펼치기/, 'the collapsed resource count stays visible');
+    await resourceAbsorbsToggle.first().dispatchEvent('click');
+    assert.equal(await resourceAbsorbsToggle.first().getAttribute('aria-expanded'), 'true', 'absorbing resources expand on demand');
+  }
   // 칸의 선은 그 칸의 숫자를 그려야 한다. 예전에는 활성 장애 칸이 배율을, 과부하 칸이
   // 헤드룸의 역수를 그렸다. 선이 다른 것을 말하면 읽는 사람은 선을 믿고 잘못 읽는다.
   const paired = await page.evaluate(() => [...document.querySelectorAll('.summary-metric:has(.metric-sparkline)')].map((cell) => ({
@@ -485,15 +518,19 @@ async function verify(viewport, screenshot, interact = false) {
   await page.waitForFunction(() => !document.querySelector('#learning-panel output')?.hidden);
   assert.match(await page.locator('#topology-heading').textContent(), /신규 세션 171%/, 'the experiment must land on the number it promised');
   await page.locator('[data-failure-type="device"][data-failure-id="fw-a"]').click();
-  await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '00');
+  await page.waitForFunction(() => document.querySelector('#summary-fault-label')?.textContent === '단일 장애점');
 
   // 장비를 바꾸는 것은 인스펙터까지 가지 않고 자리에서 하는 일이다.
-  await page.locator('[data-device-id="fw-a"]').click({ button: 'right' });
+  await page.locator('[data-device-id="fw-a"]').dispatchEvent('contextmenu', { bubbles: true, clientX: 240, clientY: 240 });
   await page.waitForFunction(() => !document.querySelector('#context-menu')?.hidden);
   const swap = page.locator('[data-context-action="swap"]');
   await swap.waitFor({ state: 'visible' });
-  await swap.click();
+  await swap.evaluate((button) => button.click());
   await page.waitForFunction(() => document.querySelector('[data-swap-catalog]'));
+  assert.equal(await page.locator('[data-swap-scope="slot"]').getAttribute('aria-pressed'), 'true', 'same-slot replacement is the default');
+  assert.match(await page.locator('[data-swap-scope="slot"]').textContent(), /전체 2대/, 'the selected firewall pair is named as one slot');
+  await page.locator('[data-swap-scope="single"]').click();
+  assert.equal(await page.locator('[data-swap-scope="single"]').getAttribute('aria-pressed'), 'true', 'one device can be selected for staged replacement');
   const choices = await page.locator('[data-swap-catalog]').count();
   assert.ok(choices >= 20, `고를 수 있는 조건이 ${choices}개뿐입니다.`);
   await page.locator('#swap-search').fill('ASA');
@@ -501,20 +538,73 @@ async function verify(viewport, screenshot, interact = false) {
   const narrowed = await page.locator('[data-swap-catalog]:not([hidden])').count();
   assert.ok(narrowed > 0 && narrowed < choices, '검색이 조건 목록을 좁혀야 합니다.');
   await page.locator('[data-swap-catalog]:not([hidden])').first().click();
-  await page.waitForFunction(() => document.querySelector('#toast')?.textContent.includes('바꿨습니다'));
-  assert.match(await page.locator('#toast').textContent(), /FW A를 .+으?로 바꿨습니다/, 'the toast must name what it became, with the right particle');
-  assert.match(await page.locator('[data-device-id="fw-a"] .node-model').textContent(), /Firewall/);
-  // 같은 메뉴에서 되돌릴 수 있어야 한다. 데이터시트를 뗀 뒤에는 고르기로 이름이 바뀐다.
-  await page.locator('[data-editor-action="undo"]').click();
-  await page.waitForFunction(() => !document.querySelector('#toast')?.textContent.includes('바꿨습니다'));
+  await page.waitForFunction(() => document.querySelector('[data-swap-variant="candidate"]')?.getAttribute('aria-pressed') === 'true');
+  assert.match(await page.locator('.swap-preview').textContent(), /한 대만 치환합니다/, 'single-device replacement warns about asymmetric capacity');
+  assert.equal(await page.locator('[data-swap-variant="current"]').getAttribute('aria-label'), '현재 장비: DEMO-FW-42K');
+  assert.match(await page.locator('[data-swap-variant="candidate"]').getAttribute('aria-label'), /^치환 장비: Secure Firewall 3105$/);
+  const blockedPreview = await page.locator('.swap-preview').textContent();
+  assert.match(blockedPreview, /수치 비교는 보류합니다/, 'unmatched candidate evidence must defer numeric comparison');
+  assert.doesNotMatch(blockedPreview, /병목 (이동|그대로)|생존 배수|정상시 배수|과부하 자원|전력·랙 U 변화/,
+    'any unaccepted candidate axis must block every derived comparison');
+  const replacementModel = await page.locator('[data-device-id="fw-a"] .node-model').textContent();
+  assert.notEqual(replacementModel, 'DEMO-FW-42K', 'selecting a candidate must activate it without a second apply action');
+  const adjustments = page.locator('.swap-adjustments');
+  assert.equal(await adjustments.isVisible(), true);
+  assert.equal(await adjustments.evaluate((node) => node.open), false, 'condition adjustments start folded');
+  assert.equal(await page.locator('[data-swap-evidence-accept]').first().isHidden(), true, 'per-axis acceptance stays hidden until adjustment is requested');
+  await adjustments.locator('summary').click();
+  assert.equal(await adjustments.evaluate((node) => node.open), true, 'condition adjustments open on demand');
+  let acceptedAxes = 0;
+  while (await page.locator('[data-swap-evidence-accept]').count()) {
+    await page.locator('[data-swap-evidence-accept]').first().click();
+    acceptedAxes += 1;
+  }
+  assert.ok(acceptedAxes > 0, 'the preview must offer per-axis acceptance');
+  const swapResult = await page.locator('.swap-preview').textContent();
+  assert.match(swapResult, /사용자가 현재 워크로드 조건에서 수락/,
+    'accepted axes must state that the user accepted them for the current workload conditions');
+  assert.match(swapResult, /생존 배수/, 'accepted axes must unlock the comparison metrics');
+  const resultOrder = ['병목 그대로', '병목 이동', '생존 배수', '정상시 배수', '과부하 자원', '전력·랙 U'];
+  const first = resultOrder.find((label) => swapResult.includes(label));
+  assert.ok(first, `치환 결과의 병목 문구가 없습니다: ${swapResult}`);
+  assert.ok(swapResult.indexOf(first) < swapResult.indexOf('생존 배수'), '병목 결과가 생존 배수보다 먼저 나와야 합니다');
+  for (const label of ['생존 배수', '정상시 배수', '과부하 자원', '전력·랙 U']) {
+    assert.ok(swapResult.includes(label), `치환 결과에 ${label}가 없습니다: ${swapResult}`);
+  }
+  assert.ok(swapResult.indexOf('생존 배수') < swapResult.indexOf('정상시 배수')
+    && swapResult.indexOf('정상시 배수') < swapResult.indexOf('과부하 자원')
+    && swapResult.indexOf('과부하 자원') < swapResult.indexOf('전력·랙 U'), '치환 지표 순서가 PRD와 다릅니다');
+  assert.equal(await page.locator('#evidence-state').textContent(), 'EVIDENCE 5 UNKNOWN',
+    'accepting the candidate axes must not hide unrelated unknown evidence');
+  assert.ok(await page.locator('.evidence-state[data-applicability="user-asserted"]').count() > 0, 'accepted preview axes must persist after application');
+  await page.locator('[data-swap-variant="current"]').click();
+  assert.equal(await page.locator('[data-swap-variant="current"]').getAttribute('aria-pressed'), 'true', 'current device must be an explicit alternative to the replacement');
+  assert.equal(await page.locator('[data-device-id="fw-a"] .node-model').textContent(), 'DEMO-FW-42K', 'current device restores without closing the panel');
+  await page.locator('[data-swap-variant="candidate"]').click();
+  assert.equal(await page.locator('[data-swap-variant="candidate"]').getAttribute('aria-pressed'), 'true', 'replacement device can be reactivated from the same control');
+  assert.equal(await page.locator('[data-device-id="fw-a"] .node-model').textContent(), replacementModel);
 
   assert.equal(await page.locator('[data-failure-type="device"], [data-failure-type="link"]').count(), 20, 'every device and link must be failable, not two classes');
   assert.equal(await page.locator('[data-failure-type="domain"]').count(), 2, 'the default rack failure domains must be injectable');
   assert.match(await page.locator('#failure-grade').textContent(), /단일 장애점 \d+개/, 'the panel must grade the design before anything is turned off');
   const forecasts = await page.locator('[data-failure-type="device"] .failure-forecast, [data-failure-type="link"] .failure-forecast').evaluateAll((nodes) => nodes.map((node) => node.dataset.verdict));
   assert.ok(forecasts.every((verdict) => ['severs', 'overloads', 'absorbs', 'endpoint'].includes(verdict)), 'every row must carry a forecast');
-  assert.ok((await page.locator('[data-failure-type="domain"] .failure-forecast').allTextContents()).every((text) => text.includes('함께 중단')));
+  assert.ok((await page.locator('[data-failure-type="domain"] .failure-forecast').allTextContents()).every((text) => text.includes('끄면 서비스 단절') && text.includes('한계 미확인')),
+    '도메인 단절도 한계 미확인 경계를 숨기지 않습니다');
   assert.equal(forecasts[0], 'severs', 'the rows that sever the service sort first');
+  assert.ok(await page.locator('.failure-rows').count() > 0, '장애 결과는 목록 구조로 제공해야 합니다');
+  const firstFailure = page.locator('[data-failure-type="device"], [data-failure-type="link"]').first();
+  const firstFailureName = await firstFailure.getAttribute('aria-label');
+  assert.match(firstFailureName, /^[^,]+, 끄면 서비스 단절, .*현재 UP$/, '접근성 이름은 자원명 뒤에 판정과 현재 상태를 읽어야 합니다');
+  const failureFilter = page.locator('[data-failure-filter]');
+  assert.match(await failureFilter.locator('[data-failure-filter-count]').textContent(), /전체 23개 중 23개 표시/);
+  await failureFilter.locator('[data-failure-filter-verdict="severs"]').dispatchEvent('click');
+  assert.match(await failureFilter.locator('[data-failure-filter-count]').textContent(), /필터 적용 중 · 전체 23개 중 9개 표시/);
+  assert.equal(await page.locator('[data-failure-type="device"] .failure-forecast[data-verdict="overloads"], [data-failure-type="link"] .failure-forecast[data-verdict="overloads"]').count(), 0, 'severity filter hides overload rows');
+  await failureFilter.locator('input').fill('leaf a');
+  assert.match(await failureFilter.locator('[data-failure-filter-count]').textContent(), /전체 23개 중 2개 표시/);
+  await failureFilter.locator('[data-failure-filter-verdict="all"]').dispatchEvent('click');
+  await failureFilter.locator('input').fill('');
   assert.match(await page.locator('#bottleneck-note').textContent(), /단일 장애점이 \d+개/, 'the note must name the design as single-point');
   assert.ok(await page.locator('.mesh-node', { hasText: 'SPOF' }).count() > 0, 'a single point of failure must be marked on the canvas too');
   if (viewport.width <= 760) {
@@ -526,9 +616,12 @@ async function verify(viewport, screenshot, interact = false) {
     assert.equal(await page.locator('.inspector-panel').isVisible(), false);
     assert.equal(await page.locator('.mobile-fault-tray').isVisible(), true);
     assert.match(await page.locator('.mobile-pan-cue').textContent(), /좌우로 탐색/);
-    await page.locator('[data-quick-failure="fw-a"]').click();
+    const quickFailure = page.locator('[data-quick-failure]');
+    assert.match(await quickFailure.getAttribute('aria-label'), /단일 장애점 실험: LEAF A/);
+    await quickFailure.click();
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
-    assert.equal(await page.locator('[data-quick-failure="fw-a"]').getAttribute('aria-pressed'), 'true');
+    assert.equal(await quickFailure.getAttribute('aria-pressed'), 'true');
+    assert.match(await page.locator('#failure-change-live').textContent(), /LEAF A 장애를 주입했습니다. 최소 headroom .* 변화/);
   }
   if (interact) {
     const failure = page.locator('[data-failure-type="device"][data-failure-id="fw-a"]');
@@ -636,7 +729,7 @@ async function verify(viewport, screenshot, interact = false) {
     // 설계 편집은 현재 장애 시나리오와 사용자가 확정한 기준선을 바꾸지 않는다.
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
     await failure.click();
-    await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '00');
+    await page.waitForFunction(() => document.querySelector('#summary-fault-label')?.textContent === '단일 장애점');
     const severs = page.locator('.failure-switch').filter({ has: page.locator('.failure-forecast[data-verdict="severs"]') }).first();
     const severId = await severs.getAttribute('data-failure-id');
     await severs.click();
@@ -644,7 +737,7 @@ async function verify(viewport, screenshot, interact = false) {
     assert.equal(await page.locator('#capacity-state').textContent(), 'TRAFFIC UNREACHABLE',
       `the forecast promised ${severId} would sever the service, so turning it off must do that`);
     await page.locator(`[data-failure-id="${severId}"]`).click();
-    await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '00');
+    await page.waitForFunction(() => document.querySelector('#summary-fault-label')?.textContent === '단일 장애점');
     await failure.click();
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
     await page.locator('[data-device-id="fw-b"]').click();
@@ -814,6 +907,7 @@ async function verify(viewport, screenshot, interact = false) {
     await page.locator('[data-editor-action="verification"]').click();
     assert.equal(await page.locator('[data-verification-tab]').count(), 4, '검증 작업은 네 개 탭으로 나뉘어야 한다');
     assert.equal(await page.locator('[data-verification-panel]:not([hidden])').count(), 1, '검증 폼은 한 번에 하나만 보여야 한다');
+    await page.locator('[data-verification-tab="service"]').click();
     const serviceForm = page.locator('[data-editor-form="service"]');
     await serviceForm.locator('[name="name"]').fill('Public API');
     await serviceForm.locator('[name="demandIds"]').check();
@@ -831,17 +925,26 @@ async function verify(viewport, screenshot, interact = false) {
     assert.equal(project.topology.links.length, 1);
     assert.equal(project.topology.demands.length, 1);
     assert.equal(project.topology.services[0].name, 'Public API');
-    await page.locator('#device-file-input').setInputFiles({ name: 'device.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ manufacturer: { name: 'Acme' }, model: 'Leaf 48', slug: 'acme-leaf-48', interfaces: [{ name: 'eth1', type: '25gbase-x-sfp28' }] })) });
+  await page.locator('#device-file-input').setInputFiles({ name: 'device.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ manufacturer: { name: 'Acme' }, model: 'Leaf 48', slug: 'acme-leaf-48', interfaces: [{ name: 'eth1', type: '25gbase-x-sfp28' }] })) });
     const importedForm = page.locator('[data-editor-form="device"]');
     assert.equal(await importedForm.locator('[name="name"]').inputValue(), 'Acme Leaf 48');
     await importedForm.locator('[name="name"]').fill('<img src=x onerror=window.__rackMeshXss=1>');
     await importedForm.locator('button[type="submit"]').click();
-    assert.equal(await page.locator('.mesh-node').count(), 3);
+  assert.equal(await page.locator('.mesh-node').count(), 3);
     assert.equal(await page.evaluate(() => window.__rackMeshXss), undefined);
     page.once('dialog', (dialog) => dialog.accept());
     await page.locator('#project-file-input').setInputFiles({ name: 'project.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) });
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 2);
     assert.equal(await page.locator('.link-group').count(), 1);
+    const measuredProject = { schemaVersion: 3, product: 'Rack Mesh', topology: cloneTopology(), scenario: { scale: 1, disabledDevices: [], disabledLinks: [], disabledDomains: [], selectedId: 'fw-a' } };
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.locator('#project-file-input').setInputFiles({ name: 'measured-project.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(measuredProject)) });
+    await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 10);
+    await page.locator('#measured-limits-file-input').setInputFiles({ name: 'measured-limits.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ schema: 'rack-mesh-measured-limits', as_of: '2026-09-09T03:00:00Z', entries: [{ target: { kind: 'device', id: 'fw-a' }, axis: 'new_sessions_per_sec', value: 58, unit: 'Kcps', saturated: false }] })) });
+    await page.waitForFunction(() => document.querySelector('#toast')?.textContent.includes('관측 하한 1개 보관'));
+    await page.locator('[data-device-id="fw-a"]').click();
+    assert.match(await page.locator('#inspector-content .observed-floor').textContent(), /관측 하한 58 Kcps · 2026-09-09T03:00:00Z/);
+    assert.match(await page.locator('#inspector-content [data-axis-limit="new_sessions_per_sec"]').textContent(), /42 Kcps/, 'an unsaturated observation must not replace the catalog limit');
 
     // invalid is unreachable through the editor: finite(min: EPSILON) rejects zero and negative
     // limits, so a project import is the only way in. It must never paint as healthy.
@@ -1374,7 +1477,8 @@ async function verifyNumberMotion() {
 async function verifyTourAnchoring() {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } });
   await page.addInitScript(() => localStorage.clear());
-  page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
+  page.on('pageerror', (error) => failures.push(`pageerror: ${error.stack || error.message}`));
+  await page.addInitScript(() => window.addEventListener('error', (event) => console.error(`failure-location ${event.filename}:${event.lineno}:${event.colno}`)));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   await page.locator('#guide-button').click();
   await page.waitForSelector('.tour');
@@ -1409,17 +1513,52 @@ async function verifyTourAnchoring() {
   await page.close();
 }
 
+async function verifyVirtualFailureList() {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  await page.addInitScript(() => localStorage.clear());
+  page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
+  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+  const project = await page.evaluate(() => {
+    const topology = {
+      devices: Array.from({ length: 24 }, (_, index) => ({ id: `n-${index}`, name: `NODE ${index}`, kind: 'hub', zone: 'TEST', position: { x: index * 12, y: 120 }, limits: { forwarding_bps: 1e12 } })),
+      links: [],
+      demands: [],
+    };
+    return JSON.stringify({ schemaVersion: 3, product: 'Rack Mesh', topology, scenario: { scale: 1, disabledDevices: [], disabledLinks: [], disabledDomains: [], viewMode: 'edit', selectedId: 'n-0' } });
+  });
+  const dialog = page.waitForEvent('dialog');
+  await page.setInputFiles('#project-file-input', { name: 'large-project.json', mimeType: 'application/json', buffer: Buffer.from(project) });
+  (await dialog).accept();
+  await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 24);
+  await page.locator('#tab-failure').click();
+  await page.waitForSelector('[data-failure-virtual]', { timeout: 25000 });
+  const virtual = page.locator('[data-failure-virtual="device-priority"]');
+  assert.equal(await virtual.getAttribute('role'), 'list', '대량 단일 장애 목록은 접근 가능한 목록이어야 합니다');
+  assert.equal(await page.locator('[data-failure-type="device"]').count() < 40, true, '보이는 범위 밖 장비 행은 DOM 에 남기지 않습니다');
+  const first = page.locator('[data-failure-virtual="device-priority"] [data-failure-index="0"] button');
+  await first.focus();
+  await page.keyboard.press('End');
+  await page.waitForSelector('[data-failure-virtual="device-priority"] [data-failure-index="23"]');
+  assert.equal(await page.locator(':focus').evaluate((node) => node.closest('[data-failure-index]')?.dataset.failureIndex), '23', 'End 키는 가상 목록의 마지막 장비로 이동해야 합니다');
+  assert.equal(await page.locator(':focus').evaluate((node) => node.closest('[data-failure-index]')?.getAttribute('aria-setsize')), '24', '키보드 탐색은 전체 후보 수를 유지해야 합니다');
+  await page.close();
+}
+
 try {
-  await verify({ width: 1440, height: 1000 }, '.impeccable/review/desktop.png', true);
-  await verify({ width: 390, height: 844 }, '.impeccable/review/mobile.png');
-  await verifyCanvasEditing();
-  await verifyBackendPool();
-  await verifyNumberMotion();
-  await verifyTourAnchoring();
-  const reducedPage = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
-  await reducedPage.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
-  assert.equal(await reducedPage.locator('.packet-dot').first().evaluate((node) => getComputedStyle(node).display), 'none');
-  await reducedPage.close();
+  if (process.env.ONLY_VIRTUAL_FAILURE_LIST) await verifyVirtualFailureList();
+  else {
+    await verify({ width: 1440, height: 1000 }, '.impeccable/review/desktop.png', true);
+    await verify({ width: 390, height: 844 }, '.impeccable/review/mobile.png');
+    await verifyCanvasEditing();
+    await verifyBackendPool();
+    await verifyNumberMotion();
+    await verifyTourAnchoring();
+    await verifyVirtualFailureList();
+    const reducedPage = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+    await reducedPage.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+    assert.equal(await reducedPage.locator('.packet-dot').first().evaluate((node) => getComputedStyle(node).display), 'none');
+    await reducedPage.close();
+  }
   assert.deepEqual(failures, []);
   console.log('Browser smoke passed: interaction, backend pool, number motion, overflow, console, desktop and mobile captures');
 } finally {

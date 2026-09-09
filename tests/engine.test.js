@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cloneTopology } from '../public/data.js';
-import { calculateScenario, compareScenarios, deliveryRoleOf, sweepSingleFaults } from '../public/engine.js';
+import { calculateScenario, calculateSurvivalMultiplier, compareScenarios, createExport, createFailureDomainSweepTask, createSingleFaultSweepTask, createSurvivalMultiplierTask, deliveryRoleOf, sweepFailureDomains, sweepSingleFaults } from '../public/engine.js';
 import { addDemand, addDevice, addLink, createEmptyTopology } from '../public/editor.js';
 import { buildTemplate, templates } from '../public/templates.js';
 
@@ -480,6 +480,86 @@ test('the single-fault sweep separates a severed design from an overloaded one',
   assert.equal(findOne(single, 'lb').endpoint, false);
 });
 
+test('incremental sweep tasks preserve the completed synchronous results', () => {
+  const topology = cloneTopology();
+  const singleTask = createSingleFaultSweepTask(topology);
+  assert.equal(singleTask.done, false);
+  while (!singleTask.done) singleTask.step(1);
+  const sweep = singleTask.result;
+  assert.deepEqual(sweep, sweepSingleFaults(topology));
+
+  const survivalTask = createSurvivalMultiplierTask(topology, { sweep });
+  while (!survivalTask.done) survivalTask.step(1);
+  assert.deepEqual(survivalTask.result, calculateSurvivalMultiplier(topology, { sweep }));
+
+  const domainTask = createFailureDomainSweepTask(topology, { sweep });
+  while (!domainTask.done) domainTask.step(1);
+  assert.deepEqual(domainTask.result, sweepFailureDomains(topology, { sweep }));
+});
+
+test('calculates survival by multiplier, keeps severance distinct, and excludes endpoints', () => {
+  const topology = cloneTopology();
+  const survival = calculateSurvivalMultiplier(topology);
+  assert.equal(survival.multiplier, 0);
+  assert.deepEqual(survival.worstFault, { id: 'leaf-a', type: 'device', verdict: 'severs' });
+  assert.equal(survival.status, 'severed');
+  assert.ok(survival.endpointIds.includes('api-a'));
+  assert.equal(survival.candidates, sweepSingleFaults(topology).resources.filter(({ type, id }) => !(type === 'device' && survival.endpointIds.includes(id))).length);
+
+  const noService = cloneTopology();
+  delete noService.services;
+  const endpointOnly = calculateSurvivalMultiplier(noService);
+  assert.notEqual(endpointOnly.worstFault?.id, 'api-a');
+});
+
+test('uses the failed scenario growth ladder and deterministic id tie-break for survival', () => {
+  const topology = buildTemplate('dual-stack');
+  const survival = calculateSurvivalMultiplier(topology);
+  const scenario = calculateScenario(topology, { disabledDevices: [survival.worstFault.id] });
+  const expected = scenario.summary.growthLadder.rungs[0].breachScale;
+  assert.equal(survival.multiplier, expected);
+  assert.equal(JSON.stringify(calculateSurvivalMultiplier(topology)), JSON.stringify(survival));
+});
+
+test('reports declared service acceptance for the worst single fault', () => {
+  const topology = cloneTopology();
+  const survival = calculateSurvivalMultiplier(topology);
+  const service = survival.services.find(({ id }) => id === 'public-api-service');
+  assert.equal(service.status, 'fail');
+  assert.equal(service.requiredDeliveryRatio, 0.99);
+  assert.ok(Math.min(service.deliveredRatio, service.admissionRatio) < service.requiredDeliveryRatio);
+  assert.equal(service.id, 'public-api-service');
+});
+
+test('sweeps failure domains and removes duplicate or contained N-2 candidates', () => {
+  const topology = cloneTopology();
+  topology.failureDomains = [
+    { id: 'a', name: 'A', kind: 'power', deviceIds: ['fw-a'] },
+    { id: 'b', name: 'B', kind: 'space', deviceIds: ['fw-b'] },
+    { id: 'ab', name: 'AB', kind: 'firmware', deviceIds: ['fw-a', 'fw-b'] },
+  ];
+  const sweep = sweepFailureDomains(topology);
+  assert.deepEqual(sweep.singles.map(({ id }) => id), ['a', 'ab', 'b']);
+  assert.deepEqual(sweep.pairs.map(({ id }) => id), ['a+b']);
+  const expected = calculateScenario(topology, { disabledDomains: ['a', 'b'] });
+  assert.equal(sweep.pairs[0].verdict, expected.summary.unreachableCount ? 'severs' : expected.summary.overloadedCount ? 'overloads' : 'absorbs');
+});
+
+test('marks a shared domain that severs only as a group as redundant in name only', () => {
+  const topology = cloneTopology();
+  topology.failureDomains = [{ id: 'edge-feed', name: 'EDGE FEED', kind: 'power', deviceIds: ['edge-a', 'edge-b'] }];
+  const sweep = sweepFailureDomains(topology);
+  assert.deepEqual(sweep.redundancyInvalid.map(({ id, memberIds }) => [id, memberIds]), [['edge-feed', ['edge-a', 'edge-b']]]);
+  const individual = sweepSingleFaults(topology);
+  for (const id of ['edge-a', 'edge-b']) assert.ok(['absorbs', 'overloads'].includes(individual.resources.find((resource) => resource.id === id).verdict));
+});
+
+test('counts an injected failure domain as an active fault', () => {
+  const topology = cloneTopology();
+  const scenario = calculateScenario(topology, { disabledDomains: ['rack-04'] });
+  assert.equal(scenario.summary.activeFaults, 1);
+});
+
 test('the sweep ignores injected faults and stays deterministic', () => {
   const topology = cloneTopology();
   const clean = sweepSingleFaults(topology);
@@ -487,6 +567,21 @@ test('the sweep ignores injected faults and stays deterministic', () => {
   const withFault = sweepSingleFaults(topology, { disabledDevices: ['fw-a'], disabledLinks: ['leaf-a-api-a'] });
   assert.deepEqual(withFault, clean);
   assert.equal(JSON.stringify(sweepSingleFaults(topology)), JSON.stringify(clean));
+});
+
+test('exports the complete single-fault sweep and its single-point list', () => {
+  const topology = cloneTopology();
+  const scenario = calculateScenario(topology);
+  const sweep = sweepSingleFaults(topology);
+  const exported = createExport(topology, scenario, scenario, { sweep });
+  assert.deepEqual(exported.failureSweep.singlePointIds, sweep.resources
+    .filter(({ verdict, endpoint }) => verdict === 'severs' && !endpoint).map(({ id }) => id));
+  assert.deepEqual(exported.failureSweep.summary, {
+    severs: sweep.severs, overloads: sweep.overloads, absorbs: sweep.absorbs, bounded: sweep.bounded, endpoints: sweep.endpoints,
+  });
+  assert.deepEqual(exported.failureSweep.resources, sweep.resources.map(({ id, type, verdict, bounded, endpoint, minDeliveredRatio, worstResourceId, worstAxis, worstUtilization }) => ({
+    id, type, verdict, bounded, endpoint, minDeliveredRatio, worstResourceId, worstAxis, worstUtilization,
+  })));
 });
 
 test('the sweep counts demand endpoints apart and never calls an unknown design safe', () => {

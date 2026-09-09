@@ -318,7 +318,7 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
   const groups = result ? groupBoxes(result.devices.filter(({ position }) => position)) : [];
   const extent = [...nodes.flatMap((n) => [{ x: coordinate(n.x), y: coordinate(n.y) }, { x: coordinate(n.x + n.width), y: coordinate(n.y + n.height) }]),
     ...groups.flatMap((g) => [{ x: g.x, y: g.y }, { x: g.x + g.width, y: g.y + g.height }]), ...routes.flatMap((r) => r.points)];
-  const headroom = result ? 74 : 24;
+  const headroom = result ? 88 : 24;
   const left = Math.min(...extent.map((p) => p.x)) - 24;
   const top = Math.min(...extent.map((p) => p.y)) - headroom;
   const width = Math.max(...extent.map((p) => p.x)) - left + 24;
@@ -409,20 +409,39 @@ function stampMarkup(topology, result, options, left, top, width, height) {
     ? `${binding?.name || summary.bindingResourceId} · ${axisCatalog[summary.bindingAxis]?.label || summary.bindingAxis} ${formatNodePercent(summary.minHeadroom == null ? null : 1 - summary.minHeadroom)}`
     : '한계를 아는 축이 없습니다';
   const faults = [...(result.faults?.devices || []), ...(result.faults?.links || [])];
+  const singlePoints = (options.sweep?.resources || []).filter(({ verdict, endpoint }) => verdict === 'severs' && !endpoint);
+  const singlePointNames = singlePoints.slice(0, 3).map(({ id }) => topology.devices.find((device) => device.id === id)?.name || topology.links.find((link) => link.id === id)?.name || id);
+  const singlePointSummary = singlePoints.length
+    ? `단일 장애점 ${singlePoints.length}개 · ${singlePointNames.join(', ')}${singlePoints.length > singlePointNames.length ? ` 외 ${singlePoints.length - singlePointNames.length}개` : ''}`
+    : '단일 장애점 없음';
   // 평가 상태를 빼면 미확인이 있는 결과가 통과한 것처럼 읽힌다.
   const verdict = { pass: '통과', fail: '실패', unknown: '통과 보류', invalid: '입력 오류', 'not-ready': '수요 없음' }[summary.evaluationStatus] || summary.evaluationStatus;
   const bounded = result.demands.some(({ deliveredRatioBound }) => deliveredRatioBound && deliveredRatioBound !== 'exact');
   // 카탈로그 판을 하나로 부를 수 없으면 지어내지 않는다. 장비별 revision 을 모아 적는다.
   const revisions = [...new Set(topology.devices.map((d) => d.spec?.revision).filter(Boolean))].sort();
-  const sources = [...new Set(topology.devices.map((device) => device.source?.type).filter(Boolean))];
-  const conditions = [...new Set(topology.devices.map((device) => device.source?.condition).filter(Boolean))];
+  const sourceLabels = { datasheet: '데이터시트', third_party_test: '제3자 시험', user_measured: '실측', estimate: '추정' };
+  const sourceCounts = new Map();
+  const conditionSummaries = [];
+  for (const device of topology.devices) {
+    const records = device.spec?.records || device.metadata?.records || [];
+    for (const record of records.filter(({ value }) => value != null)) {
+      const type = record.source?.type || device.source?.type || 'estimate';
+      sourceCounts.set(type, (sourceCounts.get(type) || 0) + 1);
+      if (record.conditions && Object.keys(record.conditions).length) {
+        const conditions = Object.entries(record.conditions).map(([key, value]) => `${key}=${Array.isArray(value) ? value.join('+') : value}`).join(', ');
+        conditionSummaries.push(`${device.name || device.id}: ${conditions}`);
+      }
+    }
+  }
+  const evidenceSummary = [...sourceCounts].map(([type, count]) => `${sourceLabels[type] || type} ${count}축`).join(' / ');
+  const conditionSummary = [...new Set(conditionSummaries)].slice(0, 3).join(' / ');
   const line = [
     `배율 ${Number(result.scale ?? 1).toFixed(2)}배`,
     faults.length ? `장애 ${faults.join(', ')}` : '무장애',
     `엔진 ${result.engineVersion}`,
     topology.synthetic ? '합성 데모' : '사용자 설계',
-    `출처 ${[...new Set(topology.devices.map((d) => d.source?.label || d.source?.type).filter(Boolean))].join(' / ') || sources.join(' / ') || 'estimate'}`,
-    `조건 ${conditions.join(' / ') || topology.workloadScope?.condition || topology.template?.name || '기본 워크로드'}`,
+    `출처 ${evidenceSummary || [...new Set(topology.devices.map((d) => d.source?.label || d.source?.type).filter(Boolean))].join(' / ') || '추정'}`,
+    `조건 ${conditionSummary || topology.workloadScope?.condition || topology.template?.name || '기본 워크로드'}`,
     `${verdict}${summary.unknownCount ? ` · 미확인 제약 ${summary.unknownCount}개` : ''}`,
     bounded ? '전달률 상한' : '',
     revisions.length ? `카탈로그 ${revisions.join(' / ')}` : '카탈로그 —',
@@ -430,7 +449,8 @@ function stampMarkup(topology, result, options, left, top, width, height) {
   ].filter(Boolean).join(' · ');
   return text(left + 12, top + 22, headline, { size: 15, weight: 700, fill: INK.text, family: 'system-ui, sans-serif' })
     + text(left + 12, top + 40, line, { size: 9, fill: INK.muted })
-    + text(left + 12, top + 54, '축과 한계값의 출처는 프로젝트 JSON에 있습니다. 실제 설계에는 이 환경에서 잰 값으로 다시 확인하세요.', { size: 8, fill: INK.muted });
+    + text(left + 12, top + 54, singlePointSummary, { size: 9, fill: INK.muted })
+    + text(left + 12, top + 68, '축과 한계값의 출처는 프로젝트 JSON에 있습니다. 실제 설계에는 이 환경에서 잰 값으로 다시 확인하세요.', { size: 8, fill: INK.muted });
 }
 
 /** Uncompressed mxGraph import only; imported figures are deliberately unmapped. */

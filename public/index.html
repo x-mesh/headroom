@@ -53,6 +53,7 @@
               </div>
               <div class="top-menu-section"><span>가져오기</span>
                 <button type="button" role="menuitem" data-editor-action="import-device"><strong>장비 데이터</strong><small>Rack Mesh 또는 NetBox 장비 정보를 읽습니다. · JSON</small></button>
+                <button type="button" role="menuitem" data-editor-action="import-measured-limits"><strong>실측 한계</strong><small>포화 증거가 있는 한계만 적용합니다. · JSON</small></button>
               </div>
             </div>
           </div>
@@ -107,12 +108,12 @@
       </section>
 
       <section class="summary-strip" aria-label="시나리오 요약">
-        <div class="summary-metric summary-metric-growth summary-metric-primary"><span>여유 배수</span><strong id="summary-growth">···</strong><small id="summary-growth-binding">다음 병목 계산 중</small></div>
+        <div class="summary-metric summary-metric-growth summary-metric-primary"><span>여유 배수</span><strong id="summary-growth">···</strong><small id="summary-growth-binding">다음 병목 계산 중 · 생존 배수 계산 중</small></div>
         <div class="summary-metric"><span>최소 headroom</span><strong id="summary-headroom">···</strong><small id="summary-binding">계산 중</small><svg class="metric-sparkline" data-series="headroom" viewBox="0 0 120 28" aria-label="최근 headroom 재계산 추이"><path></path><circle r="2.5"></circle></svg></div>
         <div class="summary-metric"><span>과부하 자원</span><strong id="summary-overloaded">···</strong><small id="summary-warning">계산 중</small><svg class="metric-sparkline" data-series="overloaded" viewBox="0 0 120 28" aria-label="최근 최대 사용률 추이"><path></path><circle r="2.5"></circle></svg></div>
         <div class="summary-metric"><span>무경로 미전달</span><strong id="summary-unreachable">···</strong><small id="summary-unreachable-load">계산 중</small><svg class="metric-sparkline" data-series="unreachable" viewBox="0 0 120 28" aria-label="최근 전달률 추이"><path></path><circle r="2.5"></circle></svg></div>
         <div class="summary-metric"><span>용량 드롭</span><strong id="summary-dropped-load">···</strong><small>병목에서 버린 전달량</small></div>
-        <div class="summary-metric"><span>활성 장애</span><strong id="summary-faults">···</strong><small id="summary-delta">기준선 계산 중</small><svg class="metric-sparkline" data-series="faults" viewBox="0 0 120 28" aria-label="최근 전체 트래픽 추이"><path></path><circle r="2.5"></circle></svg></div>
+        <button class="summary-metric summary-metric-survival" id="summary-survival" type="button" data-summary-failure><span id="summary-fault-label">생존성</span><strong id="summary-faults">···</strong><small id="summary-delta">기준선 계산 중</small><svg class="metric-sparkline" data-series="faults" viewBox="0 0 120 28" aria-label="최근 전체 트래픽 추이"><path></path><circle r="2.5"></circle></svg></button>
       </section>
       <button class="baseline-reset" id="baseline-reset" type="button" hidden>기준 상태로 돌아가기</button>
 
@@ -131,6 +132,7 @@
         <div class="editor-mode" id="editor-mode" aria-live="polite"><span></span>SELECT MODE</div>
         <input class="visually-hidden" id="project-file-input" type="file" accept="application/json,.json">
         <input class="visually-hidden" id="device-file-input" type="file" accept="application/json,.json">
+        <input class="visually-hidden" id="measured-limits-file-input" type="file" accept="application/json,.json">
         <input class="visually-hidden" id="drawio-file-input" type="file" accept="application/xml,text/xml,.drawio,.xml">
         <section class="editor-panel" id="editor-panel" aria-labelledby="editor-panel-heading" hidden>
           <header><div><span class="section-code">EDITOR TASK</span><h2 id="editor-panel-heading">설계 편집</h2></div><button type="button" id="editor-close" aria-label="편집 패널 닫기">닫기</button></header>
@@ -140,8 +142,7 @@
 
       <section class="mobile-fault-tray" aria-label="빠른 장애 주입">
         <div><span class="section-code">QUICK FAILURE</span><strong>설계를 보며 장애 주입</strong></div>
-        <button type="button" data-quick-failure="fw-a" aria-pressed="false">FW A <span>UP</span></button>
-        <button type="button" data-quick-failure="fw-b" aria-pressed="false">FW B <span>UP</span></button>
+        <button type="button" data-quick-failure aria-pressed="false"><span>UP</span></button>
         <a href="#failure-heading">전체 목록</a>
       </section>
 
@@ -231,6 +232,7 @@
     <div class="context-menu" id="context-menu" role="menu" hidden></div>
     <div class="tour-spot" id="tour-spot" aria-hidden="true" hidden></div>
     <aside class="tour" id="tour" role="dialog" aria-modal="false" aria-labelledby="tour-title" hidden></aside>
+    <div class="visually-hidden" id="failure-change-live" role="status" aria-live="polite" aria-atomic="true"></div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <div id="icon-sprite" aria-hidden="true"></div>
     <script type="module" src="./app.js"></script>
