@@ -46,6 +46,12 @@ const arista7050x4Source = {
   note: 'Throughput (FDX) is printed as "12.8 (25.6) Tbps"; footnote 3 reads "Performance figures based on average packet size of 289 B".',
 };
 
+const arista7050x4PhysicalSource = {
+  label: 'Arista 7050X4 Series 100/200/400G Data Center Switches Data Sheet',
+  locator: 'Technical Specifications, Model Comparison table, Typical/Max Power and Rack Units',
+  note: 'Typical power is measured at 25C ambient with 50% load on all ports and excludes transceivers.',
+};
+
 // 표제 숫자가 편도라는 것은 포트 수로 확인된다: 32x400G = 12.8 Tbps, 48x25G + 4x400G = 2.8 Tbps.
 // 괄호 안의 값이 양방향 합계다. 289 B 는 각주가 밝힌 성능 수치의 기준 패킷 크기이며, 5.3 Bpps x
 // (289+20) B x 8 = 13.1 Tbps 로 표제 처리량과 맞아떨어져 두 축이 같은 기준에서 나온 것을 보여 준다.
@@ -118,6 +124,7 @@ export const switchCatalog = Object.freeze([
     kind: 'switch',
     revision: 'catalog-2026-09-08',
     source: arista7050x4Source,
+    physical: { powerBasis: 'typical', typicalDrawWatts: 353, maximumDrawWatts: 880, uHeight: 1, source: arista7050x4PhysicalSource },
     profiles: [
       { id: 'spine-400g', label: '스파인 · 32x400G', note: `1RU 에 400G 32 포트. ${aristaNote}`, axisConditions: aristaConditions,
         limits: { forwarding_bps: 12.8e12, forwarding_pps: 5.3e9 } },
@@ -133,6 +140,7 @@ export const switchCatalog = Object.freeze([
     kind: 'switch',
     revision: 'catalog-2026-09-08',
     source: arista7050x4Source,
+    physical: { powerBasis: 'typical', typicalDrawWatts: 165, maximumDrawWatts: 520, uHeight: 1, source: arista7050x4PhysicalSource },
     profiles: [
       { id: 'leaf-100g', label: '리프 · 48x100G + 8x400G', note: `100G 서버를 받는 ToR 입니다. ${aristaNote}`, axisConditions: aristaConditions,
         limits: { forwarding_bps: 8e12, forwarding_pps: 2.7e9 } },
@@ -145,6 +153,7 @@ export const switchCatalog = Object.freeze([
     kind: 'switch',
     revision: 'catalog-2026-09-08',
     source: arista7050x4Source,
+    physical: { powerBasis: 'typical', typicalDrawWatts: 120, maximumDrawWatts: 223, uHeight: 1, source: arista7050x4PhysicalSource },
     profiles: [
       { id: 'leaf-25g', label: '리프 · 48x25G + 4x400G', note: `25G 서버를 받고 400G 로 스파인에 올리는 ToR 입니다. ${aristaNote}`, axisConditions: aristaConditions,
         limits: { forwarding_bps: 2.8e12, forwarding_pps: 2.7e9 } },

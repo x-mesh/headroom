@@ -10,6 +10,39 @@ const coordinate = (value) => {
 const fmt = (value) => String(Math.round(Number(value) * 1000) / 1000);
 const empty = () => ({ shapes: [], connectors: [], groups: [] });
 const draft = (topology) => { const next = clone(topology); next.diagram = { ...empty(), ...next.diagram }; return next; };
+
+function anonymizeExport(topology, result) {
+  const next = draft(topology);
+  const counts = new Map();
+  const aliases = new Map();
+  for (const device of next.devices) {
+    const role = String(device.kind || 'device').toUpperCase();
+    const index = (counts.get(role) || 0) + 1;
+    counts.set(role, index);
+    aliases.set(device.id, `${role} ${String(index).padStart(2, '0')}`);
+  }
+  const replace = (value) => {
+    let text = String(value ?? '');
+    for (const original of topology.devices) {
+      const alias = aliases.get(original.id);
+      for (const sensitive of [original.name, original.model].filter(Boolean)) text = text.split(sensitive).join(alias);
+    }
+    return text;
+  };
+  const sanitizeDevice = (device) => {
+    device.name = aliases.get(device.id) || device.name;
+    delete device.model;
+    if (device.source) delete device.source.locator;
+    for (const record of [...(device.spec?.records || []), ...(device.metadata?.records || [])]) if (record.source) delete record.source.locator;
+  };
+  for (const device of next.devices) sanitizeDevice(device);
+  for (const shape of next.diagram.shapes) shape.text = replace(shape.text);
+  for (const connector of next.diagram.connectors) connector.label = replace(connector.label);
+  for (const group of next.diagram.groups) group.name = replace(group.name);
+  const nextResult = result ? clone(result) : null;
+  for (const device of nextResult?.devices || []) sanitizeDevice(device);
+  return { topology: next, result: nextResult };
+}
 const allIds = (t) => new Set([...(t.devices || []), ...(t.links || []), ...(t.diagram?.shapes || []), ...(t.diagram?.connectors || []), ...(t.diagram?.groups || [])].map((item) => item.id));
 function fresh(ids, prefix) { let n = 1; while (ids.has(`${prefix}-${n}`)) n++; const id = `${prefix}-${n}`; ids.add(id); return id; }
 const COLOR_PATTERN = /^(?:none|#[0-9a-f]{3}(?:[0-9a-f]{3})?)$/i;
@@ -42,7 +75,22 @@ function shape(input) {
   if (result.verticalAlign != null && !['top', 'middle', 'bottom'].includes(result.verticalAlign)) throw new Error('세로 정렬이 잘못되었습니다.');
   if (result.fontWeight != null && !['normal', 'bold'].includes(result.fontWeight)) throw new Error('글자 굵기가 잘못되었습니다.');
   if (result.lineStyle != null && !['solid', 'dashed', 'dotted'].includes(result.lineStyle)) throw new Error('선 스타일이 잘못되었습니다.');
+  if (result.locked != null) result.locked = Boolean(result.locked);
   return result;
+}
+function lockedError() { throw new Error('잠긴 다이어그램 객체는 먼저 잠금을 해제해야 수정할 수 있습니다.'); }
+function lockedGroup(topology, id) { return topology.diagram?.groups?.find((group) => group.id === id)?.locked === true; }
+function lockedShape(topology, id) { return topology.diagram?.shapes?.find((item) => item.id === id)?.locked === true; }
+function lockedConnector(topology, id) { return topology.diagram?.connectors?.find((item) => item.id === id)?.locked === true; }
+function selectionHasLock(topology, selection) {
+  for (const item of selection) {
+    if (item.type === 'shape' && lockedShape(topology, item.id)) return true;
+    if (item.type === 'connector' && lockedConnector(topology, item.id)) return true;
+    if (item.type === 'group' && (lockedGroup(topology, item.id) || topology.diagram?.groups?.find((group) => group.id === item.id)?.memberIds.some((id) => lockedShape(topology, id)))) return true;
+    if ((item.type === 'device' || item.type === 'shape') && topology.diagram?.groups?.some((group) => group.locked && group.memberIds.includes(item.id))) return true;
+    if (item.type === 'shape' && topology.diagram?.connectors?.some((connector) => connector.locked && (connector.source === item.id || connector.target === item.id))) return true;
+  }
+  return false;
 }
 export function addShape(topology, kind, props = {}) {
   const next = draft(topology); const ids = allIds(next);
@@ -63,6 +111,7 @@ export function addConnector(topology, input) {
   if (input.dashed != null) connector.dashed = Boolean(input.dashed);
   if (input.startArrow != null) { if (!ARROW_TYPES.has(input.startArrow)) throw new Error('시작 화살표가 잘못되었습니다.'); connector.startArrow = input.startArrow; }
   if (input.endArrow != null) { if (!ARROW_TYPES.has(input.endArrow)) throw new Error('끝 화살표가 잘못되었습니다.'); connector.endArrow = input.endArrow; }
+  if (input.locked != null) connector.locked = Boolean(input.locked);
   next.diagram.connectors.push(connector);
   return next;
 }
@@ -70,6 +119,11 @@ export function updateConnector(topology, id, patch) {
   const next = draft(topology); const index = next.diagram.connectors.findIndex((item) => item.id === id);
   if (index < 0) throw new Error('연결선을 찾을 수 없습니다.');
   const current = next.diagram.connectors[index];
+  if (current.locked) {
+    if (patch.locked !== false) lockedError();
+    next.diagram.connectors[index] = { ...current, locked: false };
+    return next;
+  }
   const kind = patch.kind ?? current.kind ?? 'annotation';
   if (!['annotation', 'dependency'].includes(kind)) throw new Error('지원하지 않는 연결선입니다.');
   const updated = { ...current, ...patch, id, kind, source: current.source, target: current.target, label: String(patch.label ?? current.label ?? '').slice(0, 1000), waypoints: (patch.waypoints ?? current.waypoints ?? []).map(({ x, y }) => ({ x: coordinate(x), y: coordinate(y) })) };
@@ -78,19 +132,30 @@ export function updateConnector(topology, id, patch) {
   if (updated.startArrow != null && !ARROW_TYPES.has(updated.startArrow)) throw new Error('시작 화살표가 잘못되었습니다.');
   if (updated.endArrow != null && !ARROW_TYPES.has(updated.endArrow)) throw new Error('끝 화살표가 잘못되었습니다.');
   if (updated.dashed != null) updated.dashed = Boolean(updated.dashed);
+  if (updated.locked != null) updated.locked = Boolean(updated.locked);
   next.diagram.connectors[index] = updated; return next;
 }
 export function updateShape(topology, id, patch) {
   const next = draft(topology); const index = next.diagram.shapes.findIndex((s) => s.id === id);
   if (index < 0) throw new Error('도형을 찾을 수 없습니다.');
+  if (next.diagram.shapes[index].locked) {
+    if (patch.locked !== false) lockedError();
+    next.diagram.shapes[index] = { ...next.diagram.shapes[index], locked: false };
+    return next;
+  }
   next.diagram.shapes[index] = shape({ ...next.diagram.shapes[index], ...patch, id }); return next;
 }
 export function updateGroup(topology, id, patch) {
   const next = draft(topology); const index = next.diagram.groups.findIndex((group) => group.id === id);
   if (index < 0) throw new Error('그룹을 찾을 수 없습니다.');
+  if (next.diagram.groups[index].locked) {
+    if (patch.locked !== false) lockedError();
+    next.diagram.groups[index] = { ...next.diagram.groups[index], locked: false };
+    return next;
+  }
   const name = String(patch.name ?? next.diagram.groups[index].name ?? '').trim();
   if (!name || name.length > 80 || /[<>]/.test(name)) throw new Error('그룹 이름은 1에서 80자여야 합니다.');
-  next.diagram.groups[index] = { ...next.diagram.groups[index], name }; return next;
+  next.diagram.groups[index] = { ...next.diagram.groups[index], name, ...(patch.locked == null ? {} : { locked: Boolean(patch.locked) }) }; return next;
 }
 function expanded(topology, selection) {
   const selected = new Set(selection.filter((s) => s.type === 'device' || s.type === 'shape').map((s) => s.id));
@@ -109,6 +174,7 @@ function position(box, x, y) {
   else Object.assign(box.item, point);
 }
 export function moveSelection(topology, selection, dx, dy, { grid = 0 } = {}) {
+  if (selectionHasLock(topology, selection)) lockedError();
   const next = draft(topology); coordinate(dx); coordinate(dy);
   if (!Number.isFinite(grid) || grid < 0) throw new Error('격자 크기가 잘못되었습니다.');
   const snap = (n) => grid ? Math.round(n / grid) * grid : n;
@@ -125,6 +191,7 @@ export function moveSelection(topology, selection, dx, dy, { grid = 0 } = {}) {
   return next;
 }
 export function alignSelection(topology, selection, mode) {
+  if (selectionHasLock(topology, selection)) lockedError();
   const next = draft(topology); const items = boxes(next, selection); if (!items.length) return next;
   if (!['left', 'right', 'top', 'bottom', 'center', 'middle'].includes(mode)) throw new Error('정렬 방향이 잘못되었습니다.');
   const left = Math.min(...items.map((b) => b.x)), right = Math.max(...items.map((b) => b.x + b.width));
@@ -134,6 +201,7 @@ export function alignSelection(topology, selection, mode) {
 }
 export function distributeSelection(topology, selection, axis = 'x') {
   if (!['x', 'y'].includes(axis)) throw new Error('분배 축이 잘못되었습니다.');
+  if (selectionHasLock(topology, selection)) lockedError();
   const next = draft(topology); const size = axis === 'x' ? 'width' : 'height';
   const items = boxes(next, selection).sort((a, b) => a[axis] - b[axis]); if (items.length < 3) return next;
   const first = items[0], last = items.at(-1);
@@ -143,15 +211,18 @@ export function distributeSelection(topology, selection, axis = 'x') {
   return next;
 }
 export function groupSelection(topology, selection, name = '그룹') {
+  if (selectionHasLock(topology, selection)) lockedError();
   const next = draft(topology); const members = boxes(next, selection).map((b) => b.item.id); if (members.length < 2) return next;
   next.diagram.groups = next.diagram.groups.map((g) => ({ ...g, memberIds: g.memberIds.filter((id) => !members.includes(id)) })).filter((g) => g.memberIds.length);
   next.diagram.groups.push({ id: fresh(allIds(next), 'group'), name: String(name).slice(0, 200), memberIds: members }); return next;
 }
 export function ungroupSelection(topology, selection) {
+  if (selectionHasLock(topology, selection)) lockedError();
   const next = draft(topology); const ids = new Set(selection.map((s) => s.id));
   next.diagram.groups = next.diagram.groups.filter((g) => !ids.has(g.id) && !g.memberIds.some((id) => ids.has(id))); return next;
 }
 export function removeDiagramElements(topology, selection) {
+  if (selectionHasLock(topology, selection)) lockedError();
   const next = draft(topology); const ids = new Set(selection.filter((s) => s.type === 'shape').map((s) => s.id));
   const connectors = new Set(selection.filter((s) => s.type === 'connector').map((s) => s.id));
   next.diagram.shapes = next.diagram.shapes.filter((s) => !ids.has(s.id));
@@ -167,6 +238,7 @@ export function removeDiagramElements(topology, selection) {
  * 선언이라, 복제하면 사용자가 적지 않은 부하가 생긴다.
  */
 export function copySelection(topology, selection) {
+  if (selectionHasLock(topology, selection)) lockedError();
   const ids = expanded(topology, selection);
   const inside = (link) => ids.has(link.source) && ids.has(link.target);
   const touching = (link) => ids.has(link.source) !== ids.has(link.target);
@@ -284,7 +356,9 @@ function nodeMarkup(view, device) {
  * result 없이 부르면 도면만 나온다 — 숫자를 지어내지 않고 그 사실을 적는다.
  */
 export function exportDiagramSvg(topology, result = null, options = {}) {
-  const next = draft(topology);
+  const exportInput = options.anonymize ? anonymizeExport(topology, result) : { topology: draft(topology), result };
+  const next = exportInput.topology;
+  result = exportInput.result;
   const views = new Map();
   if (result) {
     const verdicts = new Map((options.sweep?.resources || []).map((item) => [item.id, item]));
@@ -414,6 +488,12 @@ function stampMarkup(topology, result, options, left, top, width, height) {
   const singlePointSummary = singlePoints.length
     ? `단일 장애점 ${singlePoints.length}개 · ${singlePointNames.join(', ')}${singlePoints.length > singlePointNames.length ? ` 외 ${singlePoints.length - singlePointNames.length}개` : ''}`
     : '단일 장애점 없음';
+  const survival = options.survivalMultiplier;
+  const survivalSummary = survival?.status === 'calculating' ? '생존 배수 계산 중'
+    : survival?.multiplier == null ? ''
+      : `생존 배수 ${survival.multiplier.toFixed(2)}×${survival.bounded ? ' 이하' : ''} · 최악 장애 ${survival.worstFault?.id || '없음'}${survival.unresolvedCount ? ` · 미확인 ${survival.unresolvedCount}개` : ''}`;
+  const domainSweep = options.domainSweep;
+  const domainSummary = domainSweep ? `도메인 N-1 ${domainSweep.singles.length}개 · N-2 ${domainSweep.pairs.length}개 · 이중화 무효 ${domainSweep.redundancyInvalid.length}개` : '';
   // 평가 상태를 빼면 미확인이 있는 결과가 통과한 것처럼 읽힌다.
   const verdict = { pass: '통과', fail: '실패', unknown: '통과 보류', invalid: '입력 오류', 'not-ready': '수요 없음' }[summary.evaluationStatus] || summary.evaluationStatus;
   const bounded = result.demands.some(({ deliveredRatioBound }) => deliveredRatioBound && deliveredRatioBound !== 'exact');
@@ -445,12 +525,14 @@ function stampMarkup(topology, result, options, left, top, width, height) {
     `${verdict}${summary.unknownCount ? ` · 미확인 제약 ${summary.unknownCount}개` : ''}`,
     bounded ? '전달률 상한' : '',
     revisions.length ? `카탈로그 ${revisions.join(' / ')}` : '카탈로그 —',
+    topology.observedLoad?.asOf ? `관측 부하 ${topology.observedLoad.aggregate.toUpperCase()} ${topology.observedLoad.asOf}` : '',
     options.exportedAt ? `내보냄 ${options.exportedAt}` : '',
   ].filter(Boolean).join(' · ');
   return text(left + 12, top + 22, headline, { size: 15, weight: 700, fill: INK.text, family: 'system-ui, sans-serif' })
     + text(left + 12, top + 40, line, { size: 9, fill: INK.muted })
     + text(left + 12, top + 54, singlePointSummary, { size: 9, fill: INK.muted })
-    + text(left + 12, top + 68, '축과 한계값의 출처는 프로젝트 JSON에 있습니다. 실제 설계에는 이 환경에서 잰 값으로 다시 확인하세요.', { size: 8, fill: INK.muted });
+    + text(left + 12, top + 68, [survivalSummary, domainSummary].filter(Boolean).join(' · '), { size: 8, fill: INK.muted })
+    + text(left + 12, top + 80, '축과 한계값의 출처는 프로젝트 JSON에 있습니다. 실제 설계에는 이 환경에서 잰 값으로 다시 확인하세요.', { size: 8, fill: INK.muted });
 }
 
 /** Uncompressed mxGraph import only; imported figures are deliberately unmapped. */

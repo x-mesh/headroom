@@ -40,7 +40,7 @@ test('accepts a version 1 file and says what changed meaning', () => {
 test('v3 preserves diagram, baseline, scenarios and failure domains across save and reopen', () => {
   const topology = cloneTopology();
   topology.diagram = { shapes: [{ id: 'note-1', kind: 'note', text: '설계 전제', x: -20, y: 3, width: 160, height: 80, groupId: 'group-1' }], connectors: [{ id: 'annotation-1', source: 'note-1', target: topology.devices[0].id, kind: 'annotation', waypoints: [{ x: 10, y: 20 }] }], groups: [{ id: 'group-1', name: '설명', memberIds: ['note-1'] }] };
-  topology.failureDomains = [{ id: 'rack-a', deviceIds: [topology.devices[0].id], linkIds: [] }];
+  topology.failureDomains = [{ id: 'rack-a', kind: 'power', deviceIds: [topology.devices[0].id], linkIds: [] }];
   topology.template = { id: 'capacity-lab', learning: ['장애 후 여유 확인'] };
   const scenario = { disabledDomains: ['rack-a'], viewMode: 'verify', baseline: { topology: structuredClone(topology), scenario: { scale: 0.5 } }, namedScenarios: [{ id: 'peak', name: '최대 부하', scenario: { scale: 2 } }] };
   const restored = parseProject(serializeProject(topology, scenario));
@@ -49,6 +49,36 @@ test('v3 preserves diagram, baseline, scenarios and failure domains across save 
   assert.equal(restored.scenario.baseline.scenario.scale, 0.5);
   assert.equal(restored.scenario.namedScenarios[0].scenario.scale, 2);
   assert.equal(parseProject({ ...createProject(cloneTopology()), schemaVersion: 2 }).notices[0].code, 'evidence-unverified');
+});
+
+test('preserves a Zabbix observed-load source and unmapped keys across save and reopen', () => {
+  const topology = cloneTopology();
+  topology.observedLoad = { asOf: '2026-09-09T03:00:00Z', aggregate: 'p95', fingerprint: { deviceIds: [], linkIds: [] }, devices: {}, links: {}, source: 'zabbix', unmapped: [{ host: 'fw-a.prod', itemKey: 'fortigate.cpu' }] };
+  const restored = parseProject(serializeProject(topology));
+  assert.deepEqual(restored.topology.observedLoad, topology.observedLoad);
+});
+
+test('preserves valid catalog physical data and rejects unsafe physical values', () => {
+  const topology = cloneTopology();
+  topology.devices[0].spec = { catalogId: 'fixture', profileId: 'default', limits: {}, physical: { powerBasis: 'typical', typicalDrawWatts: 123, uHeight: 1, source: { label: 'Fixture sheet', locator: 'Power table' } } };
+  assert.deepEqual(createProject(topology).topology.devices[0].spec.physical, topology.devices[0].spec.physical);
+  for (const physical of [{ typicalDrawWatts: -1 }, { powerBasis: 'estimated' }, { uHeight: Infinity }, { source: { label: '<script>', locator: 'Power table' } }]) {
+    const copy = structuredClone(topology); copy.devices[0].spec.physical = physical;
+    assert.throws(() => createProject(copy), /physical spec/);
+  }
+});
+
+test('preserves a failure domain kind without making it a calculation input', () => {
+  const topology = cloneTopology();
+  const baseline = calculateScenario(topology);
+  topology.failureDomains[0].kind = 'firmware';
+  assert.deepEqual(calculateScenario(topology), baseline);
+  assert.equal(createProject(topology).topology.failureDomains[0].kind, 'firmware');
+  const legacy = cloneTopology();
+  delete legacy.failureDomains[0].kind;
+  assert.equal(createProject(legacy).topology.failureDomains[0].kind, 'other');
+  topology.failureDomains[0].kind = 'dns';
+  assert.throws(() => createProject(topology), /Failure domain kind/);
 });
 
 test('rejects unsafe or dangling diagram elements and malformed bounds', () => {

@@ -82,6 +82,8 @@ export const firewallCatalog = Object.freeze([
       retrievedAt: '2026-09-06',
       note: fortinetFootnotes.upTo,
     },
+    physical: { powerBasis: 'typical', typicalDrawWatts: 35.1, maximumDrawWatts: 38.7, uHeight: 1,
+      source: { label: 'FortiGate 100F 시리즈 데이터시트', locator: 'Dimensions and Power / Power Consumption (Average / Maximum)' } },
     profiles: [
       { id: 'fw-1518', label: '방화벽만 · 1518B',
         note: 'IPv4 방화벽 처리량 20/18/10 Gbps (1518/512/64바이트, UDP) 중 1518바이트 값입니다.',
@@ -109,6 +111,8 @@ export const firewallCatalog = Object.freeze([
       retrievedAt: '2026-09-06',
       note: fortinetFootnotes.upTo,
     },
+    physical: { powerBasis: 'typical', typicalDrawWatts: 210, maximumDrawWatts: 408, uHeight: 2,
+      source: { label: 'FortiGate 1000F Series Data Sheet', locator: 'Dimensions and Power / Power Consumption (Average / Maximum)' } },
     profiles: [
       { id: 'fw-1518', label: '방화벽만 · 1518B',
         note: 'IPv4 Firewall Throughput 198 / 196 / 134 Gbps (1518 / 512 / 64 byte, UDP) 중 1518바이트 값입니다.',
@@ -136,6 +140,8 @@ export const firewallCatalog = Object.freeze([
       retrievedAt: '2026-09-06',
       note: fortinetFootnotes.upTo,
     },
+    physical: { powerBasis: 'typical', typicalDrawWatts: 410.9, maximumDrawWatts: 459.1, uHeight: 2,
+      source: { label: 'FortiGate 1800F Series Data Sheet', locator: 'Dimensions and Power / Power Consumption (Average / Maximum)' } },
     profiles: [
       { id: 'fw-1518', label: '방화벽만 · 1518B',
         note: 'IPv4 Firewall Throughput 198 / 197 / 140 Gbps (1518 / 512 / 64 byte, UDP) 중 1518바이트 값입니다.',
@@ -167,6 +173,8 @@ export const firewallCatalog = Object.freeze([
       retrievedAt: '2026-09-06',
       note: 'Results were measured on PAN-OS 12.1.',
     },
+    physical: { powerBasis: 'typical', typicalDrawWatts: 133, maximumDrawWatts: 190, uHeight: 1,
+      source: { label: 'PA-3400 Series Datasheet', locator: 'Power Supply (Avg/Max Power Consumption) and Rack Mount Dimensions' } },
     profiles: [
       { id: 'firewall-appmix', label: '방화벽 · App-ID 켬',
         note: '처리량은 App-ID 와 로깅을 켠 appmix 트랜잭션 기준입니다. 이 표의 축은 조건이 서로 다릅니다 — 신규 세션은 application override 상태의 1바이트 HTTP, 동시 세션은 HTTP 트랜잭션으로 잽니다. 포티넷의 "방화벽만" 값과 나란히 두면 안 됩니다.',
@@ -189,6 +197,8 @@ export const firewallCatalog = Object.freeze([
       retrievedAt: '2026-09-06',
       note: 'Results were measured on PAN-OS 12.1.',
     },
+    physical: { powerBasis: 'typical', typicalDrawWatts: 133, maximumDrawWatts: 190, uHeight: 1,
+      source: { label: 'PA-3400 Series Datasheet', locator: 'Power Supply (Avg/Max Power Consumption) and Rack Mount Dimensions' } },
     profiles: [
       { id: 'firewall-appmix', label: '방화벽 · App-ID 켬',
         note: '처리량은 App-ID 와 로깅을 켠 appmix 트랜잭션 기준입니다. 신규 세션은 application override 상태의 1바이트 HTTP 로 잰 값이라 조건이 다릅니다.',
@@ -211,6 +221,10 @@ export const firewallCatalog = Object.freeze([
       retrievedAt: '2026-09-06',
       note: 'Performance will vary depending on features activated, and network traffic protocol mix, and packet size characteristics.',
     },
+    // Cisco 공개 표는 1RU와 400W 전원공급기 구성만 밝힌다. 전원공급기 정격은 실제
+    // 소비전력이 아니므로 전력값은 넣지 않고, 확인된 U 소비만 랙 계산에 사용한다.
+    physical: { uHeight: 1,
+      source: { label: 'Cisco Secure Firewall 3100 Series Data Sheet', locator: 'Hardware specifications / Form factor (rack units)' } },
     profiles: [
       { id: 'ftd-avc', label: 'FTD · AVC 켬',
         note: '1024바이트 기준입니다. 같은 하드웨어라도 운영 소프트웨어가 성능을 바꿉니다 — 아래 ASA 프로필과 견주어 보세요.',
@@ -236,6 +250,8 @@ export const firewallCatalog = Object.freeze([
       retrievedAt: '2026-09-06',
       note: 'Performance will vary depending on features activated, and network traffic protocol mix, and packet size characteristics.',
     },
+    physical: { uHeight: 1,
+      source: { label: 'Cisco Secure Firewall 3100 Series Data Sheet', locator: 'Hardware specifications / Form factor (rack units)' } },
     profiles: [
       { id: 'ftd-avc', label: 'FTD · AVC 켬',
         note: '1024바이트 기준입니다. 아래 ASA 프로필과 신규 연결이 3.7배 차이 납니다.',

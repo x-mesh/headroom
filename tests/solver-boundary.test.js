@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateScenario, createExport, findShortestPaths, sweepSingleFaults } from '../public/engine.js';
-import { addDevice, addLink, removeDevice, removeLink, updateDemand, createEmptyTopology } from '../public/editor.js';
-import { normalizeEvidence } from '../public/evidence.js';
+import { addDevice, addLink, applySpec, removeDevice, removeLink, updateDemand, createEmptyTopology } from '../public/editor.js';
+import { buildSpec, normalizeEvidence } from '../public/evidence.js';
+import { cloneTopology } from '../public/data.js';
+import { catalogEntry } from '../public/devices/catalog.js';
 
 function network() {
   return {
@@ -122,6 +124,26 @@ test('racks report physical totals and never combine different power bases', () 
   rack = calculateScenario(topology).racks[0];
   assert.equal(rack.powerWatts, null);
   assert.equal(rack.status, 'unknown');
+});
+
+test('a catalog replacement uses its own rack power and U, or leaves missing physical data unknown', () => {
+  const topology = cloneTopology();
+  const baseline = calculateScenario(topology).racks.find(({ id }) => id === 'security-budget');
+  assert.deepEqual([baseline.powerWatts, baseline.usedU, baseline.status], [360, 2, 'pass']);
+
+  const fortiGate = catalogEntry('fortinet-fortigate-1000f');
+  const fortiGateSpec = buildSpec(fortiGate, fortiGate.profiles.find(({ id }) => id === 'fw-1518'));
+  for (const id of ['fw-a', 'fw-b']) applySpec(topology, id, fortiGateSpec);
+  const replaced = calculateScenario(topology).racks.find(({ id }) => id === 'security-budget');
+  assert.deepEqual([replaced.powerWatts, replaced.usedU, replaced.status], [420, 4, 'fail']);
+
+  const cisco = catalogEntry('cisco-secure-firewall-3105');
+  const ciscoSpec = buildSpec(cisco, cisco.profiles.find(({ id }) => id === 'ftd-avc'));
+  applySpec(topology, 'fw-a', ciscoSpec);
+  const missingPhysical = calculateScenario(topology).racks.find(({ id }) => id === 'security-budget');
+  assert.equal(missingPhysical.powerWatts, null);
+  assert.equal(missingPhysical.usedU, 3);
+  assert.equal(missingPhysical.status, 'unknown');
 });
 
 test('an export snapshots topology, baseline and source evidence without sharing references', () => {

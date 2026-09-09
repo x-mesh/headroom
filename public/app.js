@@ -1,9 +1,10 @@
-import { axisCatalog, behaviorCatalog, cloneTopology } from './data.js';
+import { axisCatalog, behaviorCatalog, cloneTopology, failureDomainKinds } from './data.js';
 import { calculateScenario, calculateSurvivalMultiplier, compareScenarios, createExport, createFailureDomainSweepTask, createSingleFaultSweepTask, createSurvivalMultiplierTask, ENGINE_VERSION, sweepFailureDomains, sweepSingleFaults } from './engine.js';
 import { acceptEvidence, addDemand, addDevice, addLink, applySpec, clearEvidenceAcceptance, moveDevice, normalizeId, removeDemand, removeDevice, removeLink, setLimitOverride, setWorkloadConditions, updateDemand, updateDevice, updateLink } from './editor.js';
 import { importDeviceDefinition } from './device-import.js';
-import { applyMeasuredLimits, importMeasuredLimits } from './measured-import.js';
+import { applyMeasuredLimits, applyObservedLoad, buildObservedLoadValidationReport, compareTopologyFingerprint, fingerprintMatches, importMeasuredLimits, importObservedLoad, importZabbixObservedLoad, OBSERVED_LOAD_STALE_AFTER_DAYS, observedLoadIsStale } from './measured-import.js';
 import { parseProject, serializeProject } from './project.js';
+import { buildNamedScenarioServiceVerdicts, buildReportModel, renderReportHtml, renderReportJson, renderReportMarkdown } from './report.js';
 import { GLYPHS, GLYPH_SPRITE } from './glyphs.js';
 import { behaviorToken, cardBox, formatNodeValue, groupBoxes, GROUP_PAD, kindInitial, LINK_ROUTES, linkPath, nodeAxes, nodeAxisLabel, NODE_REACH, nodeView, packetMotion, placeLinkLabels, routeLink, segmentHitsBox, sourceDriftFactor, STATE_TOKEN, symbolFor, zonePath } from './node-view.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
@@ -16,7 +17,9 @@ import { acceptanceDigest, evidenceApplicability } from './evidence.js';
 
 let topology = cloneTopology();
 const state = { scale: 1, selectedId: 'fw-a', selection: [{ type: 'device', id: 'fw-a' }], disabledDevices: new Set(), disabledLinks: new Set(), disabledDomains: new Set(), namedScenarios: [], editorMode: 'select', connectSource: null, leftPanel: 'palette', zoom: 1, viewMode: 'edit' };
+const FAILURE_DOMAIN_KIND_LABEL = Object.freeze({ power: '전원', space: '공간', path: '경로', firmware: '펌웨어', site: '사이트', other: '기타' });
 let panelSelectionExplicit = false;
+let comparisonDemandId = null;
 let baselineSnapshot = { topology: structuredClone(topology), scenario: { scale: 1, disabledDevices: [], disabledLinks: [], disabledDomains: [] } };
 let baseline = calculateScenario(baselineSnapshot.topology, baselineSnapshot.scenario);
 let current = baseline;
@@ -25,6 +28,7 @@ let survival = calculateSurvivalMultiplier(topology, { sweep });
 let domainSweep = sweepFailureDomains(topology);
 let swapPreview = null;
 let swapTarget = null;
+let swapComparison = [];
 let absorbsExpanded = false;
 let resourceAbsorbsExpanded = false;
 const failureFilter = { query: '', verdict: 'all' };
@@ -49,6 +53,7 @@ let persistenceWarningShown = false;
 let toastTimer;
 let dragState = null;
 let diagramDrag = null;
+let annotationSource = null;
 let suppressNodeClick = false;
 const SHAPE_MIN_SIZE = 24;
 const SHAPE_COORD_LIMIT = 1e6;
@@ -374,7 +379,15 @@ function renderLearningPanel() {
   }
   const lesson = topology.template;
   if (!lesson?.teaches) { panel.hidden = true; panel.innerHTML = ''; return; }
-  const experiment = lesson.experiment;
+  const target = quickFailureTarget();
+  const forecast = target && (target.type === 'domain'
+    ? domainSweep.singles.find(({ id }) => id === target.id)
+    : sweep.resources.find(({ id }) => id === target.id));
+  const experiment = target ? {
+    prompt: target.reason + ': ' + target.label + '를 끄면 어떻게 될까요?',
+    action: { type: 'fault-' + target.type, id: target.id, label: target.label + ' 장애 실험' },
+    observe: forecast ? faultForecast(forecast, { includeBoundary: true }) : '장애 결과를 계산합니다.',
+  } : lesson.experiment;
   panel.hidden = false;
   panel.innerHTML = `<strong>이 설계에서 확인할 것</strong>${escapeText(lesson.teaches)}
     ${experiment ? `<div><span>${escapeText(experiment.prompt)}</span><br><button type="button" data-lesson-action="${escapeAttribute(experiment.action.type)}" data-lesson-id="${escapeAttribute(experiment.action.id || '')}" data-lesson-value="${escapeAttribute(experiment.action.value ?? '')}">${escapeText(experiment.action.label)}</button><output${lessonRevealed ? '' : ' hidden'}>${escapeText(experiment.observe)}</output></div>` : ''}`;
@@ -584,9 +597,9 @@ function renderFailures() {
     return deliveryOrder || a.id.localeCompare(b.id);
   });
   const groups = [
-    { title: '장비', items: order(topology.devices), set: state.disabledDevices, type: 'device' },
-    { title: '링크', items: order(topology.links), set: state.disabledLinks, type: 'link' },
-    { title: '장애 도메인', items: order(topology.failureDomains || []), set: state.disabledDomains, type: 'domain' },
+    { title: '자원 N-1 · 장비', items: order(topology.devices), set: state.disabledDevices, type: 'device' },
+    { title: '자원 N-1 · 링크', items: order(topology.links), set: state.disabledLinks, type: 'link' },
+    { title: '도메인 N-1', items: order(topology.failureDomains || []), set: state.disabledDomains, type: 'domain' },
   ];
   element('failure-count').textContent = `${state.disabledDevices.size + state.disabledLinks.size + state.disabledDomains.size} ACTIVE`;
   if (analysisProgress) {
@@ -599,8 +612,10 @@ function renderFailures() {
     return;
   }
   const stale = sweepStale() && sweep.resources.length > 0;
+  const invalidDomainSummary = invalidDomains.map(({ name, reason, deliveryDrop }) => reason === 'delivery-drop'
+    ? name + ' (전달률 ' + formatPercent(deliveryDrop) + 'p 저하)' : name).join(', ');
   element('failure-grade').textContent = sweep.resources.length
-    ? `단일 장애점 ${sweep.severs}개 · 용량 부족 ${sweep.overloads}개 · 여유 ${sweep.absorbs}개${invalidDomains.length ? ` · 이중화 무효 ${invalidDomains.map(({ name }) => name).join(', ')}` : ''}${stale ? ` · ${sweepScale.toFixed(2)}배 기준` : ''}`
+    ? `단일 장애점 ${sweep.severs}개 · 용량 부족 ${sweep.overloads}개 · 여유 ${sweep.absorbs}개${invalidDomains.length ? ` · 이중화 무효 ${invalidDomainSummary}` : ''}${stale ? ` · ${sweepScale.toFixed(2)}배 기준` : ''}`
     : '끌 자원이 아직 없습니다.';
   element('failure-grade').dataset.grade = sweep.grade;
   element('failure-grade').toggleAttribute('data-stale', stale);
@@ -633,7 +648,7 @@ function renderFailures() {
   const renderFailure = (group, item, { index = null, key = '', total = 0 } = {}) => {
         const active = group.set.has(item.id);
         const verdict = verdicts.get(item.id);
-        const detail = group.type === 'device' ? item.zone : group.type === 'link' ? formatCompact(item.capacity?.forwarding_bps, 'bps') : `장비 ${item.deviceIds?.length || 0} · 링크 ${item.linkIds?.length || 0}`;
+        const detail = group.type === 'device' ? item.zone : group.type === 'link' ? formatCompact(item.capacity?.forwarding_bps, 'bps') : `${FAILURE_DOMAIN_KIND_LABEL[item.kind] || FAILURE_DOMAIN_KIND_LABEL.other} · 장비 ${item.deviceIds?.length || 0} · 링크 ${item.linkIds?.length || 0}`;
         const forecast = faultForecast(verdict, { includeBoundary: group.type === 'domain' });
         const virtualAttributes = index == null ? '' : ` data-failure-index="${index}" data-failure-group="${escapeAttribute(key)}" aria-posinset="${index + 1}" aria-setsize="${total}"`;
         const label = `${resourceName(item)}, ${forecast}, ${detail}, 현재 ${active ? 'DOWN' : 'UP'}`;
@@ -660,7 +675,17 @@ function renderFailures() {
       ${absorbs.length ? `<button type="button" class="failure-collapse" data-failure-resource-absorbs-toggle aria-expanded="${resourceAbsorbsExpanded}">견딤 ${absorbs.length}개 ${resourceAbsorbsExpanded ? '접기' : '펼치기'}</button><div${resourceAbsorbsExpanded ? '' : ' hidden'}>${renderFailureRows(group, absorbs, 'absorbs')}</div>` : ''}
     </section>`;
   };
-  element('failure-list').innerHTML = `${filterControls}${groups.map(renderGroup).join('')}<section class="failure-group failure-domain-pairs"><h3>도메인 쌍 N-2</h3>${domainSweep.domainCount ? (() => {
+  const worstAxes = (sweep.worstAxes || []).filter(({ utilization, unknown }) => utilization != null || unknown).sort((a, b) => (b.utilization ?? -1) - (a.utilization ?? -1) || a.resourceId.localeCompare(b.resourceId)).slice(0, 12);
+  const worstAxisRows = worstAxes.length ? worstAxes.map((item) => {
+    const target = resourceById(item.resourceId);
+    const label = `${resourceName(target) || item.resourceId} · ${item.direction === 'forward' ? '정방향 · ' : item.direction === 'reverse' ? '역방향 · ' : ''}${axisCatalog[item.axis]?.shortLabel || item.axis}`;
+    const value = item.utilization == null ? '미확인' : formatPercent(item.utilization);
+    const detail = item.faultId ? `${resourceName(resourceById(item.faultId)) || item.faultId} 장애 후 최악` : '최악 장애 미확인';
+    return `<li><b>${escapeText(label)}</b><span>${escapeText(value)}${item.bounded ? ' 이하' : ''}</span><small>${escapeText(detail)}${item.unknown ? ' · 일부 미확인' : ''}</small></li>`;
+  }).join('') : '<li>완료된 단일 장애 스윕이 아직 없습니다.</li>';
+  const worstAxisPanel = `<section class="failure-group failure-worst-axes"><h3>단일 장애 최악 사용률</h3><p class="failure-empty">각 자원·축에서 가장 나쁜 단일 장애와 사용률입니다.</p><ul>${worstAxisRows}</ul></section>`;
+  const scopeGuide = `<section class="failure-scope-guide" aria-label="장애 분석 범위"><p><b>자원 N-1</b><span>장비 또는 링크 하나의 장애입니다.</span></p><p><b>도메인 N-1</b><span>전원·공간·경로처럼 함께 실패할 수 있는 묶음 하나의 장애입니다.</span></p><p><b>도메인 N-2</b><span>서로 다른 장애 도메인 둘이 동시에 실패하는 경우입니다.</span></p></section>`;
+  element('failure-list').innerHTML = `${scopeGuide}${filterControls}${groups.map(renderGroup).join('')}${worstAxisPanel}<section class="failure-group failure-domain-pairs"><h3>도메인 N-2 · 동시 두 도메인</h3>${domainSweep.domainCount ? (() => {
       const matchingPairs = pairs.filter((item) => matchesFailureFilter(item, item));
       const critical = matchingPairs.filter(({ verdict }) => verdict !== 'absorbs');
       const absorbs = matchingPairs.filter(({ verdict }) => verdict === 'absorbs');
@@ -960,6 +985,7 @@ function applyViewport() {
   stage.style.setProperty('--viewport-y', `${viewport.minY}px`);
   // viewBox 가 원점을 담당하므로 링크는 좌표를 변환하지 않고 그대로 쓴다.
   element('link-layer').setAttribute('viewBox', `${viewport.minX} ${viewport.minY} ${viewport.width} ${viewport.height}`);
+  element('diagram-group-layer').setAttribute('viewBox', `${viewport.minX} ${viewport.minY} ${viewport.width} ${viewport.height}`);
 }
 
 // 확대가 없으므로 CSS 픽셀과 캔버스 좌표는 1:1 이고, 원점만 viewport 만큼 밀려 있다.
@@ -1147,6 +1173,22 @@ function renderTopology() {
       <rect class="group-tag-frame"></rect>
       <text class="group-label" x="${group.x + 11}" y="${group.y + 13}">${escapeText(group.label)}</text>
     </g>`).join('');
+  // 계산의 rack/zone 프레임과 사용자가 만든 설계 그룹은 다른 의미다. 후자는 별도 오버레이로
+  // 그려 장비·도형을 함께 묶어도 계산 경계처럼 읽히지 않게 한다.
+  const diagramGroupMarkup = (topology.diagram?.groups || []).map((group) => {
+    const members = group.memberIds.flatMap((id) => {
+      const device = devices.get(id);
+      if (device?.position) return [{ x: device.position.x - 64, y: device.position.y - 40, width: 128, height: 80 }];
+      const shape = topology.diagram?.shapes?.find((item) => item.id === id);
+      return shape ? [{ x: shape.x, y: shape.y, width: shape.width, height: shape.height }] : [];
+    });
+    if (!members.length) return '';
+    const pad = 14; const left = Math.min(...members.map((item) => item.x)) - pad; const top = Math.min(...members.map((item) => item.y)) - pad;
+    const right = Math.max(...members.map((item) => item.x + item.width)) + pad; const bottom = Math.max(...members.map((item) => item.y + item.height)) + pad;
+    const locked = group.locked ? ' locked' : '';
+    const selected = state.selection.length === 1 && state.selection[0].type === 'group' && state.selection[0].id === group.id ? ' selected' : '';
+    return '<g class="diagram-group' + locked + selected + '" data-diagram-group-id="' + escapeAttribute(group.id) + '"><rect x="' + left + '" y="' + top + '" width="' + (right - left) + '" height="' + (bottom - top) + '" tabindex="0" role="button" aria-label="' + escapeAttribute(group.name + ' 그룹 검사' + (group.locked ? ' · 잠김' : '')) + '"></rect><text x="' + (left + 7) + '" y="' + (top + 12) + '">' + (group.locked ? '🔒 ' : '') + escapeText(group.name) + '</text></g>';
+  }).join('');
   const endpointPoint = (id) => devices.get(id)?.position || (() => {
     const shape = topology.diagram?.shapes?.find((item) => item.id === id);
     return shape ? { x: shape.x + shape.width / 2, y: shape.y + shape.height / 2 } : null;
@@ -1176,7 +1218,8 @@ function renderTopology() {
       };
     };
     const startMarker = marker('start'); const endMarker = marker('end');
-    return `<g class="diagram-connector${selected ? ' selected' : ''}" data-connector-id="${escapeAttribute(connector.id)}">${startMarker.definition}${endMarker.definition}<polyline class="diagram-connector-hit" points="${points}" fill="none" stroke="transparent" stroke-width="${hitWidth}" tabindex="0" role="button" aria-label="${escapeAttribute(`${connector.label || connector.id} 연결선 검사`)}"></polyline><polyline class="diagram-connector-line" points="${points}" fill="none" stroke="${escapeAttribute(selectedStroke)}" stroke-width="${selected ? Math.max(width + 2, 2.5) : width}"${dash}${startMarker.attribute}${endMarker.attribute}></polyline>${label}</g>`;
+    const locked = connector.locked ? ' locked' : '';
+    return `<g class="diagram-connector${selected ? ' selected' : ''}${locked}" data-connector-id="${escapeAttribute(connector.id)}">${startMarker.definition}${endMarker.definition}<polyline class="diagram-connector-hit" points="${points}" fill="none" stroke="transparent" stroke-width="${hitWidth}" tabindex="0" role="button" aria-label="${escapeAttribute(`${connector.label || connector.id} 연결선 검사${connector.locked ? ' · 잠김' : ''}`)}"></polyline><polyline class="diagram-connector-line" points="${points}" fill="none" stroke="${escapeAttribute(selectedStroke)}" stroke-width="${selected ? Math.max(width + 2, 2.5) : width}"${dash}${startMarker.attribute}${endMarker.attribute}></polyline>${connector.locked ? `<text class="diagram-lock-mark" x="${labelPoint.x / count}" y="${labelPoint.y / count - 8}" text-anchor="middle">🔒</text>` : ''}${label}</g>`;
   }).join('');
   // 라벨이 어디에 앉을지 먼저 정한다. 한 링크만 보고는 옆 라벨과 겹치는지 알 수 없다.
   const selectionHas = (type, id) => state.selection.some((item) => item.type === type && item.id === id)
@@ -1261,18 +1304,26 @@ function renderTopology() {
     </g>`;
   }).join('') + diagramConnectors + groupLabels;
   fitGroupTags();
+  element('diagram-group-layer').innerHTML = diagramGroupMarkup;
+  for (const frame of element('diagram-group-layer').querySelectorAll('[data-diagram-group-id] :is(rect, text)')) {
+    frame.addEventListener('click', (event) => {
+      event.stopPropagation();
+      selectDiagramGroup(frame.closest('[data-diagram-group-id]')?.dataset.diagramGroupId, event);
+    });
+  }
 
   element('diagram-layer').innerHTML = (topology.diagram?.shapes || []).map((shape) => {
     const selected = selectionHas('shape', shape.id);
     const resizeSelected = state.selection.length === 1 && state.selection[0].type === 'shape' && state.selection[0].id === shape.id;
-    const handles = resizeSelected ? ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
+    const handles = resizeSelected && !shape.locked ? ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
       .map((direction) => `<span class="diagram-resize-handle ${direction}" data-shape-resize="${direction}" aria-hidden="true"></span>`).join('') : '';
     const fill = shape.fill && shape.fill !== 'none' ? shape.fill : 'transparent';
     const stroke = shape.stroke && shape.stroke !== 'none' ? shape.stroke : 'transparent';
     const background = shape.gradient && fill !== 'transparent' ? `linear-gradient(180deg, ${shape.gradientColor || '#ffffff'}, ${fill})` : fill;
     const effects = [shape.rounded ? ' rounded' : '', shape.sketch ? ' sketch' : '', shape.glass ? ' glass' : '', shape.shadow ? ' shadow' : '', shape.lineStyle === 'dashed' ? ' dashed' : '', shape.lineStyle === 'dotted' ? ' dotted' : ''].join('');
     const style = `left:${shape.x - viewport.minX}px;top:${shape.y - viewport.minY}px;width:${shape.width}px;height:${shape.height}px;background:${background};border-color:${stroke};border-width:${shape.strokeWidth ?? 1}px;border-radius:${shape.rounded && shape.kind !== 'ellipse' ? '10px' : ''};opacity:${shape.opacity ?? 1};color:${shape.textColor || 'var(--text)'};font-size:${shape.fontSize || 11}px;font-weight:${shape.fontWeight || 500};text-align:${shape.textAlign || 'center'};align-items:${shape.verticalAlign === 'top' ? 'start' : shape.verticalAlign === 'bottom' ? 'end' : 'center'};justify-items:${shape.textAlign === 'left' ? 'start' : shape.textAlign === 'right' ? 'end' : 'center'};`;
-    return `<button type="button" class="diagram-shape${selected ? ' selected' : ''}${effects}" data-shape-id="${escapeAttribute(shape.id)}" data-kind="${escapeAttribute(shape.kind)}" style="${escapeAttribute(style)}"><span class="diagram-shape-label">${escapeText(shape.text || '')}</span>${handles}</button>`;
+    const annotationState = state.editorMode === 'annotation' ? (annotationSource === shape.id ? ' annotation-source' : annotationSource ? ' annotation-target' : '') : '';
+    return `<button type="button" class="diagram-shape${selected ? ' selected' : ''}${shape.locked ? ' locked' : ''}${annotationState}${effects}" data-shape-id="${escapeAttribute(shape.id)}" data-kind="${escapeAttribute(shape.kind)}" aria-label="${escapeAttribute(`${shape.text || shape.id}${shape.locked ? ' · 잠김' : ''}`)}" style="${escapeAttribute(style)}"><span class="diagram-shape-label">${escapeText(shape.text || '')}</span>${shape.locked ? '<span class="diagram-lock-mark" aria-hidden="true">🔒</span>' : ''}${handles}</button>`;
   }).join('');
 
   const pools = backendPoolIndex(current.demands);
@@ -1302,7 +1353,8 @@ function renderTopology() {
       : device.active
         ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis, brief)).join('')
         : `<span class="node-axis" data-axis-state="disabled"><i>${STATE_TOKEN.disabled}</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>`;
-    return `<button type="button" class="mesh-node ${status} ${state.selectedId === device.id ? 'selected' : ''} ${selectionHas('device', device.id) ? 'multi-selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x - viewport.minX}px;top:${device.position.y - viewport.minY}px" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
+    const annotationState = state.editorMode === 'annotation' ? (annotationSource === device.id ? ' annotation-source' : annotationSource ? ' annotation-target' : '') : '';
+    return `<button type="button" class="mesh-node ${status} ${state.selectedId === device.id ? 'selected' : ''} ${selectionHas('device', device.id) ? 'multi-selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}${annotationState}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x - viewport.minX}px;top:${device.position.y - viewport.minY}px" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
       <span class="node-symbol">${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}${topology.synthetic ? '<span class="synthetic-badge" aria-label="합성값">SYN</span>' : ''}${classView.badge === 'on' ? `<span class="node-class-badge">${escapeText(kindInitial(device.kind))}</span>` : ''}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolFor(device.kind).id}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}${pool || idle ? `<span class="node-pool"${idle ? ' data-warn=""' : ''}>${escapeText(pool || idle)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
     </button>`;
   }).join('');
@@ -1412,8 +1464,9 @@ function renderShapeEditor(shape) {
   const panel = (id, content) => `<section id="shape-panel-${id}" class="shape-inspector-panel" role="tabpanel" aria-labelledby="shape-tab-${id}"${shapeInspectorTab === id ? '' : ' hidden'}>${content}</section>`;
   const selection = state.selection.filter(({ type }) => type === 'device' || type === 'shape');
   const arrangeActions = `<div class="shape-arrange-actions"><button type="button" data-editor-action="align-left"${selection.length >= 2 ? '' : ' disabled'}>왼쪽 정렬</button><button type="button" data-editor-action="distribute-x"${selection.length >= 3 ? '' : ' disabled'}>가로 분배</button><button type="button" data-editor-action="group"${selection.length >= 2 ? '' : ' disabled'}>그룹</button></div>`;
-  return `<form class="shape-editor" novalidate data-resource-form="shape" data-resource-id="${escapeAttribute(shape.id)}">
-    <div class="resource-identity"><strong>${escapeText(shape.text || shape.id)}</strong><span>도형 · ${escapeText(shape.kind)}</span></div>
+  return `<form class="shape-editor${shape.locked ? ' locked' : ''}" novalidate data-resource-form="shape" data-resource-id="${escapeAttribute(shape.id)}">
+    <div class="resource-identity"><strong>${escapeText(shape.text || shape.id)}</strong><span>도형 · ${escapeText(shape.kind)}${shape.locked ? ' · 잠김' : ''}</span></div>
+    <label class="shape-lock"><input name="locked" type="checkbox" data-diagram-lock${shape.locked ? ' checked' : ''}><span>도형 잠금</span></label>
     <div class="shape-inspector-tabs" role="tablist" aria-label="도형 검사 탭">${tab('style', 'Style')}${tab('text', 'Text')}${tab('arrange', 'Arrange')}</div>
     ${panel('style', `${renderShapeColorControl(shape, 'fill', '채우기')}
       <label class="shape-option-row"><input type="checkbox" name="gradient" data-shape-effect${shape.gradient ? ' checked' : ''}><span>그라데이션</span><small>채우기 색상</small></label>
@@ -1455,8 +1508,9 @@ function renderGroupEditor(group) {
     if (shape) return `<button type="button" class="group-member" data-group-member-type="shape" data-group-member-id="${escapeAttribute(id)}">${escapeText(shape.text || id)}<small>${escapeText(shape.kind)}</small></button>`;
     return '';
   }).join('');
-  return `<form class="shape-editor" data-resource-form="group" data-resource-id="${escapeAttribute(group.id)}">
-    <div class="resource-identity"><strong>${escapeText(group.name)}</strong><span>그룹 · ${group.memberIds.length}개 요소</span></div>
+  return `<form class="shape-editor${group.locked ? ' locked' : ''}" data-resource-form="group" data-resource-id="${escapeAttribute(group.id)}">
+    <div class="resource-identity"><strong>${escapeText(group.name)}</strong><span>그룹 · ${group.memberIds.length}개 요소${group.locked ? ' · 잠김' : ''}</span></div>
+    <label class="shape-lock"><input name="locked" type="checkbox" data-diagram-lock${group.locked ? ' checked' : ''}><span>그룹 잠금</span></label>
     <div class="shape-editor-grid"><label class="shape-editor-wide"><span>그룹 이름</span><input name="name" value="${escapeAttribute(group.name)}" maxlength="80"></label></div>
     <div class="group-member-list"><strong>멤버</strong>${members}</div>
     <p class="shape-editor-help">멤버를 선택하면 종류와 크기를 개별 편집할 수 있습니다.</p>
@@ -1466,8 +1520,9 @@ function renderGroupEditor(group) {
 
 function renderConnectorEditor(connector) {
   const arrowOptions = [['none', '없음'], ['classic', '삼각형'], ['open', '열림'], ['block', '블록']];
-  return `<form class="shape-editor" data-resource-form="connector" data-resource-id="${escapeAttribute(connector.id)}">
-    <div class="resource-identity"><strong>${escapeText(connector.label || connector.id)}</strong><span>연결선 · ${escapeText(connector.kind || 'annotation')}</span></div>
+  return `<form class="shape-editor${connector.locked ? ' locked' : ''}" data-resource-form="connector" data-resource-id="${escapeAttribute(connector.id)}">
+    <div class="resource-identity"><strong>${escapeText(connector.label || connector.id)}</strong><span>연결선 · ${escapeText(connector.kind || 'annotation')}${connector.locked ? ' · 잠김' : ''}</span></div>
+    <label class="shape-lock"><input name="locked" type="checkbox" data-diagram-lock${connector.locked ? ' checked' : ''}><span>연결선 잠금</span></label>
     <div class="shape-editor-grid">
       <label class="shape-editor-wide"><span>라벨</span><input name="label" value="${escapeAttribute(connector.label || '')}" maxlength="1000"></label>
       <label><span>종류</span><select name="kind"><option value="annotation"${connector.kind !== 'dependency' ? ' selected' : ''}>주석</option><option value="dependency"${connector.kind === 'dependency' ? ' selected' : ''}>의존성</option></select></label>
@@ -1855,21 +1910,65 @@ function startTelemetry() {
 
 function renderComparison() {
   const comparison = compareScenarios(baseline, current);
+  const designChanged = JSON.stringify(baselineSnapshot.topology) !== JSON.stringify(topology);
+  if (designChanged) {
+    element('comparison-grid').innerHTML = '<section class="comparison-detail"><header><b>설계 변화</b><small>수치 비교 보류</small></header><ul><li><b>기준선 이후 설계가 바뀌었습니다.</b><span>현재 수치와 기준선 수치를 직접 비교하지 않습니다.</span><small>기준선을 다시 확정하세요.</small></li></ul></section>';
+    return;
+  }
   const items = [
     ['최소 headroom', formatPercent(comparison.minHeadroomDelta, true), `${formatPercent(baseline.summary.minHeadroom)} → ${formatPercent(current.summary.minHeadroom)}`, comparison.minHeadroomDelta < 0 ? 'negative' : 'positive'],
     ['Binding axis', comparison.bindingChanged ? 'CHANGED' : 'SAME', `${baseline.summary.bindingResourceId} → ${current.summary.bindingResourceId}`, comparison.bindingChanged ? 'negative' : ''],
     ['과부하', `${comparison.overloadedDelta > 0 ? '+' : ''}${comparison.overloadedDelta}`, `${baseline.summary.overloadedCount} → ${current.summary.overloadedCount} resources`, comparison.overloadedDelta > 0 ? 'negative' : 'positive'],
     ['전달 실패', `${comparison.unreachableDelta > 0 ? '+' : ''}${comparison.unreachableDelta}`, `${baseline.summary.unreachableCount} → ${current.summary.unreachableCount} demands`, comparison.unreachableDelta > 0 ? 'negative' : 'positive'],
   ];
-  element('comparison-grid').innerHTML = items.map(([label, value, detail, tone]) => `<div class="comparison-item ${tone}"><span>${label}</span><strong>${value}</strong><small>${detail}</small></div>`).join('');
+  const resourceLabel = (result, id) => [...result.devices, ...result.links].find((item) => item.id === id)?.name || id;
+  const percent = (result) => result?.utilization == null ? '미확인' : formatPercent(result.utilization);
+  const changes = [];
+  const compareAxes = (beforeResource, afterResource, resourceId, direction = null) => {
+    const beforeAxes = direction ? beforeResource?.directions?.[direction]?.axes : beforeResource?.axes;
+    const afterAxes = direction ? afterResource?.directions?.[direction]?.axes : afterResource?.axes;
+    for (const axis of new Set([...Object.keys(beforeAxes || {}), ...Object.keys(afterAxes || {})])) {
+      const before = beforeAxes?.[axis]; const after = afterAxes?.[axis];
+      if (!before || !after || before.status !== after.status || before.utilization !== after.utilization || before.load !== after.load) changes.push({ resourceId, direction, axis, before, after });
+    }
+  };
+  const beforeResources = new Map([...baseline.devices, ...baseline.links].map((item) => [item.id, item]));
+  const afterResources = new Map([...current.devices, ...current.links].map((item) => [item.id, item]));
+  for (const id of new Set([...beforeResources.keys(), ...afterResources.keys()])) {
+    const before = beforeResources.get(id); const after = afterResources.get(id);
+    compareAxes(before, after, id);
+    for (const direction of ['forward', 'reverse']) if (before?.directions || after?.directions) compareAxes(before, after, id, direction);
+  }
+  const changeRows = changes.length ? changes.map(({ resourceId, direction, axis, before, after }) => {
+    const name = resourceLabel(current, resourceId) + ' · ' + (direction ? (direction === 'forward' ? '정방향 · ' : '역방향 · ') : '') + (axisCatalog[axis]?.shortLabel || axis);
+    const tone = after?.status === 'overloaded' || after?.status === 'invalid' ? ' negative' : '';
+    return `<li class="${tone.trim()}"><b>${escapeText(name)}</b><span>${escapeText(percent(before))} → ${escapeText(percent(after))}</span><small>${escapeText((before?.status ? stateLabel(before.status) : '없음') + ' → ' + (after?.status ? stateLabel(after.status) : '없음'))}</small></li>`;
+  }).join('') : '<li>기준선과 달라진 자원 축이 없습니다.</li>';
+  const demandIds = new Set([...baseline.demands, ...current.demands].map(({ id }) => id));
+  if (!comparisonDemandId || !demandIds.has(comparisonDemandId)) comparisonDemandId = [...demandIds][0] || null;
+  const currentDemand = current.demands.find(({ id }) => id === comparisonDemandId);
+  const beforeDemand = baseline.demands.find(({ id }) => id === comparisonDemandId);
+  const pathText = (path) => (path.devices || []).map((id) => resourceLabel(current, id)).join(' → ');
+  const truncated = currentDemand?.pathEnumeration?.complete === false;
+  const currentPaths = truncated ? '<li>경로 열거 한도에 닿아 홉 라벨을 표시하지 않습니다.</li>' : (currentDemand?.paths || []).map((path) => {
+    const choke = path.choke ? ' · 조임점 ' + resourceLabel(current, path.choke.resourceId) + ' ' + (path.choke.direction === 'reverse' ? '역방향' : path.choke.direction === 'forward' ? '정방향' : '') : '';
+    return `<li><b>현재 ${Math.round(path.share * 100)}%</b><span>${escapeText(pathText(path))}</span><small>${escapeText(((path.hops || []).map(({ direction }) => direction === 'forward' ? '정방향' : '역방향').join(' · ') || '방향 미확인') + choke)}</small></li>`;
+  }).join('') || '<li>현재 활성 경로가 없습니다.</li>';
+  const priorPaths = currentDemand?.severedPaths?.length ? currentDemand.severedPaths : beforeDemand?.paths || [];
+  const previous = priorPaths.map((path) => `<li><b>장애 전 ${Math.round((path.share ?? 1) * 100)}%</b><span>${escapeText(pathText(path))}</span></li>`).join('') || '<li>비교할 장애 전 경로가 없습니다.</li>';
+  const options = [...demandIds].map((id) => { const demand = current.demands.find((item) => item.id === id) || baseline.demands.find((item) => item.id === id); return `<option value="${escapeAttribute(id)}"${id === comparisonDemandId ? ' selected' : ''}>${escapeText(demand?.name || id)}</option>`; }).join('');
+  const detail = `<section class="comparison-detail"><header><b>자원·축·방향 변화</b><small>${changes.length}개</small></header><ul>${changeRows}</ul></section>`;
+  const paths = comparisonDemandId ? `<section class="comparison-detail comparison-path"><header><label>수요 경로 <select data-comparison-demand>${options}</select></label><small>${escapeText(currentDemand?.status === 'unreachable' ? '현재 경로 없음' : '현재 경로와 방향별 분기 몫입니다.')}</small></header><div><ul>${currentPaths}</ul><ul>${previous}</ul></div></section>` : '';
+  element('comparison-grid').innerHTML = items.map(([label, value, detail, tone]) => `<div class="comparison-item ${tone}"><span>${label}</span><strong>${value}</strong><small>${detail}</small></div>`).join('') + detail + paths;
 }
 
 function renderEditorMode() {
   // 여러 개를 고르는 두 손놀림이 화면 어디에도 적혀 있지 않아, 있는 줄 모르고 쓰지 못했다.
   // 빈 곳을 그냥 끌면 화면이 밀리고 Shift 를 누른 채 끌어야 선택 상자가 나온다.
-  const labels = { select: 'SELECT · DRAG TO BOX · RIGHT-DRAG TO PAN · SHIFT+CLICK TO ADD', connect: state.connectSource ? `CONNECT · ${state.connectSource.toUpperCase()} → SELECT TARGET` : 'CONNECT · SELECT SOURCE' };
+  const labels = { select: 'SELECT · DRAG TO BOX · RIGHT-DRAG TO PAN · SHIFT+CLICK TO ADD', connect: state.connectSource ? `CONNECT · ${state.connectSource.toUpperCase()} → SELECT TARGET` : 'CONNECT · SELECT SOURCE', annotation: annotationSource ? `ANNOTATION · ${annotationSource.toUpperCase()} → SELECT TARGET` : 'ANNOTATION · SELECT SOURCE' };
   element('editor-mode').lastChild.textContent = labels[state.editorMode] || state.editorMode.toUpperCase();
   document.querySelector('[data-editor-action="connect"]')?.setAttribute('aria-pressed', String(state.editorMode === 'connect'));
+  document.querySelector('[data-editor-action="annotation-connect"]')?.setAttribute('aria-pressed', String(state.editorMode === 'annotation'));
   for (const kind of Object.keys(SHAPE_DRAW_DEFAULTS)) document.querySelector(`[data-editor-action="shape-${kind}"]`)?.setAttribute('aria-pressed', 'false');
   const editableSelection = state.selection.filter(({ type }) => type === 'device' || type === 'shape');
   const count = editableSelection.length;
@@ -2243,22 +2342,28 @@ function openDeviceSwapPicker(id, target = null) {
   const device = deviceById(id);
   if (!device) return;
   const slot = swapSlot(device);
+  if (!target) swapComparison = [];
   swapTarget = target || { id, slotIds: slot.map(({ id: memberId }) => memberId), mode: 'slot' };
   const entries = catalogFor(device.kind);
+  const bindingAxis = current.summary.bindingAxis;
   const cards = entries.flatMap((entry) => entry.profiles.map((profile) => {
     const current = device.spec?.catalogId === entry.id && device.spec?.profileId === profile.id;
+    const compared = swapComparison.some((item) => item.entryId === entry.id && item.profileId === profile.id);
+    // 후보를 추리거나 우열을 매기지 않는다. 현재 병목 축을 계산할 근거가 있는지만 먼저 보인다.
+    const hasBindingAxisData = bindingAxis && profile.records.some((record) => record.axis === bindingAxis && record.value != null);
     const limits = Object.entries(profile.limits)
       .map(([axis, value]) => `${axisCatalog[axis]?.nodeLabel || axis} ${value == null ? '미확인' : formatCompact(value, axisCatalog[axis]?.unit)}`)
       .join(' · ');
     const haystack = [entry.vendor, entry.model, profile.label, profile.note, limits].join(' ').toLowerCase();
-    return `<button type="button" class="template-item" data-swap-catalog="${escapeAttribute(entry.id)}" data-swap-profile="${escapeAttribute(profile.id)}"
-      data-search="${escapeAttribute(haystack)}"${current ? ' data-current="" aria-current="true"' : ''}>
+    return `<article class="template-item"${current ? ' data-current=""' : ''}><button type="button" class="swap-pick" data-swap-catalog="${escapeAttribute(entry.id)}" data-swap-profile="${escapeAttribute(profile.id)}"
+      data-search="${escapeAttribute(haystack)}"${current ? ' aria-current="true"' : ''}>
       ${current ? '<b class="template-grade" data-grade="current">지금 이 값</b>' : ''}
+      ${hasBindingAxisData ? `<b class="template-grade" data-swap-binding-axis="${escapeAttribute(bindingAxis)}">병목 축 데이터 있음</b>` : ''}
       <strong>${escapeText(`${entry.vendor} ${entry.model}`)}</strong>
       <span>${escapeText(profile.label)}</span>
       <em>${escapeText(limits)}</em>
       ${profile.note ? `<span class="swap-note">${escapeText(profile.note)}</span>` : ''}
-    </button>`;
+    </button><button type="button" class="swap-compare-toggle" data-swap-compare="${escapeAttribute(entry.id)}" data-swap-profile="${escapeAttribute(profile.id)}" aria-pressed="${compared}">${compared ? '비교에서 제외' : '비교에 추가'}</button></article>`;
   })).join('');
   const scopeChoice = slot.length > 1 ? `<fieldset class="swap-scope"><legend>치환 범위</legend><div class="segmented" role="group" aria-label="치환 범위"><button type="button" data-swap-scope="slot" aria-pressed="${swapTarget.mode === 'slot'}">같은 자리 전체 ${slot.length}대</button><button type="button" data-swap-scope="single" aria-pressed="${swapTarget.mode === 'single'}">${escapeText(resourceName(device))}만</button></div></fieldset>` : '';
   openEditorPanel(`${resourceName(device)} · 장비 선택`, `<p class="editor-hint">같은 장비라도 측정 조건이 다르면 다른 숫자라, 조건째로 고릅니다. 고른 값은 워크로드 조건과 대조해 쓸 수 있는지 판정합니다.</p>
@@ -2267,6 +2372,7 @@ function openDeviceSwapPicker(id, target = null) {
       <label class="template-search"><span class="visually-hidden">장비 검색</span>
         <input type="search" id="swap-search" placeholder="제조사, 모델, 조건으로 검색 (예: 1518, IPS, ASA)" autocomplete="off"></label>
       <p class="template-count" id="swap-count" aria-live="polite">${entries.reduce((n, entry) => n + entry.profiles.length, 0)}개</p>
+      <button type="button" class="swap-compare-open" data-swap-open-comparison ${swapComparison.length ? '' : 'disabled'}>후보 비교 ${swapComparison.length}/4</button>
       ${device.spec ? '<button type="button" class="swap-detach" data-swap-detach>데이터시트를 떼고 직접 입력으로</button>' : ''}
     </div>
     <div class="template-list">${cards}</div>`);
@@ -2274,10 +2380,40 @@ function openDeviceSwapPicker(id, target = null) {
 }
 
 function swapSlot(device) {
+  // 같은 모델은 독립 장비에도 흔하다. 명시한 HA 그룹이 있으면 그 그룹이 사용자가 의도한
+  // 치환 자리다. 그룹 밖 같은 모델까지 같이 바꾸지 않는다.
+  const declared = (topology.haGroups || []).find(({ members }) => members?.includes(device.id));
+  if (declared) {
+    const members = declared.members
+      .map((id) => topology.devices.find((item) => item.id === id))
+      .filter((item) => item?.kind === device.kind);
+    if (members.length) return members;
+  }
   const catalogId = device.spec?.catalogId;
-  return topology.devices.filter((item) => item.kind === device.kind && (catalogId
+  const matches = topology.devices.filter((item) => item.kind === device.kind && (catalogId
     ? item.spec?.catalogId === catalogId
     : item.manufacturer === device.manufacturer && item.model === device.model));
+  if (matches.length !== 2) return [device];
+  const peer = matches.find(({ id }) => id !== device.id);
+  return peer && hasSymmetricLinks(device, peer) ? matches : [device];
+}
+
+function hasSymmetricLinks(left, right) {
+  const signature = (deviceId, ignoredId) => topology.links
+    .filter(({ source, target }) => source === deviceId || target === deviceId)
+    .map((link) => {
+      const neighborId = link.source === deviceId ? link.target : link.source;
+      const neighbor = topology.devices.find(({ id }) => id === neighborId);
+      if (!neighbor || neighbor.id === ignoredId) return null;
+      const capacity = Object.entries(link.capacity || {}).sort(([a], [b]) => a.localeCompare(b));
+      const directions = link.directions ? Object.entries(link.directions).sort(([a], [b]) => a.localeCompare(b)) : [];
+      return JSON.stringify({ kind: neighbor.kind, capacity, directions });
+    })
+    .filter(Boolean)
+    .sort();
+  const leftLinks = signature(left.id, right.id);
+  const rightLinks = signature(right.id, left.id);
+  return leftLinks.length > 0 && JSON.stringify(leftLinks) === JSON.stringify(rightLinks);
 }
 
 function swapBindingLabel(result) {
@@ -2305,6 +2441,51 @@ function swapConditionIssues(preview) {
   return swapConditionAxes(preview).filter(({ applicability }) => applicability !== 'applicable' && applicability !== 'user-asserted');
 }
 
+function swapComparisonPreview(entry, profile) {
+  const device = topology.devices.find((item) => item.id === swapTarget?.id);
+  if (!device || !swapTarget) return null;
+  const slot = swapSlot(device);
+  const slotIds = swapTarget.slotIds || slot.map(({ id }) => id);
+  const memberIds = swapTarget.mode === 'single' ? [device.id] : slotIds;
+  const candidate = { ...buildSpec(entry, profile), vendor: entry.vendor, model: entry.model };
+  const candidateTopology = structuredClone(topology);
+  for (const memberId of memberIds) applySpec(candidateTopology, memberId, candidate);
+  return { id: device.id, entry, profile, candidate, memberIds, slotIds, topology: candidateTopology };
+}
+
+function swapNormalMultiplier(result) { return result.summary.growthLadder?.rungs?.[0]?.breachScale ?? null; }
+function formatSwapMultiplier(value) { return value == null ? '미확정' : `${value.toFixed(2)}×`; }
+
+function openSwapComparison() {
+  if (!swapTarget || !swapComparison.length) return;
+  const original = calculateScenario(topology, scenarioOptions());
+  const originalSurvival = calculateSurvivalMultiplier(topology, { scale: state.scale });
+  const rows = swapComparison.map(({ entryId, profileId }) => {
+    const entry = catalogEntry(entryId);
+    const profile = catalogProfile(entryId, profileId);
+    const preview = entry && profile ? swapComparisonPreview(entry, profile) : null;
+    if (!preview) return '';
+    const issues = swapConditionIssues(preview);
+    if (issues.length) return `<article class="swap-comparison-row" data-swap-comparison-row><header><strong>${escapeText(`${entry.vendor} ${entry.model}`)}</strong><span>${escapeText(profile.label)}</span></header><p class="swap-comparison-blocked">조건 확인 필요 · ${issues.length}축</p><small>현재 워크로드와 맞는지 확인되지 않은 후보 근거가 있어 수치 비교를 보류합니다.</small></article>`;
+    const candidate = calculateScenario(preview.topology, scenarioOptions());
+    const candidateSurvival = calculateSurvivalMultiplier(preview.topology, { scale: state.scale });
+    const sameBinding = original.summary.bindingResourceId === candidate.summary.bindingResourceId && original.summary.bindingAxis === candidate.summary.bindingAxis;
+    return `<article class="swap-comparison-row" data-swap-comparison-row><header><strong>${escapeText(`${entry.vendor} ${entry.model}`)}</strong><span>${escapeText(profile.label)}</span></header><dl><div><dt>병목</dt><dd>${escapeText(sameBinding ? `그대로 · ${swapBindingLabel(candidate)}` : `${swapBindingLabel(original)} → ${swapBindingLabel(candidate)}`)}</dd></div><div><dt>생존 배수</dt><dd>${escapeText(formatSwapMultiplier(originalSurvival.multiplier))} → ${escapeText(formatSwapMultiplier(candidateSurvival.multiplier))}</dd></div><div><dt>정상시 배수</dt><dd>${escapeText(formatSwapMultiplier(swapNormalMultiplier(original)))} → ${escapeText(formatSwapMultiplier(swapNormalMultiplier(candidate)))}</dd></div><div><dt>과부하 자원</dt><dd>${original.summary.overloadedCount}개 → ${candidate.summary.overloadedCount}개</dd></div><div><dt>랙</dt><dd>${escapeText(swapRackChange(original, candidate))}</dd></div></dl><button type="button" data-swap-comparison-apply="${escapeAttribute(entry.id)}" data-swap-profile="${escapeAttribute(profile.id)}">이 항목으로 치환</button></article>`;
+  }).join('');
+  const device = topology.devices.find((item) => item.id === swapTarget.id);
+  openEditorPanel(`${resourceName(device)} · 후보 비교`, `<p class="swap-comparison-disclosure">이 값은 현재 설계와 워크로드 조건에서만 유효합니다. 장비 성능 비교나 추천 순위가 아닙니다.</p><div class="swap-comparison-list">${rows}</div><button type="button" class="swap-comparison-back" data-swap-back-picker>후보 선택으로 돌아가기</button>`);
+}
+
+function toggleSwapComparison(entryId, profileId) {
+  const index = swapComparison.findIndex((item) => item.entryId === entryId && item.profileId === profileId);
+  if (index >= 0) swapComparison.splice(index, 1);
+  else {
+    if (swapComparison.length >= 4) { showToast('후보 비교는 최대 4개까지 가능합니다.'); return; }
+    swapComparison.push({ entryId, profileId });
+  }
+  openDeviceSwapPicker(swapTarget.id, swapTarget);
+}
+
 function swapRackChange(original, preview) {
   const before = new Map(original.racks.map((rack) => [rack.id, rack]));
   const changed = preview.racks.flatMap((rack) => {
@@ -2315,10 +2496,11 @@ function swapRackChange(original, preview) {
     if (!powerChanged && !unitsChanged) return [];
     const power = powerChanged ? `${formatCompact(previous.powerWatts, 'watts')} → ${formatCompact(rack.powerWatts, 'watts')}` : '변화 없음';
     const units = unitsChanged ? `${previous.usedU ?? '미확인'}U → ${rack.usedU ?? '미확인'}U` : '변화 없음';
-    return { label: `${rack.name} 전력 ${power} · U ${units}`, failed: rack.status === 'fail' };
+    const state = rack.status === 'fail' ? '랙 예산 초과' : rack.status === 'unknown' ? '랙 예산 미확인' : '';
+    return { label: `${rack.name} 전력 ${power} · U ${units}`, state };
   });
   if (!changed.length) return '전력·랙 U 변화 없음';
-  return `전력·랙 U · ${changed.map(({ label, failed }) => `${label}${failed ? ' · 랙 예산 초과' : ''}`).join(' / ')}`;
+  return `전력·랙 U · ${changed.map(({ label, state }) => `${label}${state ? ` · ${state}` : ''}`).join(' / ')}`;
 }
 
 function renderSwapPreview() {
@@ -2357,7 +2539,7 @@ function renderSwapPreview() {
   const result = blocked
     ? `<span>후보 근거 ${issues.length}개가 현재 워크로드 조건과 맞는지 확인되지 않았습니다. 수치 비교는 보류합니다.</span>`
     : `<span><b>${sameBinding ? '병목 그대로' : '병목 이동'}</b> · ${escapeText(sameBinding ? swapBindingLabel(preview) : `${swapBindingLabel(original)} → ${swapBindingLabel(preview)}`)}</span><span>생존 배수 ${escapeText(originalSurvival?.multiplier == null ? '미확정' : `${originalSurvival.multiplier.toFixed(2)}×${originalSurvival.bounded ? ' 이하' : ''}`)} → ${escapeText(previewSurvival?.multiplier == null ? '미확정' : `${previewSurvival.multiplier.toFixed(2)}×${previewSurvival.bounded ? ' 이하' : ''}`)}</span><span>정상시 배수 ${escapeText(formatMultiplier(normalMultiplier(original)))} → ${escapeText(formatMultiplier(normalMultiplier(preview)))}</span><span>과부하 자원 ${original.summary.overloadedCount}개 → ${preview.summary.overloadedCount}개</span><span>${escapeText(swapRackChange(original, preview))}</span>`;
-  const evidenceDetail = `<details class="swap-adjustments"${swapPreview.conditionsExpanded ? ' open' : ''}><summary data-swap-conditions-toggle>측정 조건 미세 조정 <span>${issues.length}</span></summary><p>${issues.length ? '현재 워크로드와 다른 측정 조건을 확인한 뒤, 필요한 축만 수락하세요.' : '후보의 축별 측정 조건과 수락 상태입니다.'}</p><div class="swap-condition-list">${conditionRows}</div></details>`;
+  const evidenceDetail = `<details class="swap-adjustments"${swapPreview.conditionsExpanded ? ' open' : ''}><summary data-swap-conditions-toggle>측정 조건 미세 조정 <span>${issues.length}</span></summary><p>${issues.length ? '현재 워크로드와 다른 측정 조건을 확인한 뒤, 필요한 축만 수락하세요.' : '후보의 축별 측정 조건과 수락 상태입니다.'}</p><p class="swap-acceptance-scope">수락은 이 후보 장비와 현재 워크로드 조건에만 저장됩니다.</p><div class="swap-condition-list">${conditionRows}</div></details>`;
   const asymmetryWarning = swapPreview.memberIds.length < swapPreview.slotIds.length
     ? `<p class="swap-asymmetry">한 대만 치환합니다. 같은 자리의 용량이 비대칭이 되며, 결과는 이 단계적 교체 상태를 계산합니다.</p>` : '';
   openEditorPanel(`${resourceName(device)} · 장비 치환`, `<p class="editor-hint">후보를 고르면 즉시 치환 장비 상태가 됩니다. 현재 장비를 눌러 이 치환만 되돌릴 수 있습니다.</p>
@@ -2540,19 +2722,25 @@ function domainSuggestions() {
     const members = byZone.get(zone) || []; members.push(device); byZone.set(zone, members);
   }
   return [...byZone.entries()].filter(([, devices]) => devices.length > 1 && devices.every(({ id }) => !memberIds.has(id)))
-    .map(([name, devices]) => ({ id: normalizeId(`suggested-${name}`), name, deviceIds: devices.map(({ id }) => id).sort() }))
+    .map(([name, devices]) => ({ id: normalizeId(`suggested-${name}`), name, kind: 'space', deviceIds: devices.map(({ id }) => id).sort() }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function openVerificationPanel() {
   const services = (topology.services || []).map((item) => `<li><b>${escapeText(item.name)}</b> · demand ${item.demandIds.length}개 · ${(item.requiredDeliveryRatio ?? 1) * 100}% <button type="button" data-delete-model="service" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>정의된 서비스 없음</li>';
-  const domains = (topology.failureDomains || []).map((item) => `<li><b>${escapeText(item.name)}</b> · 자원 ${(item.deviceIds?.length || 0) + (item.linkIds?.length || 0)}개 <button type="button" data-delete-model="domain" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>정의된 장애 도메인 없음</li>';
+  const domains = (topology.failureDomains || []).map((item) => `<li><b>${escapeText(item.name)}</b> · ${escapeText(FAILURE_DOMAIN_KIND_LABEL[item.kind] || FAILURE_DOMAIN_KIND_LABEL.other)} · 자원 ${(item.deviceIds?.length || 0) + (item.linkIds?.length || 0)}개 <button type="button" data-delete-model="domain" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>정의된 장애 도메인 없음</li>';
   const suggestions = domainSuggestions();
   const suggestionList = suggestions.length
-    ? `<aside class="domain-suggestions"><strong>도메인 제안</strong><p>같은 영역의 자원이 아직 도메인에 없습니다. 수락 전에는 계산에 반영하지 않습니다.</p>${suggestions.map((item) => `<button type="button" data-domain-suggestion="${escapeAttribute(item.id)}">${escapeText(item.name)} · 장비 ${item.deviceIds.length}개를 도메인으로 추가</button>`).join('')}</aside>`
+    ? `<aside class="domain-suggestions"><strong>도메인 제안</strong><p>같은 영역의 자원이 아직 도메인에 없습니다. 수락 전에는 계산에 반영하지 않습니다.</p>${suggestions.map((item) => `<button type="button" data-domain-suggestion="${escapeAttribute(item.id)}">${escapeText(item.name)} · ${escapeText(FAILURE_DOMAIN_KIND_LABEL[item.kind])} · 장비 ${item.deviceIds.length}개를 도메인으로 추가</button>`).join('')}</aside>`
     : '';
   const racks = (current.racks || []).map((item) => `<li><b>${escapeText(item.name || item.id)}</b> · 전력 ${item.powerStatus || item.status || '미확인'} · U ${item.spaceStatus || item.status || '미확인'} <button type="button" data-delete-model="rack" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>정의된 랙 없음</li>';
-  const scenarios = state.namedScenarios.map((item) => `<li><button type="button" data-load-scenario="${item.id}">${escapeText(item.name)}</button> <button type="button" data-delete-model="scenario" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>저장한 시나리오 없음</li>';
+  const scenarioVerdicts = buildNamedScenarioServiceVerdicts(topology, baseline, state.namedScenarios);
+  const scenarios = scenarioVerdicts.map((item) => {
+    const services = item.services.length
+      ? `<div class="scenario-service-table" role="region" aria-label="${escapeAttribute(item.name)} 서비스 판정"><table><thead><tr><th>서비스</th><th>판정</th><th>원인</th><th>기준선</th></tr></thead><tbody>${item.services.map((service) => `<tr data-status="${escapeAttribute(service.status)}"><td>${escapeText(service.name)}</td><td>${escapeText(service.statusLabel)}</td><td>${escapeText(service.cause)}</td><td>${escapeText(service.baselineChange)}</td></tr>`).join('')}</tbody></table></div>`
+      : '<p class="scenario-service-empty">서비스 수용 기준이 없습니다.</p>';
+    return `<article class="saved-scenario"><header><button type="button" data-load-scenario="${escapeAttribute(item.id)}">${escapeText(item.name)}</button><span>${escapeText({ pass: '통과', fail: '실패', unknown: '통과 보류', invalid: '입력 오류' }[item.evaluationStatus] || item.evaluationStatus)}</span><button type="button" data-delete-model="scenario" data-model-id="${escapeAttribute(item.id)}">삭제</button></header>${services}</article>`;
+  }).join('') || '<p class="scenario-service-empty">저장한 시나리오 없음</p>';
   const counts = { service: (topology.services || []).length, domain: (topology.failureDomains || []).length, rack: (topology.racks || []).length, scenario: state.namedScenarios.length };
   const tab = state.verificationTab || 'service';
   openEditorPanel('검증 설정', `
@@ -2560,10 +2748,41 @@ function openVerificationPanel() {
     <div class="verification-tabs" role="tablist" aria-label="검증 설정 종류">${[['service', '서비스'], ['domain', '장애 도메인'], ['rack', '랙'], ['scenario', '시나리오']].map(([id, label]) => `<button type="button" role="tab" data-verification-tab="${id}" aria-selected="${tab === id}">${label}<span>${counts[id]}</span></button>`).join('')}</div>
     <div class="verification-columns">
       <section data-verification-panel="service"${tab === 'service' ? '' : ' hidden'}><h3>서비스 생존성</h3><p>어떤 트래픽을 어느 비율까지 전달해야 하는지 정합니다.</p><ul>${services}</ul><form class="editor-form" data-editor-form="service"><label>이름<input name="name" required maxlength="80"></label><label>최소 전달률 (%)<input name="ratio" type="number" min="1" max="100" value="100"></label>${checkList('demandIds', topology.demands, '검증할 수요')}<button type="submit">서비스 추가</button><p class="editor-error"></p></form></section>
-      <section data-verification-panel="domain"${tab === 'domain' ? '' : ' hidden'}><h3>공통 장애 도메인</h3><p>전원이나 회선처럼 함께 멈추는 자원을 묶습니다.</p>${suggestionList}<ul>${domains}</ul><form class="editor-form" data-editor-form="failure-domain"><label>이름<input name="name" required maxlength="80"></label>${checkList('deviceIds', topology.devices, '함께 멈출 장비')}${checkList('linkIds', topology.links, '함께 멈출 링크')}<button type="submit">장애 도메인 추가</button><p class="editor-error"></p></form></section>
+      <section data-verification-panel="domain"${tab === 'domain' ? '' : ' hidden'}><h3>공통 장애 도메인</h3><p>전원이나 회선처럼 함께 멈추는 자원을 묶습니다. 종류는 설명 라벨이며 계산에는 영향을 주지 않습니다.</p>${suggestionList}<ul>${domains}</ul><form class="editor-form" data-editor-form="failure-domain"><label>이름<input name="name" required maxlength="80"></label><label>종류<select name="kind">${failureDomainKinds.map((kind) => `<option value="${kind}">${escapeText(FAILURE_DOMAIN_KIND_LABEL[kind])}</option>`).join('')}</select></label>${checkList('deviceIds', topology.devices, '함께 멈출 장비')}${checkList('linkIds', topology.links, '함께 멈출 링크')}<button type="submit">장애 도메인 추가</button><p class="editor-error"></p></form></section>
       <section data-verification-panel="rack"${tab === 'rack' ? '' : ' hidden'}><h3>랙 수용량</h3><p>장비의 전력과 공간이 랙 예산 안에 드는지 확인합니다.</p><ul>${racks}</ul><form class="editor-form" data-editor-form="rack"><label>이름<input name="name" required maxlength="80"></label><label>전력 예산 (W)<input name="power" type="number" min="1" required></label><label>공간 (U)<input name="units" type="number" min="1" required></label><label>전력 기준<select name="basis"><option value="nameplate">명판값</option><option value="typical">일반 부하</option><option value="measured">실측</option></select></label>${checkList('deviceIds', topology.devices, '랙 장비')}<button type="submit">랙 추가</button><p class="editor-error"></p></form></section>
-      <section data-verification-panel="scenario"${tab === 'scenario' ? '' : ' hidden'}><h3>비교 시나리오</h3><p>현재 장애와 부하 상태를 이름 붙여 다시 불러옵니다.</p><ul>${scenarios}</ul><form class="editor-form" data-editor-form="scenario"><label>이름<input name="name" required maxlength="80"></label><button type="submit">현재 장애·부하 저장</button><p class="editor-error"></p></form></section>
+      <section data-verification-panel="scenario"${tab === 'scenario' ? '' : ' hidden'}><h3>비교 시나리오</h3><p>저장한 장애와 부하를 다시 계산해 서비스별 수용 판정과 기준선 차이를 표시합니다.</p><div class="saved-scenarios">${scenarios}</div><form class="editor-form" data-editor-form="scenario"><label>이름<input name="name" required maxlength="80"></label><button type="submit">현재 장애·부하 저장</button><p class="editor-error"></p></form></section>
     </div>`);
+}
+
+function openMeasuredImportPanel() {
+  const imported = topology.measuredImport;
+  const observed = topology.observedLoad;
+  if (!imported && !observed) {
+    openEditorPanel('실측 임포트 결과', '<p class="editor-hint">아직 가져온 실측 자료가 없습니다. 프로젝트 메뉴에서 실측 한계 또는 관측 부하 JSON을 가져오세요.</p>');
+    return;
+  }
+  const row = (entry, state) => {
+    const axis = axisCatalog[entry.axis];
+    const device = topology.devices.find(({ id }) => id === entry.deviceId);
+    const target = device ? resourceName(device) : entry.deviceId;
+    return `<li><b>${escapeText(target)}</b> · ${escapeText(axis?.label || entry.axis)} ${escapeText(formatCompact(entry.value, axis?.unit || entry.unit))}<small>${escapeText(state)}${entry.asOf ? ` · ${escapeText(entry.asOf)}` : ''}${entry.saturationEvidence ? ` · 포화 증거: ${escapeText(entry.saturationEvidence)}` : ''}</small></li>`;
+  };
+  const applied = imported?.applied.length ? imported.applied.map((entry) => row(entry, '한계 적용')).join('') : '<li>적용한 한계 없음</li>';
+  const floors = imported?.floors.length ? imported.floors.map((entry) => row(entry, '관측 하한 보관 · 한계 미승격')).join('') : '<li>관측 하한 없음</li>';
+  const unmatched = imported?.unmatched.length ? imported.unmatched.map((entry) => row(entry, '대상 장비 없음 · 미매칭')).join('') : '<li>미매칭 없음</li>';
+  const observedComparison = observed ? compareTopologyFingerprint(observed.fingerprint, topology) : null;
+  const observedCount = observed ? Object.values(observed.devices).reduce((count, axes) => count + Object.keys(axes).length, 0) + Object.values(observed.links).reduce((count, directions) => count + Object.values(directions).reduce((sum, axes) => sum + Object.keys(axes || {}).length, 0), 0) : 0;
+  const fingerprintNotice = observed && !fingerprintMatches(observedComparison) ? `<small>토폴로지 변경 감지 · 추가 장비 ${observedComparison.addedDevices.join(', ') || '없음'} · 삭제 장비 ${observedComparison.missingDevices.join(', ') || '없음'} · 추가 링크 ${observedComparison.addedLinks.join(', ') || '없음'} · 삭제 링크 ${observedComparison.missingLinks.join(', ') || '없음'}</small>` : '';
+  const limitSections = imported ? `<p class="editor-hint">${escapeText(imported.importedAt)}에 가져온 한계 결과입니다. 관측 최대는 포화 증거가 없으면 한계값으로 쓰지 않습니다.</p><section><h3>한계 적용 <span>${imported.applied.length}</span></h3><ul>${applied}</ul></section><section><h3>관측 하한 <span>${imported.floors.length}</span></h3><ul>${floors}</ul></section><section><h3>미매칭 <span>${imported.unmatched.length}</span></h3><ul>${unmatched}</ul></section>` : '';
+  const freshnessNotice = observed && observedLoadIsStale(observed) ? `<small class="measured-import-warning">관측 시점이 ${OBSERVED_LOAD_STALE_AFTER_DAYS}일을 넘었습니다. 현재 부하와 다를 수 있습니다.</small>` : '';
+  const zabbixUnmapped = observed?.unmapped || [];
+  const zabbixNotice = zabbixUnmapped.length ? `<small class="measured-import-warning">Zabbix 미매핑 ${zabbixUnmapped.length}개 · ${escapeText(zabbixUnmapped.map(({ host, itemKey }) => `${host}: ${itemKey}`).join(', '))}</small>` : '';
+  const observedSection = observed ? `<section><h3>관측 부하 <span>${observedCount}</span></h3><ul><li><b>${escapeText(observed.aggregate.toUpperCase())}</b> · ${escapeText(observed.asOf)}${observed.source === 'zabbix' ? ' · Zabbix' : ''}<small>정상 상태의 자원 부하만 대체합니다. 장애 분석에는 수요 모델을 사용합니다.</small>${freshnessNotice}${fingerprintNotice}${zabbixNotice}</li></ul></section>` : '';
+  const validation = buildObservedLoadValidationReport(topology, scenarioOptions());
+  const groupLabel = { matched: '조건 일치', mismatched: '조건 불일치', unrecorded: '조건 미기록' };
+  const validationRows = validation.axes.map((axis) => `<tr><th>${escapeText(axisCatalog[axis.axis]?.label || axis.axis)}</th><td>${axis.sampleCount}</td><td>${formatPercent(axis.mape)}</td><td>${formatPercent(axis.maxAbsolutePercentageError)}</td><td>${formatPercent(axis.meanSignedPercentageError, true)}</td><td>과소 ${axis.signedError.underModelled} · 일치 ${axis.signedError.exact} · 과대 ${axis.signedError.overModelled}</td></tr>`).join('');
+  const validationSection = observed ? `<section><h3>검증 리포트 <span>${validation.sampleCount}</span></h3>${validation.axes.length ? `<p class="editor-hint">${groupLabel[validation.conditionGroup]} 표본입니다. 모델 예측은 관측 부하를 빼고 같은 정상 시나리오를 다시 계산했습니다.</p><table><thead><tr><th>축</th><th>표본</th><th>MAPE</th><th>최대 오차</th><th>평균 부호 오차</th><th>분포</th></tr></thead><tbody>${validationRows}</tbody></table>` : '<p class="editor-hint">비교할 수 있는 관측 축이 없습니다. 장비 또는 링크 축이 현재 토폴로지와 일치하는지 확인하세요.</p>'}</section>` : '';
+  openEditorPanel('실측 임포트 결과', `<div class="measured-import-results">${limitSections}${observedSection}${validationSection}</div>`);
 }
 
 function downloadText(filename, text, type = 'application/json') {
@@ -2572,12 +2791,12 @@ function downloadText(filename, text, type = 'application/json') {
 }
 
 // 내보낸 그림은 화면과 같은 축을 골라 같은 값을 말해야 한다. 그래서 결과와 훑기를 함께 넘긴다.
-function diagramSvg() {
-  return exportDiagramSvg(topology, current, { sweep: sweepStale() ? null : sweep, linkRoute: routeView.mode, exportedAt: new Date().toISOString().slice(0, 16).replace('T', ' ') });
+function diagramSvg(anonymize = false) {
+  return exportDiagramSvg(topology, current, { anonymize, sweep: sweepStale() ? null : sweep, survivalMultiplier: survival, domainSweep, linkRoute: routeView.mode, exportedAt: new Date().toISOString().slice(0, 16).replace('T', ' ') });
 }
 
-async function exportPng() {
-  const svg = diagramSvg();
+async function exportPng(anonymize = false) {
+  const svg = diagramSvg(anonymize);
   const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
   try {
     const image = new Image(); image.src = url; await image.decode();
@@ -2585,8 +2804,8 @@ async function exportPng() {
     const context = canvas.getContext('2d'); context.scale(canvas.width / image.naturalWidth, canvas.height / image.naturalHeight); context.drawImage(image, 0, 0);
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
     if (!blob) throw new Error('PNG 인코딩에 실패했습니다.');
-    const pngUrl = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = pngUrl; anchor.download = 'rack-mesh-diagram.png'; anchor.click(); setTimeout(() => URL.revokeObjectURL(pngUrl), 0);
-    showToast('설계 화면을 PNG로 내보냈습니다.');
+    const pngUrl = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = pngUrl; anchor.download = anonymize ? 'rack-mesh-diagram-anonymized.png' : 'rack-mesh-diagram.png'; anchor.click(); setTimeout(() => URL.revokeObjectURL(pngUrl), 0);
+    showToast(anonymize ? '장비명을 익명화한 PNG로 내보냈습니다.' : '설계 화면을 PNG로 내보냈습니다.');
   } finally { URL.revokeObjectURL(url); }
 }
 
@@ -2609,20 +2828,31 @@ function handleEditorAction(action) {
   if (action === 'device') openDeviceForm();
   if (action === 'demand') openDemandManager();
   if (action === 'verification') openVerificationPanel();
+  if (action === 'measured-import') openMeasuredImportPanel();
   if (action === 'workload') openWorkloadForm();
-  if (action === 'connect') { state.editorMode = state.editorMode === 'connect' ? 'select' : 'connect'; state.connectSource = null; closeEditorPanel(); renderTopology(); renderEditorMode(); }
+  if (action === 'connect') { state.editorMode = state.editorMode === 'connect' ? 'select' : 'connect'; state.connectSource = null; annotationSource = null; closeEditorPanel(); renderTopology(); renderEditorMode(); }
   if (action === 'save') saveProject();
   if (action === 'open') element('project-file-input').click();
   if (action === 'import-device') element('device-file-input').click();
   if (action === 'import-measured-limits') element('measured-limits-file-input').click();
+  if (action === 'import-observed-load') element('observed-load-file-input').click();
+  if (action === 'import-zabbix-observed-load') element('zabbix-observed-load-file-input').click();
   if (action === 'import-drawio') element('drawio-file-input').click();
   if (action === 'export-svg') {
     if (analysisProgress) showToast(`${analysisProgress.label} 계산 중 ${analysisProgress.completed}/${analysisProgress.total} · 완료 후 내보낼 수 있습니다.`);
     else { downloadText('rack-mesh-diagram.svg', diagramSvg(), 'image/svg+xml'); showToast('계산 결과와 판정을 찍은 SVG로 내보냈습니다.'); }
   }
+  if (action === 'export-svg-anonymized') {
+    if (analysisProgress) showToast(`${analysisProgress.label} 계산 중 ${analysisProgress.completed}/${analysisProgress.total} · 완료 후 내보낼 수 있습니다.`);
+    else { downloadText('rack-mesh-diagram-anonymized.svg', diagramSvg(true), 'image/svg+xml'); showToast('장비명을 익명화한 SVG로 내보냈습니다.'); }
+  }
   if (action === 'export-png') {
     if (analysisProgress) showToast(`${analysisProgress.label} 계산 중 ${analysisProgress.completed}/${analysisProgress.total} · 완료 후 내보낼 수 있습니다.`);
     else exportPng().catch((error) => showToast(error.message));
+  }
+  if (action === 'export-png-anonymized') {
+    if (analysisProgress) showToast(`${analysisProgress.label} 계산 중 ${analysisProgress.completed}/${analysisProgress.total} · 완료 후 내보낼 수 있습니다.`);
+    else exportPng(true).catch((error) => showToast(error.message));
   }
   if (action === 'new') openTemplatePicker();
   if (action === 'new-blank') applyTemplate('blank');
@@ -2646,11 +2876,7 @@ function handleEditorAction(action) {
   }
   if (action === 'align-left' && state.selection.length > 1) { topology = alignSelection(topology, state.selection, 'left'); commitTopology('선택한 요소를 왼쪽으로 정렬했습니다.'); }
   if (action === 'distribute-x' && state.selection.length > 2) { topology = distributeSelection(topology, state.selection, 'x'); commitTopology('선택한 요소를 가로로 분배했습니다.'); }
-  if (action === 'annotation-connect') {
-    const endpoints = state.selection.filter(({ type }) => type === 'device' || type === 'shape');
-    if (endpoints.length !== 2) { showToast('주석 연결선을 그릴 장비나 도형을 두 개 선택하세요.'); return; }
-    topology = addConnector(topology, { source: endpoints[0].id, target: endpoints[1].id, kind: 'annotation' }); commitTopology('계산에서 제외되는 주석 연결선을 추가했습니다.');
-  }
+  if (action === 'annotation-connect') { state.editorMode = state.editorMode === 'annotation' ? 'select' : 'annotation'; annotationSource = null; closeEditorPanel(); renderTopology(); renderEditorMode(); showToast(state.editorMode === 'annotation' ? '주석선을 시작할 장비 또는 도형을 선택하세요.' : '주석선 연결을 취소했습니다.'); }
   if (action === 'map-device') {
     const selected = state.selection.length === 1 && state.selection[0].type === 'shape' ? state.selection[0] : null;
     const shape = selected && topology.diagram?.shapes?.find(({ id }) => id === selected.id);
@@ -2691,12 +2917,21 @@ function showToast(message, undo = null) {
 
 function exportResult() {
   if (analysisProgress) { showToast(`${analysisProgress.label} 계산 중 ${analysisProgress.completed}/${analysisProgress.total} · 완료 후 내보낼 수 있습니다.`); return; }
-  const payload = createExport(topology, current, baseline, { survivalMultiplier: survival, sweep });
+  const payload = createExport(topology, current, baseline, { survivalMultiplier: survival, sweep, domainSweep });
   const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
   const anchor = document.createElement('a');
   anchor.href = url; anchor.download = 'rack-mesh-scenario.json'; anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 0);
   showToast('결과 JSON을 내보냈습니다.');
+}
+
+function exportReport(format) {
+  if (analysisProgress) { showToast(analysisProgress.label + ' 계산 중 ' + analysisProgress.completed + '/' + analysisProgress.total + ' · 완료 후 내보낼 수 있습니다.'); return; }
+  const model = buildReportModel(topology, current, baseline, state.namedScenarios, scenarioOptions(), { survivalMultiplier: survival, domainSweep });
+  const renderers = { markdown: [renderReportMarkdown, 'rack-mesh-report.md', 'text/markdown'], html: [renderReportHtml, 'rack-mesh-report.html', 'text/html'], json: [renderReportJson, 'rack-mesh-report.json', 'application/json'] };
+  const [render, filename, type] = renderers[format];
+  downloadText(filename, render(model), type);
+  showToast('분석 보고서 ' + format.toUpperCase() + '을 내보냈습니다.');
 }
 
 // 연결 드래그 중의 고무줄. 링크 레이어에 임시 선 하나를 둔다.
@@ -2825,7 +3060,42 @@ function selectElement(type, id, additive = false) {
   renderEditorMode();
 }
 
+function selectDiagramGroup(id, event = {}) {
+  const target = topology.diagram?.groups?.find((item) => item.id === id);
+  if (!target) return;
+  if (target.locked && !event.altKey) { showToast('잠긴 그룹입니다. Alt/Option+클릭 후 인스펙터에서 잠금을 해제하세요.'); return; }
+  selectElement('group', id);
+  renderTopology(); renderInspector(); openMobileInspector();
+}
+
+function selectDiagramConnector(id, event = {}) {
+  const target = topology.diagram?.connectors?.find((item) => item.id === id);
+  if (!target) return;
+  if (target.locked && !event.altKey) { showToast('잠긴 연결선입니다. Alt/Option+클릭 후 인스펙터에서 잠금을 해제하세요.'); return; }
+  selectElement('connector', id, event.shiftKey || event.metaKey || event.ctrlKey);
+  renderTopology(); renderInspector(); openMobileInspector();
+}
+
+// 배경 도형은 설계를 설명하지만 장비나 계산 링크를 덮어 조작을 가로채면 안 된다. 도형을 잠시
+// hit-test에서 빼고 실제 아래 자원을 찾아, 인프라 조작을 우선한다.
+function infrastructureBelowShape(event, shape) {
+  const previous = shape.style.pointerEvents;
+  shape.style.pointerEvents = 'none';
+  const below = document.elementFromPoint(event.clientX, event.clientY);
+  shape.style.pointerEvents = previous;
+  return below?.closest?.('.mesh-node, .link-hit');
+}
+
 function handleNodeSelection(id, additive = false) {
+  if (state.editorMode === 'annotation') {
+    if (!annotationSource) { annotationSource = id; renderTopology(); renderEditorMode(); showToast('주석선을 끝낼 장비 또는 도형을 선택하세요.'); return; }
+    if (annotationSource === id) { annotationSource = null; renderTopology(); renderEditorMode(); return; }
+    try {
+      topology = addConnector(topology, { source: annotationSource, target: id, kind: 'annotation' });
+      state.selection = [{ type: 'connector', id: topology.diagram.connectors.at(-1).id }]; annotationSource = null; state.editorMode = 'select'; commitTopology('계산에서 제외되는 주석 연결선을 추가했습니다.');
+    } catch (error) { showToast(error.message); annotationSource = null; state.editorMode = 'select'; renderTopology(); renderEditorMode(); }
+    return;
+  }
   if (state.editorMode === 'connect') {
     if (!state.connectSource) { state.connectSource = id; renderTopology(); renderEditorMode(); showToast('연결할 두 번째 장비를 선택하세요.'); return; }
     if (state.connectSource === id) { state.connectSource = null; renderTopology(); renderEditorMode(); return; }
@@ -2993,21 +3263,56 @@ element('node-layer').addEventListener('pointerup', (event) => {
 element('diagram-layer').addEventListener('click', (event) => {
   const shape = event.target.closest('[data-shape-id]');
   if (!shape) return;
+  const infrastructure = infrastructureBelowShape(event, shape);
+  if (infrastructure?.classList.contains('mesh-node')) { handleNodeSelection(infrastructure.dataset.deviceId, event.shiftKey || event.metaKey || event.ctrlKey); return; }
+  if (infrastructure?.classList.contains('link-hit')) { selectElement('link', infrastructure.closest('[data-link-id]')?.dataset.linkId, event.shiftKey || event.metaKey || event.ctrlKey); renderTopology(); renderInspector(); return; }
+  const target = topology.diagram?.shapes?.find((item) => item.id === shape.dataset.shapeId);
+  if (state.editorMode === 'annotation') {
+    if (!annotationSource) { annotationSource = target.id; renderTopology(); renderEditorMode(); showToast('주석선을 끝낼 장비 또는 도형을 선택하세요.'); return; }
+    if (annotationSource === target.id) { annotationSource = null; renderTopology(); renderEditorMode(); return; }
+    try { topology = addConnector(topology, { source: annotationSource, target: target.id, kind: 'annotation' }); state.selection = [{ type: 'connector', id: topology.diagram.connectors.at(-1).id }]; annotationSource = null; state.editorMode = 'select'; commitTopology('계산에서 제외되는 주석 연결선을 추가했습니다.'); } catch (error) { showToast(error.message); }
+    return;
+  }
+  if (target?.locked && !event.altKey) { showToast('잠긴 도형입니다. Alt/Option+클릭 후 인스펙터에서 잠금을 해제하세요.'); return; }
   selectElement('shape', shape.dataset.shapeId, event.shiftKey || event.metaKey || event.ctrlKey);
-  renderTopology(); renderInspector();
+  renderTopology(); renderInspector(); openMobileInspector();
+});
+element('diagram-group-layer').addEventListener('click', (event) => {
+  const group = event.target.closest('[data-diagram-group-id]');
+  if (group) {
+    selectDiagramGroup(group.dataset.diagramGroupId, event);
+    return;
+  }
 });
 element('link-layer').addEventListener('click', (event) => {
   const connector = event.target.closest('[data-connector-id]');
-  if (connector) { selectElement('connector', connector.dataset.connectorId, event.shiftKey || event.metaKey || event.ctrlKey); renderTopology(); renderInspector(); }
+  if (connector) selectDiagramConnector(connector.dataset.connectorId, event);
+});
+element('diagram-group-layer').addEventListener('keydown', (event) => {
+  if (!['Enter', ' '].includes(event.key)) return;
+  const group = event.target.closest('[data-diagram-group-id]');
+  if (!group) return;
+  event.preventDefault();
+  selectDiagramGroup(group.dataset.diagramGroupId, event);
+});
+element('link-layer').addEventListener('keydown', (event) => {
+  if (!['Enter', ' '].includes(event.key)) return;
+  const connector = event.target.closest('[data-connector-id]');
+  if (!connector) return;
+  event.preventDefault();
+  selectDiagramConnector(connector.dataset.connectorId, event);
 });
 element('diagram-layer').addEventListener('dblclick', (event) => {
   const target = event.target.closest('[data-shape-id]'); if (!target) return;
   const shape = topology.diagram?.shapes?.find(({ id }) => id === target.dataset.shapeId); if (!shape) return;
+  if (shape.locked) { showToast('잠긴 도형은 텍스트를 수정할 수 없습니다.'); return; }
   const text = window.prompt('도형 텍스트', shape.text || ''); if (text == null) return;
   topology = updateShape(topology, shape.id, { text }); commitTopology('도형 텍스트를 수정했습니다.');
 });
 element('diagram-layer').addEventListener('pointerdown', (event) => {
   const target = event.target.closest('[data-shape-id]'); if (!target || event.button !== 0) return;
+  if (infrastructureBelowShape(event, target)) return;
+  if (topology.diagram?.shapes?.find((item) => item.id === target.dataset.shapeId)?.locked) { showToast('잠긴 도형은 이동하거나 크기를 바꿀 수 없습니다.'); return; }
   const resize = event.target.closest('[data-shape-resize]');
   if (resize) {
     const shape = topology.diagram?.shapes?.find(({ id }) => id === target.dataset.shapeId);
@@ -3189,7 +3494,14 @@ document.addEventListener('click', (event) => {
   const button = event.target.closest('[data-editor-action]');
   if (button) { closeTopMenus(); handleEditorAction(button.dataset.editorAction); return; }
   if (event.target.closest('[data-export-action="result"]')) { closeTopMenus(); exportResult(); return; }
+  const reportAction = event.target.closest('[data-export-action^="report-"]')?.dataset.exportAction;
+  if (reportAction) { closeTopMenus(); exportReport(reportAction.slice('report-'.length)); return; }
   if (!event.target.closest('.top-menu-wrap')) closeTopMenus();
+});
+document.addEventListener('change', (event) => {
+  if (!event.target.matches('[data-comparison-demand]')) return;
+  comparisonDemandId = event.target.value;
+  renderComparison();
 });
 
 document.addEventListener('keydown', (event) => {
@@ -3252,7 +3564,7 @@ element('editor-panel-content').addEventListener('submit', (event) => {
     if (form.dataset.editorForm === 'failure-domain') {
       const deviceIds = data.getAll('deviceIds'); const linkIds = data.getAll('linkIds'); if (!deviceIds.length && !linkIds.length) throw new Error('장애 도메인에는 자원이 하나 이상 필요합니다.');
       const id = normalizeId(data.get('name')); if ((topology.failureDomains || []).some((item) => item.id === id)) throw new Error('같은 이름의 장애 도메인이 있습니다.');
-      topology.failureDomains = [...(topology.failureDomains || []), { id, name: String(data.get('name')), deviceIds, linkIds }];
+      topology.failureDomains = [...(topology.failureDomains || []), { id, name: String(data.get('name')), kind: String(data.get('kind')), deviceIds, linkIds }];
       commitTopology('장애 도메인을 추가했습니다.'); openVerificationPanel();
     }
     if (form.dataset.editorForm === 'rack') {
@@ -3390,7 +3702,7 @@ element('editor-panel-content').addEventListener('click', (event) => {
     if (!proposal) return;
     const id = normalizeId(proposal.name);
     if ((topology.failureDomains || []).some((domain) => domain.id === id)) { showToast('같은 이름의 장애 도메인이 이미 있습니다.'); return; }
-    topology.failureDomains = [...(topology.failureDomains || []), { id, name: proposal.name, deviceIds: proposal.deviceIds, linkIds: [] }];
+    topology.failureDomains = [...(topology.failureDomains || []), { id, name: proposal.name, kind: proposal.kind, deviceIds: proposal.deviceIds, linkIds: [] }];
     commitTopology(`${proposal.name}의 장비 ${proposal.deviceIds.length}개를 장애 도메인으로 추가했습니다.`); openVerificationPanel(); return;
   }
   const workloadPreset = event.target.closest('[data-workload-preset]')?.dataset.workloadPreset;
@@ -3406,6 +3718,17 @@ element('editor-panel-content').addEventListener('click', (event) => {
   const scope = event.target.closest('[data-swap-scope]')?.dataset.swapScope;
   if (scope && swapTarget) {
     openDeviceSwapPicker(swapTarget.id, { ...swapTarget, mode: scope });
+    return;
+  }
+  const compare = event.target.closest('[data-swap-compare]');
+  if (compare) { toggleSwapComparison(compare.dataset.swapCompare, compare.dataset.swapProfile); return; }
+  if (event.target.closest('[data-swap-open-comparison]')) { openSwapComparison(); return; }
+  if (event.target.closest('[data-swap-back-picker]') && swapTarget) { openDeviceSwapPicker(swapTarget.id, swapTarget); return; }
+  const comparisonApply = event.target.closest('[data-swap-comparison-apply]');
+  if (comparisonApply && swapTarget) {
+    const entry = catalogEntry(comparisonApply.dataset.swapComparisonApply);
+    const profile = entry && catalogProfile(entry.id, comparisonApply.dataset.swapProfile);
+    if (entry && profile) previewDeviceSwap(swapTarget.id, entry, profile);
     return;
   }
   const choice = event.target.closest('[data-swap-catalog]');
@@ -3478,6 +3801,19 @@ element('editor-panel-content').addEventListener('click', (event) => {
   try { removeDemand(topology, button.dataset.deleteDemand); commitTopology('트래픽 수요를 삭제했습니다.'); openDemandManager(); } catch (error) { showToast(error.message); }
 });
 element('inspector-content').addEventListener('change', (event) => {
+  const lock = event.target.closest('[data-diagram-lock]');
+  if (lock) {
+    const form = lock.closest('[data-resource-form]');
+    const id = form.dataset.resourceId;
+    try {
+      if (form.dataset.resourceForm === 'shape') topology = updateShape(topology, id, { locked: lock.checked });
+      else if (form.dataset.resourceForm === 'connector') topology = updateConnector(topology, id, { locked: lock.checked });
+      else topology = updateGroup(topology, id, { locked: lock.checked });
+      const label = form.dataset.resourceForm === 'shape' ? '도형' : form.dataset.resourceForm === 'connector' ? '연결선' : '그룹';
+      commitTopology(lock.checked ? `잠긴 ${label}입니다. Alt/Option+클릭 후 인스펙터에서 잠금을 해제하세요.` : `${label}의 잠금을 해제했습니다.`);
+    } catch (error) { formError(form, error.message); }
+    return;
+  }
   const spec = event.target.dataset.specField;
   if (spec) {
     try {
@@ -3710,10 +4046,33 @@ element('device-file-input').addEventListener('change', async (event) => {
 element('measured-limits-file-input').addEventListener('change', async (event) => {
   try {
     const text = await readFile(event.target); if (!text) return;
-    const imported = applyMeasuredLimits(topology, importMeasuredLimits(text));
+    const entries = importMeasuredLimits(text);
+    const imported = applyMeasuredLimits(topology, entries);
     topology = imported.topology;
+    const summarize = (entry) => ({ deviceId: entry.deviceId, axis: entry.axis, value: entry.value, unit: entry.unit, asOf: entry.asOf, saturationEvidence: entry.saturationEvidence });
+    topology.measuredImport = { importedAt: new Date().toISOString(), applied: imported.applied.map(summarize), floors: imported.floors.map(summarize), unmatched: entries.filter((entry) => imported.unmatched.includes(entry.deviceId)).map(summarize) };
     commitTopology(`실측 한계 ${imported.applied.length}개 적용 · 관측 하한 ${imported.floors.length}개 보관${imported.unmatched.length ? ` · 미매칭 ${imported.unmatched.length}개` : ''}`);
   } catch (error) { showToast(`실측 한계 임포트 실패: ${error.message}`); }
+});
+element('observed-load-file-input').addEventListener('change', async (event) => {
+  try {
+    const text = await readFile(event.target); if (!text) return;
+    const observed = importObservedLoad(text);
+    const imported = applyObservedLoad(topology, observed);
+    topology = imported.topology;
+    const changed = Object.values(imported.comparison).reduce((count, values) => count + values.length, 0);
+    commitTopology(`관측 부하 ${imported.applied.length}개 적용${imported.unmatched.length ? ` · 미매칭 ${imported.unmatched.length}개` : ''}${changed ? ' · 토폴로지 변경 감지' : ''}`);
+  } catch (error) { showToast(`관측 부하 임포트 실패: ${error.message}`); }
+});
+element('zabbix-observed-load-file-input').addEventListener('change', async (event) => {
+  try {
+    const text = await readFile(event.target); if (!text) return;
+    const observed = importZabbixObservedLoad(text);
+    const imported = applyObservedLoad(topology, observed);
+    topology = imported.topology;
+    const changed = Object.values(imported.comparison).reduce((count, values) => count + values.length, 0);
+    commitTopology(`Zabbix 관측 부하 ${imported.applied.length}개 적용${observed.unmapped.length ? ` · 미매핑 ${observed.unmapped.length}개` : ''}${imported.unmatched.length ? ` · 토폴로지 미매칭 ${imported.unmatched.length}개` : ''}${changed ? ' · 토폴로지 변경 감지' : ''}`);
+  } catch (error) { showToast(`Zabbix 관측 부하 임포트 실패: ${error.message}`); }
 });
 element('drawio-file-input').addEventListener('change', async (event) => {
   try {
@@ -3730,7 +4089,7 @@ const topologyScroll = document.querySelector('.topology-scroll');
 // 있다는 것을 알 방법이 없었다. Shift 를 함께 누르면 이미 고른 것에 더한다.
 topologyScroll.addEventListener('pointerdown', (event) => {
   if (event.pointerType === 'touch') return;
-  const onResource = event.target.closest('.mesh-node, .link-hit, .link-handle, .diagram-shape');
+  const onResource = event.target.closest('.mesh-node, .link-hit, .link-handle, .diagram-shape, .diagram-group');
   const panButton = event.button === 1 || event.button === 2;
   if (!onResource && event.button === 0 && state.editorMode === 'select') {
     const start = canvasPoint(event);
@@ -3790,7 +4149,7 @@ topologyScroll.addEventListener('pointerup', (event) => {
 // 그러면 포인터 잡기가 풀리며 pointercancel 이 와서 밀기가 시작하자마자 죽는다. 그래서 움직인
 // 뒤에 막는 것으로는 늦다 - 빈 곳에서는 누르는 순간부터 막는다. 자원 위 메뉴는 각자 열린다.
 topologyScroll.addEventListener('contextmenu', (event) => {
-  if (event.target.closest('.mesh-node, .link-hit, .link-handle, .diagram-shape')) return;
+  if (event.target.closest('.mesh-node, .link-hit, .link-handle, .diagram-shape, .diagram-group')) return;
   event.preventDefault();
 }, true);
 topologyScroll.addEventListener('pointercancel', () => { selectionBoxState = null; element('selection-marquee').hidden = true; endPan(); });
@@ -3812,26 +4171,39 @@ document.addEventListener('keydown', (event) => {
       return;
     }
   }
+  if (event.key === 'Escape' && state.editorMode === 'annotation') {
+    event.preventDefault();
+    annotationSource = null; state.editorMode = 'select'; renderTopology(); renderEditorMode(); showToast('주석선 연결을 취소했습니다.');
+    return;
+  }
   if (event.key === 'Escape' && !element('editor-panel').hidden) closeEditorPanel();
   if (event.target.closest('input, select, textarea')) return;
   const command = event.metaKey || event.ctrlKey;
   if (command && event.key.toLowerCase() === 'z') { event.preventDefault(); historyStep(event.shiftKey ? 'redo' : 'undo'); }
   if (command && event.key.toLowerCase() === 'y') { event.preventDefault(); historyStep('redo'); }
   if (command && event.key.toLowerCase() === 's') { event.preventDefault(); saveProject(); }
-  if (command && event.key.toLowerCase() === 'c' && state.selection.length) { event.preventDefault(); clipboard = copySelection(topology, state.selection); showToast(`${state.selection.length}개 요소를 복사했습니다.`); }
+  if (command && event.key.toLowerCase() === 'c' && state.selection.length) {
+    event.preventDefault();
+    try { clipboard = copySelection(topology, state.selection); showToast(`${state.selection.length}개 요소를 복사했습니다.`); } catch (error) { showToast(error.message); }
+  }
   if (command && event.key.toLowerCase() === 'v' && clipboard) {
-    event.preventDefault(); const pasted = pasteSelection(topology, clipboard); topology = pasted.topology; state.selection = pasted.selection;
-    nameDuplicates(pasted.selection);
-    state.selectedId = pasted.selection.find(({ type }) => type === 'device')?.id || state.selectedId; commitTopology('복사한 요소를 붙여넣었습니다.');
+    event.preventDefault();
+    try {
+      const pasted = pasteSelection(topology, clipboard); topology = pasted.topology; state.selection = pasted.selection;
+      nameDuplicates(pasted.selection);
+      state.selectedId = pasted.selection.find(({ type }) => type === 'device')?.id || state.selectedId; commitTopology('복사한 요소를 붙여넣었습니다.');
+    } catch (error) { showToast(error.message); }
   }
   if ((event.key === 'Delete' || event.key === 'Backspace') && state.selection.length) {
     event.preventDefault();
-    topology = removeDiagramElements(topology, state.selection);
-    for (const item of state.selection) {
-      if (item.type === 'link' && topology.links.some(({ id }) => id === item.id)) removeLink(topology, item.id);
-      if (item.type === 'device' && topology.devices.some(({ id }) => id === item.id)) removeDevice(topology, item.id);
-    }
-    state.selection = []; state.selectedId = topology.devices[0]?.id || null; commitTopology('선택한 요소를 삭제했습니다.');
+    try {
+      topology = removeDiagramElements(topology, state.selection);
+      for (const item of state.selection) {
+        if (item.type === 'link' && topology.links.some(({ id }) => id === item.id)) removeLink(topology, item.id);
+        if (item.type === 'device' && topology.devices.some(({ id }) => id === item.id)) removeDevice(topology, item.id);
+      }
+      state.selection = []; state.selectedId = topology.devices[0]?.id || null; commitTopology('선택한 요소를 삭제했습니다.');
+    } catch (error) { showToast(error.message); }
   }
 });
 document.addEventListener('pointerdown', (event) => {
@@ -3849,12 +4221,13 @@ document.querySelector('.zoom-control').addEventListener('click', (event) => {
 });
 element('learning-panel').addEventListener('click', (event) => {
   const button = event.target.closest('[data-lesson-action]'); if (!button) return;
-  if (['fault-device', 'fault-link', 'scale'].includes(button.dataset.lessonAction)) lessonRevealed = true;
+  if (['fault-device', 'fault-link', 'fault-domain', 'scale'].includes(button.dataset.lessonAction)) lessonRevealed = true;
   if (button.dataset.lessonAction === 'fault-device') { state.disabledDevices.add(button.dataset.lessonId); setLeftPanel('failure'); recalculate(); }
   if (button.dataset.lessonAction === 'scale') { state.scale = Number(button.dataset.lessonValue); element('scale-input').value = String(state.scale * 100); recalculate(); }
   if (button.dataset.lessonAction === 'workload') openWorkloadForm();
   if (button.dataset.lessonAction === 'select-device') { state.selectedId = button.dataset.lessonId; renderTopology(); renderInspector(); }
   if (button.dataset.lessonAction === 'fault-link') { state.disabledLinks.add(button.dataset.lessonId); setLeftPanel('failure'); recalculate(); }
+  if (button.dataset.lessonAction === 'fault-domain') { state.disabledDomains.add(button.dataset.lessonId); setLeftPanel('failure'); recalculate(); }
 });
 // 트랙패드 핀치와 Ctrl+휠은 같은 이벤트로 온다. 포인터 자리를 기준으로 확대한다.
 document.querySelector('.topology-scroll').addEventListener('wheel', (event) => {

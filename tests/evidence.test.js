@@ -31,3 +31,16 @@ test('catalog snapshots identify theoretical adapter packet rates and preserve l
   assert.notEqual(snapshot.limits.nic_bps, entry.profiles[0].limits.nic_bps);
   assert.equal(evidenceApplicability(snapshot.records[0]), 'unknown');
 });
+
+test('Arista switch replacements preserve documented rack power and U', () => {
+  const expected = new Map([
+    ['arista-7050dx4-32s', [353, 880, 1]],
+    ['arista-7050sdx4-48d8', [165, 520, 1]],
+    ['arista-7050x4-48y-4df', [120, 223, 1]],
+  ]);
+  for (const [id, [typicalDrawWatts, maximumDrawWatts, uHeight]] of expected) {
+    const physical = deviceCatalog.find((item) => item.id === id)?.physical;
+    assert.deepEqual([physical?.typicalDrawWatts, physical?.maximumDrawWatts, physical?.uHeight], [typicalDrawWatts, maximumDrawWatts, uHeight], id);
+    assert.match(physical?.source?.note || '', /25C.*50%.*excludes transceivers/, id);
+  }
+});

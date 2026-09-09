@@ -10,6 +10,8 @@ test('splits demand evenly across active ECMP paths', () => {
   const publicDemand = result.demands.find(({ id }) => id === 'public-api');
   assert.equal(publicDemand.paths.length, 2);
   assert.equal(publicDemand.paths[0].share, 0.5);
+  assert.deepEqual(publicDemand.paths[0].devices, ['edge-a', 'fw-a', 'spine-a', 'leaf-a', 'api-a']);
+  assert.deepEqual(publicDemand.paths[0].hops.map(({ direction }) => direction), ['forward', 'forward', 'forward', 'forward']);
   const linkA = result.links.find(({ id }) => id === 'edge-a-fw-a');
   const linkB = result.links.find(({ id }) => id === 'edge-b-fw-b');
   assert.equal(linkA.load.forwarding_bps + linkB.load.forwarding_bps, 7.2e9);
@@ -19,6 +21,7 @@ test('reroutes traffic and exposes the overloaded firewall after a peer failure'
   const result = calculateScenario(cloneTopology(), { disabledDevices: ['fw-a'] });
   const firewallB = result.devices.find(({ id }) => id === 'fw-b');
   assert.equal(result.demands.find(({ id }) => id === 'public-api').paths.length, 1);
+  assert.ok(result.demands.find(({ id }) => id === 'public-api').paths[0].hops.length > 0);
   assert.equal(firewallB.axes.new_sessions_per_sec.load, 72e3);
   assert.equal(firewallB.axes.new_sessions_per_sec.status, 'overloaded');
 });
@@ -470,6 +473,9 @@ test('the single-fault sweep separates a severed design from an overloaded one',
   // 방화벽이 두 대라 하나가 죽어도 끊기지 않는다. 남은 쪽이 못 견딜 뿐이다.
   assert.equal(findOne(dual, 'fw-a').verdict, 'overloads');
   assert.ok(findOne(dual, 'fw-a').worstUtilization > 1);
+  const worstAxis = dual.worstAxes.find(({ resourceId, axis }) => resourceId === 'fw-b' && axis === 'new_sessions_per_sec');
+  assert.equal(worstAxis.faultId, 'edge-a');
+  assert.ok(worstAxis.utilization > 1);
   // 두 demand 가 모두 지나는 리프는 진짜 단일 장애점이다.
   assert.equal(findOne(dual, 'leaf-a').verdict, 'severs');
   assert.equal(dual.grade, 'single-point');
@@ -554,6 +560,34 @@ test('marks a shared domain that severs only as a group as redundant in name onl
   for (const id of ['edge-a', 'edge-b']) assert.ok(['absorbs', 'overloads'].includes(individual.resources.find((resource) => resource.id === id).verdict));
 });
 
+test('marks a shared domain only when its delivery is at least five percentage points below every member alone', () => {
+  const topologyFor = (remainingLimit) => ({
+    devices: [
+      { id: 'source', external: true, kind: 'router', limits: { forwarding_bps: 1e9, forwarding_pps: 1e9 } },
+      { id: 'a', kind: 'switch', limits: { forwarding_bps: 200, forwarding_pps: 1e9 } },
+      { id: 'b', kind: 'switch', limits: { forwarding_bps: 200, forwarding_pps: 1e9 } },
+      { id: 'c', kind: 'switch', limits: { forwarding_bps: remainingLimit, forwarding_pps: 1e9 } },
+      { id: 'target', external: true, kind: 'server', limits: { nic_bps: 1e9, nic_pps: 1e9 } },
+    ],
+    links: [
+      { id: 'sa', source: 'source', target: 'a', capacity: { forwarding_bps: 1e9 } }, { id: 'at', source: 'a', target: 'target', capacity: { forwarding_bps: 1e9 } },
+      { id: 'sb', source: 'source', target: 'b', capacity: { forwarding_bps: 1e9 } }, { id: 'bt', source: 'b', target: 'target', capacity: { forwarding_bps: 1e9 } },
+      { id: 'sc', source: 'source', target: 'c', capacity: { forwarding_bps: 1e9 } }, { id: 'ct', source: 'c', target: 'target', capacity: { forwarding_bps: 1e9 } },
+    ],
+    demands: [{ id: 'traffic', source: 'source', target: 'target', load: { forwarding_bps: 100, forwarding_pps: 100 }, paths: [
+      { id: 'a-path', devices: ['source', 'a', 'target'], links: ['sa', 'at'] }, { id: 'b-path', devices: ['source', 'b', 'target'], links: ['sb', 'bt'] }, { id: 'c-path', devices: ['source', 'c', 'target'], links: ['sc', 'ct'] },
+    ] }],
+    failureDomains: [{ id: 'shared-feed', name: 'SHARED FEED', kind: 'power', deviceIds: ['a', 'b'] }],
+  });
+  const [invalid] = sweepFailureDomains(topologyFor(95)).redundancyInvalid;
+  assert.equal(invalid?.id, 'shared-feed');
+  assert.equal(invalid?.reason, 'delivery-drop');
+  assert.equal(invalid?.individualWorstDeliveredRatio, 1);
+  assert.equal(invalid?.minDeliveredRatio, 0.95);
+  assert.ok(Math.abs((invalid?.deliveryDrop ?? 0) - 0.05) < 1e-12);
+  assert.equal(sweepFailureDomains(topologyFor(96)).redundancyInvalid.length, 0);
+});
+
 test('counts an injected failure domain as an active fault', () => {
   const topology = cloneTopology();
   const scenario = calculateScenario(topology, { disabledDomains: ['rack-04'] });
@@ -573,15 +607,26 @@ test('exports the complete single-fault sweep and its single-point list', () => 
   const topology = cloneTopology();
   const scenario = calculateScenario(topology);
   const sweep = sweepSingleFaults(topology);
-  const exported = createExport(topology, scenario, scenario, { sweep });
+  const survivalMultiplier = calculateSurvivalMultiplier(topology, { sweep });
+  const domainSweep = sweepFailureDomains(topology, { sweep });
+  const exported = createExport(topology, scenario, scenario, { sweep, survivalMultiplier, domainSweep });
   assert.deepEqual(exported.failureSweep.singlePointIds, sweep.resources
     .filter(({ verdict, endpoint }) => verdict === 'severs' && !endpoint).map(({ id }) => id));
   assert.deepEqual(exported.failureSweep.summary, {
     severs: sweep.severs, overloads: sweep.overloads, absorbs: sweep.absorbs, bounded: sweep.bounded, endpoints: sweep.endpoints,
   });
+  topology.observedLoad = { asOf: '2026-09-09T03:00:00Z', aggregate: 'p95', fingerprint: { deviceIds: [], linkIds: [] }, devices: {}, links: {} };
+  assert.deepEqual(createExport(topology, scenario, scenario).observedLoad, topology.observedLoad);
   assert.deepEqual(exported.failureSweep.resources, sweep.resources.map(({ id, type, verdict, bounded, endpoint, minDeliveredRatio, worstResourceId, worstAxis, worstUtilization }) => ({
     id, type, verdict, bounded, endpoint, minDeliveredRatio, worstResourceId, worstAxis, worstUtilization,
   })));
+  assert.deepEqual(exported.scenario.survivalMultiplier, survivalMultiplier);
+  assert.deepEqual(exported.domainSweep, {
+    evaluated: domainSweep.evaluated, domainCount: domainSweep.domainCount,
+    singles: domainSweep.singles.map(({ id, name, kind, domainIds, resources, verdict, bounded, evaluationStatus, unreachableCount, minDeliveredRatio, worstResourceId, worstAxis, worstUtilization }) => ({ id, name, kind, domainIds, resources, verdict, bounded, evaluationStatus, unreachableCount, minDeliveredRatio, worstResourceId, worstAxis, worstUtilization })),
+    pairs: domainSweep.pairs.map(({ id, name, domainIds, resources, verdict, bounded, evaluationStatus, unreachableCount, minDeliveredRatio, worstResourceId, worstAxis, worstUtilization }) => ({ id, name, domainIds, resources, verdict, bounded, evaluationStatus, unreachableCount, minDeliveredRatio, worstResourceId, worstAxis, worstUtilization })),
+    redundancyInvalid: domainSweep.redundancyInvalid.map(({ id, name, kind, memberIds, verdict, bounded, minDeliveredRatio }) => ({ id, name, kind, memberIds, verdict, bounded, minDeliveredRatio })),
+  });
 });
 
 test('the sweep counts demand endpoints apart and never calls an unknown design safe', () => {

@@ -193,6 +193,27 @@ test('releases an acceptance when the profile it was made against changes', () =
   assert.equal(topology.devices.find(({ id }) => id === 'fw-a').accepted, undefined);
 });
 
+test('keeps a replacement acceptance with its replacement evidence only', () => {
+  const topology = withCatalog();
+  setWorkloadConditions(topology, { packet_size_bytes: 64 });
+  const replacement = catalogEntry('fortinet-fortigate-1000f');
+  const replacementSpec = buildSpec(replacement, replacement.profiles.find(({ id }) => id === 'fw-64'));
+  const original = structuredClone(topology.devices.find(({ id }) => id === 'fw-a'));
+
+  applySpec(topology, 'fw-a', replacementSpec);
+  acceptEvidence(topology, 'fw-a', 'forwarding_bps');
+  const replacementAcceptance = topology.devices.find(({ id }) => id === 'fw-a').accepted.forwarding_bps;
+  assert.equal(axisOf(topology, 'forwarding_bps').evidenceApplicability, 'user-asserted');
+
+  topology.devices[topology.devices.findIndex(({ id }) => id === 'fw-a')] = original;
+  assert.equal(topology.devices.find(({ id }) => id === 'fw-a').accepted, undefined);
+
+  applySpec(topology, 'fw-a', replacementSpec);
+  assert.equal(topology.devices.find(({ id }) => id === 'fw-a').accepted, undefined);
+  topology.devices.find(({ id }) => id === 'fw-a').accepted = { forwarding_bps: replacementAcceptance };
+  assert.equal(axisOf(topology, 'forwarding_bps').evidenceApplicability, 'user-asserted');
+});
+
 test('will not accept an axis that already matches, and needs a record to accept', () => {
   const topology = withCatalog();
   setWorkloadConditions(topology, firewallOnly);

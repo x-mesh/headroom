@@ -88,6 +88,9 @@ export function buildSpec(entry, profile) {
     revision, source: entry.source, conditions: conditionsFor(axis), scope: profile.scope ?? null,
     evidenceKind: entry.kinds && axis.endsWith('_pps') ? 'theoretical' : entry.source?.type ?? 'unverified',
   }));
-  const spec = { catalogId: entry.id, profileId: profile.id, profileLabel: profile.label ?? profile.id, note: profile.note ?? '', limits: structuredClone(profile.limits), source: structuredClone(entry.source), records: structuredClone(records), revision };
+  // 물리 사양은 성능 프로필과 독립된 장비 사실이다. 프로필을 바꿔도 전력과 U는 바뀌지
+  // 않지만, 장비를 치환하면 함께 바뀌어야 랙 예산을 실제 후보 기준으로 계산할 수 있다.
+  const physical = entry.physical ? structuredClone(entry.physical) : null;
+  const spec = { catalogId: entry.id, profileId: profile.id, profileLabel: profile.label ?? profile.id, note: profile.note ?? '', limits: structuredClone(profile.limits), source: structuredClone(entry.source), records: structuredClone(records), revision, ...(physical ? { physical } : {}) };
   return { ...spec, digest: evidenceDigest(spec) };
 }

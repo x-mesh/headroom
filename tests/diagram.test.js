@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { addConnector, addShape, updateConnector, updateGroup, updateShape, removeDiagramElements, moveSelection, alignSelection, distributeSelection, copySelection, pasteSelection, groupSelection, ungroupSelection, exportDiagramSvg, importDrawio } from '../public/diagram.js';
-import { calculateScenario, sweepSingleFaults } from '../public/engine.js';
+import { parseProject, serializeProject } from '../public/project.js';
+import { calculateScenario, calculateSurvivalMultiplier, sweepFailureDomains, sweepSingleFaults } from '../public/engine.js';
 import { nodeAxes } from '../public/node-view.js';
 import { buildTemplate } from '../public/templates.js';
 
@@ -66,6 +67,47 @@ test('annotation connectors stay outside infrastructure routing', () => {
   assert.equal(next.links.length, 1);
   assert.deepEqual(next.diagram.connectors[0], { id: 'connector-1', source: 'a', target: 'note', kind: 'annotation', label: '설명', waypoints: [] });
   assert.throws(() => addConnector(next, { source: 'a', target: 'missing' }));
+});
+
+test('locked diagram objects persist and reject every structural edit except unlock', () => {
+  let next = addShape(topology(), 'rect', { id: 'locked-shape' });
+  next = groupSelection(next, [{ type: 'device', id: 'a' }, { type: 'shape', id: 'locked-shape' }], '잠긴 그룹');
+  const groupId = next.diagram.groups[0].id;
+  next = updateShape(next, 'locked-shape', { locked: true });
+  next = updateGroup(next, groupId, { locked: true });
+  next = addConnector(next, { id: 'locked-connector', source: 'a', target: 'locked-shape', locked: true });
+  assert.equal(next.diagram.shapes[0].locked, true);
+  assert.equal(next.diagram.connectors[0].locked, true);
+  assert.equal(next.diagram.groups[0].locked, true);
+  assert.throws(() => updateShape(next, 'locked-shape', { text: '변경' }), /잠긴/);
+  assert.throws(() => updateConnector(next, 'locked-connector', { label: '변경' }), /잠긴/);
+  assert.throws(() => updateGroup(next, groupId, { name: '변경' }), /잠긴/);
+  assert.throws(() => moveSelection(next, [{ type: 'shape', id: 'locked-shape' }], 20, 20), /잠긴/);
+  assert.throws(() => alignSelection(next, [{ type: 'device', id: 'a' }, { type: 'shape', id: 'locked-shape' }], 'left'), /잠긴/);
+  assert.throws(() => distributeSelection(next, [{ type: 'device', id: 'a' }, { type: 'device', id: 'b' }, { type: 'shape', id: 'locked-shape' }]), /잠긴/);
+  assert.throws(() => removeDiagramElements(next, [{ type: 'connector', id: 'locked-connector' }]), /잠긴/);
+  assert.throws(() => copySelection(next, [{ type: 'group', id: groupId }]), /잠긴/);
+  assert.throws(() => moveSelection(next, [{ type: 'device', id: 'a' }], 20, 20), /잠긴/);
+  assert.throws(() => removeDiagramElements(next, [{ type: 'shape', id: 'locked-shape' }]), /잠긴/);
+  const unlocked = updateShape(next, 'locked-shape', { locked: false, text: 'ignored' });
+  assert.equal(unlocked.diagram.shapes[0].locked, false);
+  assert.equal(unlocked.diagram.shapes[0].text, '');
+});
+
+test('project serialization preserves diagram locks', () => {
+  let next = buildTemplate('three-tier');
+  const deviceId = next.devices[0].id;
+  next = addShape(next, 'rect', { id: 'shape-locked' });
+  next = groupSelection(next, [{ type: 'device', id: deviceId }, { type: 'shape', id: 'shape-locked' }]);
+  const group = next.diagram.groups[0];
+  next = updateShape(next, 'shape-locked', { locked: true });
+  next = updateGroup(next, group.id, { locked: true });
+  next = addConnector(next, { id: 'connector-locked', source: deviceId, target: 'shape-locked', locked: true });
+  const saved = serializeProject(next, { scale: 1 });
+  const restored = parseProject(saved).topology.diagram;
+  assert.equal(restored.shapes[0].locked, true);
+  assert.equal(restored.connectors[0].locked, true);
+  assert.equal(restored.groups[0].locked, true);
 });
 
 test('selection moves, aligns and distributes without losing metadata or traffic', () => {
@@ -154,6 +196,18 @@ test('SVG export includes labels and routes but never executable markup or exter
   assert.match(svg, /L 150 140/); assert.match(svg, /viewBox="-224/);
 });
 
+test('anonymized SVG export removes device names, models, and evidence locators', () => {
+  const t = topology();
+  t.devices[0].name = 'Production Gateway';
+  t.devices[0].model = 'FG-9000';
+  t.devices[0].kind = 'firewall';
+  t.devices[0].source = { type: 'user_measured', locator: 'zabbix/prod-gateway/session' };
+  t.diagram = { shapes: [{ id: 'note-1', kind: 'note', text: 'Production Gateway cutover', x: 0, y: 0, width: 100, height: 40 }], connectors: [], groups: [] };
+  const svg = exportDiagramSvg(t, calculateScenario(t), { anonymize: true });
+  assert.doesNotMatch(svg, /Production Gateway|FG-9000|zabbix\/prod-gateway\/session/);
+  assert.match(svg, /FIREWALL 01/);
+});
+
 test('drawio importer rejects unsafe, oversized and compressed XML with actionable errors', () => {
   assert.throws(() => importDrawio('<!DOCTYPE a>'), /엔터티/);
   assert.throws(() => importDrawio('x'.repeat(2 * 1024 * 1024 + 1)), /2 MB/);
@@ -163,11 +217,13 @@ test('drawio importer rejects unsafe, oversized and compressed XML with actionab
 
 test('stamps the calculation onto the exported frame', () => {
   const topology = buildTemplate('three-tier');
+  topology.observedLoad = { asOf: '2026-09-09T03:00:00Z', aggregate: 'p95', fingerprint: { deviceIds: [], linkIds: [] }, devices: {}, links: {} };
   const result = calculateScenario(topology, { disabledDevices: ['web-a'] });
-  const svg = exportDiagramSvg(topology, result, { sweep: sweepSingleFaults(topology), exportedAt: '2026-09-07 08:00' });
+  const sweep = sweepSingleFaults(topology);
+  const svg = exportDiagramSvg(topology, result, { sweep, survivalMultiplier: calculateSurvivalMultiplier(topology, { sweep }), domainSweep: sweepFailureDomains(topology, { sweep }), exportedAt: '2026-09-07 08:00' });
 
   // 이 그림이 어느 조건에서 나왔는지. 하나라도 빠지면 근거가 아니라 그림일 뿐이다.
-  for (const fragment of ['배율 1.00배', '장애 web-a', `엔진 ${result.engineVersion}`, '합성 데모', '출처', '조건', 'SYN', '단일 장애점', '내보냄 2026-09-07 08:00']) {
+  for (const fragment of ['배율 1.00배', '장애 web-a', `엔진 ${result.engineVersion}`, '합성 데모', '출처', '조건', 'SYN', '단일 장애점', '생존 배수', '도메인 N-1', '관측 부하 P95 2026-09-09T03:00:00Z', '내보냄 2026-09-07 08:00']) {
     assert.ok(svg.includes(fragment), `스탬프에 ${fragment} 가 없습니다.`);
   }
   // 미확인이 있는 결과를 통과로 보이게 하지 않는다.

@@ -1,5 +1,7 @@
 import { calculateScenario } from './engine.js';
 import { validateEvidenceRecords } from './evidence.js';
+import { OBSERVED_LOAD_AGGREGATES } from './measured-import.js';
+import { failureDomainKinds } from './data.js';
 
 export const PROJECT_SCHEMA_VERSION = 3;
 const SUPPORTED_SCHEMAS = new Set([1, 2, 3]);
@@ -21,6 +23,19 @@ function boundedText(value, label) { if (typeof value !== 'string' || !value.tri
 function stringArray(value, label) {
   if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) throw new Error(`${label} must be a string array`);
   return [...new Set(value)];
+}
+function validatePhysicalSpec(value) {
+  if (!plainObject(value)) throw new Error('Device physical spec must be an object');
+  const allowed = new Set(['powerBasis', 'maximumDrawWatts', 'typicalDrawWatts', 'measuredDrawWatts', 'uHeight', 'source']);
+  if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error('Device physical spec has unknown fields');
+  if (value.powerBasis != null && !['nameplate', 'typical', 'measured'].includes(value.powerBasis)) throw new Error('Device physical spec has an invalid power basis');
+  for (const key of ['maximumDrawWatts', 'typicalDrawWatts', 'measuredDrawWatts', 'uHeight']) {
+    if (value[key] != null && (!Number.isFinite(value[key]) || value[key] < 0)) throw new Error(`Device physical spec requires a non-negative ${key}`);
+  }
+  if (value.source != null) {
+    if (!plainObject(value.source) || Object.keys(value.source).some((key) => !['label', 'locator'].includes(key))) throw new Error('Device physical spec source is invalid');
+    for (const [key, item] of Object.entries(value.source)) boundedText(item, `Device physical spec source ${key}`);
+  }
 }
 
 // 새 문서 영역은 임의 HTML, 이벤트 속성, 실행 코드를 저장하지 않는다.
@@ -47,23 +62,26 @@ function validateDiagram(diagram, deviceIds) {
   for (const id of deviceIds) if (ids.has(id)) throw new Error('Diagram and device IDs must be distinct');
   const endpoints = new Set([...deviceIds, ...diagram.shapes.map(({ id }) => id)]);
   for (const shape of diagram.shapes) {
-    if (Object.keys(shape).some((key) => !['id', 'kind', 'type', 'text', 'x', 'y', 'width', 'height', 'fill', 'gradientColor', 'stroke', 'lineStyle', 'textColor', 'strokeWidth', 'opacity', 'fontSize', 'textAlign', 'verticalAlign', 'fontWeight', 'gradient', 'rounded', 'sketch', 'glass', 'shadow', 'groupId', 'unmapped'].includes(key))) throw new Error('Unknown diagram shape content');
+    if (Object.keys(shape).some((key) => !['id', 'kind', 'type', 'text', 'x', 'y', 'width', 'height', 'fill', 'gradientColor', 'stroke', 'lineStyle', 'textColor', 'strokeWidth', 'opacity', 'fontSize', 'textAlign', 'verticalAlign', 'fontWeight', 'gradient', 'rounded', 'sketch', 'glass', 'shadow', 'groupId', 'unmapped', 'locked'].includes(key))) throw new Error('Unknown diagram shape content');
     if (!['rectangle', 'ellipse', 'text', 'note', 'rect'].includes(shape.kind ?? shape.type)) throw new Error('Unknown diagram shape type');
     for (const key of ['x', 'y', 'width', 'height']) if (!Number.isFinite(shape[key]) || (['width', 'height'].includes(key) && shape[key] <= 0)) throw new Error(`Diagram shape requires valid ${key}`);
     if (shape.text != null && (typeof shape.text !== 'string' || shape.text.length > 10000)) throw new Error('Diagram text must be under 10000 characters');
+    if (shape.locked != null && typeof shape.locked !== 'boolean') throw new Error('Diagram shape lock must be boolean');
   }
   for (const connector of diagram.connectors) {
-    if (Object.keys(connector).some((key) => !['id', 'source', 'target', 'kind', 'label', 'text', 'points', 'waypoints', 'stroke', 'strokeWidth', 'dashed', 'startArrow', 'endArrow'].includes(key))) throw new Error('Unknown diagram connector content');
+    if (Object.keys(connector).some((key) => !['id', 'source', 'target', 'kind', 'label', 'text', 'points', 'waypoints', 'stroke', 'strokeWidth', 'dashed', 'startArrow', 'endArrow', 'locked'].includes(key))) throw new Error('Unknown diagram connector content');
     if (connector.kind != null && !['annotation', 'dependency'].includes(connector.kind)) throw new Error('Unknown diagram connector kind');
     if (!endpoints.has(connector.source) || !endpoints.has(connector.target)) throw new Error('Diagram connector references an unknown endpoint');
     const points = connector.waypoints ?? connector.points;
     if (points != null && (!Array.isArray(points) || points.some((p) => !Number.isFinite(p.x) || !Number.isFinite(p.y)))) throw new Error('Diagram connector points must be coordinates');
+    if (connector.locked != null && typeof connector.locked !== 'boolean') throw new Error('Diagram connector lock must be boolean');
   }
   const groupIds = new Set(diagram.groups.map(({ id }) => id));
   for (const group of diagram.groups) {
-    if (Object.keys(group).some((key) => !['id', 'name', 'memberIds'].includes(key))) throw new Error('Unknown diagram group content');
+    if (Object.keys(group).some((key) => !['id', 'name', 'memberIds', 'locked'].includes(key))) throw new Error('Unknown diagram group content');
     boundedText(group.name, 'Group name');
     if (!Array.isArray(group.memberIds) || group.memberIds.some((id) => !endpoints.has(id))) throw new Error('Diagram group references an unknown member');
+    if (group.locked != null && typeof group.locked !== 'boolean') throw new Error('Diagram group lock must be boolean');
   }
   for (const shape of diagram.shapes) if (shape.groupId != null && !groupIds.has(shape.groupId)) throw new Error('Diagram shape references an unknown group');
 }
@@ -104,7 +122,22 @@ export function validateProject(input) {
     if (!Array.isArray(topology[key])) throw new Error(`${key} must be an array`);
     uniqueIds(topology[key], key); safeContent(topology[key], key);
   }
+  for (const domain of topology.failureDomains || []) {
+    domain.kind ??= 'other';
+    if (!failureDomainKinds.includes(domain.kind)) throw new Error('Failure domain kind is unknown');
+  }
   for (const key of ['template', 'evidence']) if (topology[key] != null) safeContent(topology[key], key);
+  if (topology.measuredImport != null) {
+    if (!plainObject(topology.measuredImport)) throw new Error('measuredImport must be an object');
+    for (const key of ['applied', 'floors', 'unmatched']) if (!Array.isArray(topology.measuredImport[key])) throw new Error(`measuredImport requires ${key}`);
+    safeContent(topology.measuredImport, 'measuredImport');
+  }
+  if (topology.observedLoad != null) {
+    if (!plainObject(topology.observedLoad) || !plainObject(topology.observedLoad.devices) || !plainObject(topology.observedLoad.links)
+      || !plainObject(topology.observedLoad.fingerprint) || typeof topology.observedLoad.asOf !== 'string'
+      || !OBSERVED_LOAD_AGGREGATES.includes(topology.observedLoad.aggregate)) throw new Error('observedLoad is malformed');
+    safeContent(topology.observedLoad, 'observedLoad');
+  }
   // 워크로드 조건은 한계값의 적용 가능성을 정하므로 계산 입력이다. 파일에서 그대로 들어온다.
   for (const key of ['workloadConditions', 'workloadScope']) if (topology[key] != null) {
     if (key === 'workloadConditions' && !plainObject(topology[key])) throw new Error('workloadConditions must be an object');
@@ -125,6 +158,7 @@ export function validateProject(input) {
         validateEvidenceRecords(device.spec.records); safeContent(device.spec.records, 'Evidence');
         for (const record of device.spec.records) if (record.value !== device.spec.limits[record.axis]) throw new Error('Evidence does not match the original spec limits');
       }
+      if (device.spec.physical != null) validatePhysicalSpec(device.spec.physical);
     }
     // 수락은 근거 digest 문자열이다. 근거가 없으면 무엇을 수락한 것인지 말할 수 없다.
     if (device.accepted != null) {

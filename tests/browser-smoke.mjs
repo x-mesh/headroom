@@ -150,9 +150,47 @@ async function verifyCanvasEditing() {
 
   await page.locator('[data-editor-action="shape-text"]').click();
   assert.equal(await page.locator('.diagram-shape').count(), 2);
-  await page.locator('.diagram-shape').first().click({ modifiers: ['Shift'] });
   await page.locator('[data-editor-action="annotation-connect"]').click();
+  await page.locator('.diagram-shape').first().click();
+  await page.keyboard.press('Escape');
+  assert.match(await page.locator('#editor-mode').textContent(), /SELECT/);
+  assert.equal(await page.locator('.diagram-connector').count(), 0, 'canceling annotation mode must not create a connector');
+  await page.locator('[data-editor-action="annotation-connect"]').click();
+  await page.locator('.diagram-shape').first().click();
+  await page.locator('.diagram-shape').nth(1).click();
   assert.equal(await page.locator('.diagram-connector').count(), 1, 'annotation connectors remain visually connected but outside the traffic graph');
+  const annotationHit = page.locator('.diagram-connector-hit');
+  await annotationHit.focus();
+  await page.keyboard.press('Enter');
+  assert.match(await page.locator('#inspector-heading').textContent(), /연결선 검사/);
+
+  // 잠금은 저장 모델뿐 아니라 화면 조작도 막아야 한다. 일반 클릭은 잠금 안내만 보이고,
+  // Alt/Option+클릭으로 인스펙터를 열어 해제한 뒤에만 다시 편집할 수 있다.
+  const lockedShape = page.locator('.diagram-shape').first();
+  await lockedShape.click();
+  await page.locator('[data-diagram-lock]').check();
+  assert.match(await lockedShape.getAttribute('class'), /locked/);
+  assert.equal(await lockedShape.locator('.diagram-lock-mark').count(), 1);
+  await lockedShape.click();
+  assert.match(await page.locator('#toast').textContent(), /잠긴 도형/);
+  await lockedShape.click({ modifiers: ['Alt'] });
+  await page.locator('[data-diagram-lock]').uncheck();
+  assert.doesNotMatch(await lockedShape.getAttribute('class'), /locked/);
+
+  await lockedShape.click();
+  await page.locator('.diagram-shape').nth(1).click({ modifiers: ['Shift'] });
+  await page.locator('[data-editor-action="group"]').click();
+  const groupFrame = page.locator('[data-diagram-group-id] rect');
+  assert.equal(await groupFrame.count(), 1, 'a diagram group has a canvas frame that can be selected again');
+  await groupFrame.focus();
+  await page.keyboard.press('Enter');
+  assert.match(await page.locator('#inspector-heading').textContent(), /그룹 검사/);
+  await page.locator('[data-diagram-lock]').check();
+  assert.equal(await page.locator('[data-diagram-group-id].locked').count(), 1);
+  await groupFrame.click({ position: { x: 1, y: 1 } });
+  assert.match(await page.locator('#toast').textContent(), /잠긴 그룹/);
+  await groupFrame.click({ modifiers: ['Alt'], position: { x: 1, y: 1 } });
+  await page.locator('[data-diagram-lock]').uncheck();
 
   const drawio = '<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="2" value="설명" vertex="1" parent="1"><mxGeometry x="20" y="30" width="120" height="60" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>';
   await page.locator('#drawio-file-input').setInputFiles({ name: 'sample.drawio', mimeType: 'application/xml', buffer: Buffer.from(drawio) });
@@ -221,7 +259,7 @@ async function verify(viewport, screenshot, interact = false) {
   assert.match(await page.locator('#summary-survival').textContent(), /단일 장애점\s*\d+/);
   // 캔버스 아래가 지금 무엇이 막고 있는지 문장으로 말해야 한다.
   const restingNote = await page.locator('#bottleneck-note').textContent();
-  assert.match(restingNote, /가장 빠듯합니다/);
+  assert.match(restingNote, /가장 빠듯합니다|한계를 넘었습니다/);
   assert.match(restingNote, /LEAF B → API 02/, 'a link must read by its endpoints, not its id');
   // 근거와 용량은 서로 덮지 않는다. 미확정 근거가 있어도 실제 용량 상태를 함께 말한다.
   assert.match(await page.locator('#evidence-state').textContent(), /EVIDENCE [0-9]+ UNKNOWN/);
@@ -232,7 +270,15 @@ async function verify(viewport, screenshot, interact = false) {
   await page.locator('#analysis-menu-button').click();
   await page.locator('[data-editor-action="verification"]').click();
   const verificationCounts = await page.locator('[data-verification-tab] span').allTextContents();
-  assert.deepEqual(verificationCounts, ['1', '2', '2', '0'], 'the default scenario exposes service, rack domains, and rack budgets');
+  assert.deepEqual(verificationCounts, ['1', '2', '3', '0'], 'the default scenario exposes service, rack domains, and rack budgets');
+  await page.locator('[data-verification-tab="scenario"]').click();
+  const scenarioForm = page.locator('[data-editor-form="scenario"]');
+  await scenarioForm.locator('[name="name"]').fill('기준 시나리오');
+  await scenarioForm.locator('button[type="submit"]').click();
+  const savedScenario = page.locator('.saved-scenario', { hasText: '기준 시나리오' });
+  await savedScenario.waitFor();
+  assert.match(await savedScenario.textContent(), /Public API[\s\S]*(통과|통과 보류|실패|입력 오류)[\s\S]*기준선 동일/,
+    'saved scenarios show a service verdict and its baseline comparison');
   await page.locator('[data-verification-tab="domain"]').click();
   const headroomBeforeSuggestion = await page.locator('#summary-headroom').textContent();
   await page.locator('[data-delete-model="domain"][data-model-id="rack-04"]').click();
@@ -241,6 +287,7 @@ async function verify(viewport, screenshot, interact = false) {
   assert.equal(await page.locator('#summary-headroom').textContent(), headroomBeforeSuggestion, 'a domain suggestion does not change the current calculation');
   await page.locator('[data-domain-suggestion]').filter({ hasText: 'RACK 04' }).click();
   await page.waitForFunction(() => document.querySelectorAll('[data-delete-model="domain"]').length === 2);
+  assert.match(await page.locator('[data-delete-model="domain"][data-model-id="rack-04"]').locator('xpath=parent::*').textContent(), /공간/);
   assert.equal(await page.locator('#summary-headroom').textContent(), headroomBeforeSuggestion, 'accepting a domain declaration does not change the current calculation');
   await page.locator('#editor-close').click();
   assert.match(await page.locator('#topology-heading').textContent(), /\d+%$/, 'the canvas headline states the answer, not the question');
@@ -297,6 +344,8 @@ async function verify(viewport, screenshot, interact = false) {
   assert.match(unknownAxis, /—/, 'an unknown limit must read as an em dash');
   assert.doesNotMatch(unknownAxis, /\d%/, 'an unknown limit must never read as a percentage');
   assert.equal(await page.locator('#tab-failure').getAttribute('aria-selected'), 'true', 'a non-empty design opens on the fault sweep');
+  assert.equal(await page.locator('.failure-scope-guide p').count(), 3, '장애 분석은 자원 N-1, 도메인 N-1, 도메인 N-2 범위를 구분해야 합니다.');
+  assert.match(await page.locator('.failure-scope-guide').textContent(), /장비 또는 링크 하나[\s\S]*함께 실패[\s\S]*동시에 실패/, '각 장애 범위의 단위를 설명해야 합니다.');
   const failureReadingOrder = await page.locator('[data-failure-type="device"]').first().innerText();
   assert.ok(failureReadingOrder.indexOf('끄면') < failureReadingOrder.indexOf('FABRIC'), 'the fault verdict must precede the resource zone');
   const absorbsToggle = page.locator('[data-failure-absorbs-toggle]');
@@ -514,10 +563,13 @@ async function verify(viewport, screenshot, interact = false) {
   // 처음 오는 사람이 보는 화면에도 설명이 있어야 한다. 답은 실험을 누른 뒤에 편다.
   assert.match(await page.locator('#learning-panel').textContent(), /독립인 한계를 여럿/, 'the first screen must state what the tool claims');
   assert.equal(await page.locator('#learning-panel output').isHidden(), true, 'the answer must not sit beside the question');
-  await page.locator('#learning-panel [data-lesson-action="fault-device"]').click();
+  const lessonAction = page.locator('#learning-panel [data-lesson-action]').first();
+  assert.match(await lessonAction.textContent(), /LEAF A 장애 실험/, '단일 장애점이 템플릿의 고정 실험보다 먼저 제안되어야 합니다');
+  await lessonAction.click();
   await page.waitForFunction(() => !document.querySelector('#learning-panel output')?.hidden);
-  assert.match(await page.locator('#topology-heading').textContent(), /신규 세션 171%/, 'the experiment must land on the number it promised');
-  await page.locator('[data-failure-type="device"][data-failure-id="fw-a"]').click();
+  assert.match(await page.locator('#learning-panel output').textContent(), /끄면 서비스 단절/, 'the experiment result must state the forecast shown for the selected failure');
+  assert.equal(await page.locator('[data-failure-type="device"][data-failure-id="leaf-a"]').getAttribute('aria-pressed'), 'true');
+  await page.locator('[data-failure-type="device"][data-failure-id="leaf-a"]').click();
   await page.waitForFunction(() => document.querySelector('#summary-fault-label')?.textContent === '단일 장애점');
 
   // 장비를 바꾸는 것은 인스펙터까지 가지 않고 자리에서 하는 일이다.
@@ -533,6 +585,18 @@ async function verify(viewport, screenshot, interact = false) {
   assert.equal(await page.locator('[data-swap-scope="single"]').getAttribute('aria-pressed'), 'true', 'one device can be selected for staged replacement');
   const choices = await page.locator('[data-swap-catalog]').count();
   assert.ok(choices >= 20, `고를 수 있는 조건이 ${choices}개뿐입니다.`);
+  const bindingAxisChoices = await page.locator('[data-swap-binding-axis]').count();
+  assert.ok(bindingAxisChoices > 0 && bindingAxisChoices <= choices,
+    '병목 축 데이터 표식은 근거가 있는 후보만 구분하고 후보를 숨기지 않아야 합니다.');
+  await page.locator('[data-swap-compare]').nth(1).click();
+  await page.locator('[data-swap-compare]').nth(2).click();
+  assert.match(await page.locator('[data-swap-open-comparison]').textContent(), /2\/4/, '사용자가 고른 후보 수를 비교 전에 보여야 합니다.');
+  await page.locator('[data-swap-open-comparison]').click();
+  assert.equal(await page.locator('[data-swap-comparison-row]').count(), 2, '선택한 후보만 나란히 비교해야 합니다.');
+  const comparison = await page.locator('#editor-panel-content').textContent();
+  assert.match(comparison, /현재 설계와 워크로드 조건에서만 유효/, '후보 비교의 토폴로지 종속 고지가 필요합니다.');
+  assert.doesNotMatch(comparison, /권장|1위|최고/, '후보 비교가 추천이나 순위를 말하면 안 됩니다.');
+  await page.locator('[data-swap-back-picker]').click();
   await page.locator('#swap-search').fill('ASA');
   await page.waitForFunction(() => document.querySelectorAll('[data-swap-catalog]:not([hidden])').length < 20);
   const narrowed = await page.locator('[data-swap-catalog]:not([hidden])').count();
@@ -564,6 +628,7 @@ async function verify(viewport, screenshot, interact = false) {
   assert.match(swapResult, /사용자가 현재 워크로드 조건에서 수락/,
     'accepted axes must state that the user accepted them for the current workload conditions');
   assert.match(swapResult, /생존 배수/, 'accepted axes must unlock the comparison metrics');
+  assert.match(swapResult, /랙 예산 미확인/, 'a candidate without a documented power draw must not make the rack budget look safe');
   const resultOrder = ['병목 그대로', '병목 이동', '생존 배수', '정상시 배수', '과부하 자원', '전력·랙 U'];
   const first = resultOrder.find((label) => swapResult.includes(label));
   assert.ok(first, `치환 결과의 병목 문구가 없습니다: ${swapResult}`);
@@ -574,7 +639,7 @@ async function verify(viewport, screenshot, interact = false) {
   assert.ok(swapResult.indexOf('생존 배수') < swapResult.indexOf('정상시 배수')
     && swapResult.indexOf('정상시 배수') < swapResult.indexOf('과부하 자원')
     && swapResult.indexOf('과부하 자원') < swapResult.indexOf('전력·랙 U'), '치환 지표 순서가 PRD와 다릅니다');
-  assert.equal(await page.locator('#evidence-state').textContent(), 'EVIDENCE 5 UNKNOWN',
+  assert.equal(await page.locator('#evidence-state').textContent(), 'EVIDENCE 6 UNKNOWN',
     'accepting the candidate axes must not hide unrelated unknown evidence');
   assert.ok(await page.locator('.evidence-state[data-applicability="user-asserted"]').count() > 0, 'accepted preview axes must persist after application');
   await page.locator('[data-swap-variant="current"]').click();
@@ -586,7 +651,8 @@ async function verify(viewport, screenshot, interact = false) {
 
   assert.equal(await page.locator('[data-failure-type="device"], [data-failure-type="link"]').count(), 20, 'every device and link must be failable, not two classes');
   assert.equal(await page.locator('[data-failure-type="domain"]').count(), 2, 'the default rack failure domains must be injectable');
-  assert.match(await page.locator('#failure-grade').textContent(), /단일 장애점 \d+개/, 'the panel must grade the design before anything is turned off');
+    assert.match(await page.locator('#failure-grade').textContent(), /단일 장애점 \d+개/, 'the panel must grade the design before anything is turned off');
+    assert.match(await page.locator('.failure-worst-axes').textContent(), /단일 장애 최악 사용률/);
   const forecasts = await page.locator('[data-failure-type="device"] .failure-forecast, [data-failure-type="link"] .failure-forecast').evaluateAll((nodes) => nodes.map((node) => node.dataset.verdict));
   assert.ok(forecasts.every((verdict) => ['severs', 'overloads', 'absorbs', 'endpoint'].includes(verdict)), 'every row must carry a forecast');
   assert.ok((await page.locator('[data-failure-type="domain"] .failure-forecast').allTextContents()).every((text) => text.includes('끄면 서비스 단절') && text.includes('한계 미확인')),
@@ -653,7 +719,7 @@ async function verify(viewport, screenshot, interact = false) {
     assert.equal(cross, '40px', 'a dead device must carry a cross over its symbol, not colour alone');
     await page.locator('[data-failure-type="link"][data-failure-id="spine-a-leaf-a"]').click();
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
-    assert.match(await page.locator('#comparison-grid').textContent(), /CHANGED/);
+    assert.match(await page.locator('#comparison-grid').textContent(), /설계 변화[\s\S]*수치 비교 보류/, '기준선 이후 설계가 바뀌면 숫자 델타를 만들면 안 됩니다');
 
     // 데이터시트 프로필 · 워크로드 조건 · 축 단위 수락 · 사용자 보정
     await page.locator('[data-device-id="fw-b"]').click();
@@ -711,16 +777,20 @@ async function verify(viewport, screenshot, interact = false) {
       'the datasheet value stays visible next to the correction');
 
     // 내보낸 그림은 화면과 같은 심볼·축·판정을 담는다. 이름표 상자가 아니다.
-    const [svgDownload] = await Promise.all([
-      page.waitForEvent('download'),
-      page.locator('#export-menu-button').click().then(() => page.locator('[data-editor-action="export-svg"]').click()),
-    ]);
+  const [svgDownload] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('#export-menu-button').click().then(() => page.locator('[data-editor-action="export-svg"]').click()),
+  ]);
     const exported = await readTextFile(await svgDownload.path(), 'utf8');
     assert.match(exported, /엔진 \d+\.\d+\.\d+/, 'the exported frame must say which engine computed it');
     assert.match(exported, /<g transform="translate\([-\d.]+ [-\d.]+\) scale\(/, 'the exported frame must carry the device symbols, not name boxes');
     assert.match(exported, />—</, 'an unknown axis must reach the file as an em dash, not a number');
     assert.match(exported, /장애 fw-a/, 'the exported frame must name the fault it was computed under');
     assert.doesNotMatch(exported, /<script|<image|foreignObject/);
+    await page.locator('#export-menu-button').click();
+    assert.equal(await page.locator('[data-editor-action="export-svg-anonymized"]').count(), 1, '익명 SVG 내보내기를 선택할 수 있어야 합니다');
+    assert.equal(await page.locator('[data-editor-action="export-png-anonymized"]').count(), 1, '익명 PNG 내보내기를 선택할 수 있어야 합니다');
+    await page.keyboard.press('Escape');
     await page.locator('[data-reset-axis="new_sessions_per_sec"]').click();
     await page.waitForFunction(() => document.querySelector('input[name="new_sessions_per_sec"]')?.value === '56000');
     assert.equal(await page.locator('.limit-field.corrected').count(), 0);
@@ -940,8 +1010,13 @@ async function verify(viewport, screenshot, interact = false) {
     page.once('dialog', (dialog) => dialog.accept());
     await page.locator('#project-file-input').setInputFiles({ name: 'measured-project.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(measuredProject)) });
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 10);
-    await page.locator('#measured-limits-file-input').setInputFiles({ name: 'measured-limits.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ schema: 'rack-mesh-measured-limits', as_of: '2026-09-09T03:00:00Z', entries: [{ target: { kind: 'device', id: 'fw-a' }, axis: 'new_sessions_per_sec', value: 58, unit: 'Kcps', saturated: false }] })) });
+    await page.locator('#measured-limits-file-input').setInputFiles({ name: 'measured-limits.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ schema: 'rack-mesh-measured-limits', as_of: '2026-09-09T03:00:00Z', entries: [{ target: { kind: 'device', id: 'fw-a' }, axis: 'new_sessions_per_sec', value: 58, unit: 'Kcps', conditions: {}, saturated: false }] })) });
     await page.waitForFunction(() => document.querySelector('#toast')?.textContent.includes('관측 하한 1개 보관'));
+    await page.locator('#analysis-menu-button').click();
+    await page.locator('[data-editor-action="measured-import"]').click();
+    const measuredResults = page.locator('.measured-import-results');
+    assert.match(await measuredResults.textContent(), /한계 적용 0[\s\S]*관측 하한 1[\s\S]*FW A.*신규 세션.*58 Kcps.*한계 미승격/);
+    await page.locator('#editor-close').click();
     await page.locator('[data-device-id="fw-a"]').click();
     assert.match(await page.locator('#inspector-content .observed-floor').textContent(), /관측 하한 58 Kcps · 2026-09-09T03:00:00Z/);
     assert.match(await page.locator('#inspector-content [data-axis-limit="new_sessions_per_sec"]').textContent(), /42 Kcps/, 'an unsaturated observation must not replace the catalog limit');
@@ -1544,6 +1619,38 @@ async function verifyVirtualFailureList() {
   await page.close();
 }
 
+async function verifyInferredSwapSlot() {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  await page.addInitScript(() => localStorage.clear());
+  page.on('pageerror', (error) => failures.push(`swap slot pageerror: ${error.message}`));
+  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+  const project = await page.evaluate(() => JSON.stringify({ schemaVersion: 3, product: 'Rack Mesh', topology: {
+    devices: [
+      { id: 'edge-a', name: 'EDGE A', kind: 'router', zone: 'EDGE', position: { x: 10, y: 10 }, limits: { forwarding_bps: 1e12 } },
+      { id: 'edge-b', name: 'EDGE B', kind: 'router', zone: 'EDGE', position: { x: 10, y: 200 }, limits: { forwarding_bps: 1e12 } },
+      { id: 'fw-a', name: 'FW A', kind: 'firewall', zone: 'SECURITY', position: { x: 200, y: 10 }, manufacturer: 'Acme', model: 'Pair', limits: { forwarding_bps: 1e12 } },
+      { id: 'fw-b', name: 'FW B', kind: 'firewall', zone: 'SECURITY', position: { x: 200, y: 200 }, manufacturer: 'Acme', model: 'Pair', limits: { forwarding_bps: 1e12 } },
+      { id: 'spine-a', name: 'SPINE A', kind: 'switch', zone: 'FABRIC', position: { x: 400, y: 10 }, limits: { forwarding_bps: 1e12 } },
+      { id: 'spine-b', name: 'SPINE B', kind: 'switch', zone: 'FABRIC', position: { x: 400, y: 200 }, limits: { forwarding_bps: 1e12 } },
+    ],
+    links: [
+      { id: 'edge-a-fw-a', source: 'edge-a', target: 'fw-a', capacity: { forwarding_bps: 10e9 } },
+      { id: 'edge-b-fw-b', source: 'edge-b', target: 'fw-b', capacity: { forwarding_bps: 10e9 } },
+      { id: 'fw-a-spine-a', source: 'fw-a', target: 'spine-a', capacity: { forwarding_bps: 10e9 } },
+      { id: 'fw-b-spine-b', source: 'fw-b', target: 'spine-b', capacity: { forwarding_bps: 10e9 } },
+    ], demands: [],
+  }, scenario: { scale: 1, disabledDevices: [], disabledLinks: [], disabledDomains: [], viewMode: 'edit', selectedId: 'fw-a' } }));
+  const dialog = page.waitForEvent('dialog');
+  await page.setInputFiles('#project-file-input', { name: 'symmetric-pair.json', mimeType: 'application/json', buffer: Buffer.from(project) });
+  (await dialog).accept();
+  await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 6);
+  await page.locator('[data-device-id="fw-a"]').dispatchEvent('contextmenu', { bubbles: true, clientX: 240, clientY: 240 });
+  await page.locator('[data-context-action="swap"]').evaluate((button) => button.click());
+  await page.waitForSelector('[data-swap-scope="slot"]');
+  assert.match(await page.locator('[data-swap-scope="slot"]').textContent(), /전체 2대/, 'symmetric non-HA peers form one replacement slot');
+  await page.close();
+}
+
 try {
   if (process.env.ONLY_VIRTUAL_FAILURE_LIST) await verifyVirtualFailureList();
   else {
@@ -1554,6 +1661,7 @@ try {
     await verifyNumberMotion();
     await verifyTourAnchoring();
     await verifyVirtualFailureList();
+    await verifyInferredSwapSlot();
     const reducedPage = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
     await reducedPage.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
     assert.equal(await reducedPage.locator('.packet-dot').first().evaluate((node) => getComputedStyle(node).display), 'none');

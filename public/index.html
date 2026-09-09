@@ -54,6 +54,8 @@
               <div class="top-menu-section"><span>가져오기</span>
                 <button type="button" role="menuitem" data-editor-action="import-device"><strong>장비 데이터</strong><small>Rack Mesh 또는 NetBox 장비 정보를 읽습니다. · JSON</small></button>
                 <button type="button" role="menuitem" data-editor-action="import-measured-limits"><strong>실측 한계</strong><small>포화 증거가 있는 한계만 적용합니다. · JSON</small></button>
+                <button type="button" role="menuitem" data-editor-action="import-observed-load"><strong>관측 부하</strong><small>현재 자원 부하 스냅샷을 적용합니다. · JSON</small></button>
+                <button type="button" role="menuitem" data-editor-action="import-zabbix-observed-load"><strong>Zabbix 관측 부하</strong><small>공식 템플릿 key 또는 명시한 host·item key 매핑만 적용합니다. · JSON</small></button>
               </div>
             </div>
           </div>
@@ -64,6 +66,7 @@
               <div class="top-menu-section"><span>시나리오</span>
                 <button type="button" role="menuitem" data-editor-action="workload"><strong>워크로드 조건</strong><small>데이터시트 조건과 수요를 맞춥니다.</small></button>
                 <button type="button" role="menuitem" data-editor-action="verification"><strong>검증 설정</strong><small>가용성 및 장애 도메인을 검토합니다.</small></button>
+                <button type="button" role="menuitem" data-editor-action="measured-import"><strong>실측 임포트 결과</strong><small>적용 한계와 관측 하한을 다시 확인합니다.</small></button>
               </div>
               <div class="top-menu-section"><span>비교와 복구</span>
                 <button type="button" role="menuitem" id="capture-baseline-button"><strong>기준선 확정</strong><small>현재 설계와 시나리오를 비교 기준으로 고정합니다.</small></button>
@@ -77,8 +80,13 @@
               <p class="top-menu-heading">결과 내보내기<span>분석용 데이터 또는 공유용 그림을 선택합니다.</span></p>
               <div class="top-menu-section">
                 <button type="button" role="menuitem" data-export-action="result"><strong>결과 JSON</strong><small>계산 결과, 기준선, 판정을 내보냅니다.</small></button>
+                <button type="button" role="menuitem" data-export-action="report-markdown"><strong>보고서 Markdown</strong><small>리뷰 문서에 붙일 요약과 축별 근거를 냅니다.</small></button>
+                <button type="button" role="menuitem" data-export-action="report-html"><strong>보고서 HTML</strong><small>공유할 독립형 보고서를 냅니다.</small></button>
+                <button type="button" role="menuitem" data-export-action="report-json"><strong>보고서 JSON</strong><small>같은 보고서 모델을 기계가 읽게 냅니다.</small></button>
                 <button type="button" role="menuitem" data-editor-action="export-svg"><strong>SVG 이미지</strong><small>설계와 계산 판정을 벡터 이미지로 내보냅니다.</small></button>
                 <button type="button" role="menuitem" data-editor-action="export-png"><strong>PNG 이미지</strong><small>문서와 메신저용 고해상도 이미지를 만듭니다.</small></button>
+                <button type="button" role="menuitem" data-editor-action="export-svg-anonymized"><strong>익명 SVG 이미지</strong><small>장비명과 모델을 역할 기반 이름으로 바꿉니다.</small></button>
+                <button type="button" role="menuitem" data-editor-action="export-png-anonymized"><strong>익명 PNG 이미지</strong><small>장비명과 모델을 역할 기반 이름으로 바꿉니다.</small></button>
               </div>
             </div>
           </div>
@@ -133,6 +141,8 @@
         <input class="visually-hidden" id="project-file-input" type="file" accept="application/json,.json">
         <input class="visually-hidden" id="device-file-input" type="file" accept="application/json,.json">
         <input class="visually-hidden" id="measured-limits-file-input" type="file" accept="application/json,.json">
+        <input class="visually-hidden" id="observed-load-file-input" type="file" accept="application/json,.json">
+        <input class="visually-hidden" id="zabbix-observed-load-file-input" type="file" accept="application/json,.json">
         <input class="visually-hidden" id="drawio-file-input" type="file" accept="application/xml,text/xml,.drawio,.xml">
         <section class="editor-panel" id="editor-panel" aria-labelledby="editor-panel-heading" hidden>
           <header><div><span class="section-code">EDITOR TASK</span><h2 id="editor-panel-heading">설계 편집</h2></div><button type="button" id="editor-close" aria-label="편집 패널 닫기">닫기</button></header>
@@ -196,6 +206,7 @@
               <svg class="link-layer" id="link-layer" viewBox="0 0 940 580" role="img" aria-label="장비를 잇는 링크"></svg>
               <div class="diagram-layer" id="diagram-layer" aria-label="도형과 주석"></div>
               <div class="node-layer" id="node-layer"></div>
+              <svg class="diagram-group-layer" id="diagram-group-layer" viewBox="0 0 940 580" aria-label="도형 그룹"></svg>
               <div class="selection-marquee" id="selection-marquee" hidden></div>
             </div>
             </div>
