@@ -245,6 +245,7 @@ function nodeMarkup(view, device) {
   const top = coordinate(device.position.y) - NODE.symbolH / 2;
   const left = cx - NODE.width / 2;
   const parts = [symbolMarkup(view.symbol, cx, top)];
+  if (view.synthetic) parts.push(text(left + NODE.width - 1, top + 8, 'SYN', { size: 7, weight: 700, fill: INK.cyan, anchor: 'end' }));
   // 죽은 장비에는 심볼 위로 가위표를 긋는다. 색만으로는 죽은 것과 위험한 것이 같아 보인다.
   if (view.status === 'disabled') {
     const mid = top + NODE.glyphH / 2 + 1;
@@ -287,7 +288,7 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
   const views = new Map();
   if (result) {
     const verdicts = new Map((options.sweep?.resources || []).map((item) => [item.id, item]));
-    for (const device of result.devices) views.set(device.id, nodeView(device, { verdict: verdicts.get(device.id) }));
+    for (const device of result.devices) views.set(device.id, nodeView(device, { verdict: verdicts.get(device.id), synthetic: Boolean(topology.synthetic) }));
   }
   const linkStatus = new Map((result?.links || []).map((link) => [link.id, link]));
   const severed = new Set((result?.demands || []).flatMap(({ severedPaths }) => (severedPaths || []).flatMap(({ links }) => links)));
@@ -413,11 +414,15 @@ function stampMarkup(topology, result, options, left, top, width, height) {
   const bounded = result.demands.some(({ deliveredRatioBound }) => deliveredRatioBound && deliveredRatioBound !== 'exact');
   // 카탈로그 판을 하나로 부를 수 없으면 지어내지 않는다. 장비별 revision 을 모아 적는다.
   const revisions = [...new Set(topology.devices.map((d) => d.spec?.revision).filter(Boolean))].sort();
+  const sources = [...new Set(topology.devices.map((device) => device.source?.type).filter(Boolean))];
+  const conditions = [...new Set(topology.devices.map((device) => device.source?.condition).filter(Boolean))];
   const line = [
     `배율 ${Number(result.scale ?? 1).toFixed(2)}배`,
     faults.length ? `장애 ${faults.join(', ')}` : '무장애',
     `엔진 ${result.engineVersion}`,
     topology.synthetic ? '합성 데모' : '사용자 설계',
+    `출처 ${[...new Set(topology.devices.map((d) => d.source?.label || d.source?.type).filter(Boolean))].join(' / ') || sources.join(' / ') || 'estimate'}`,
+    `조건 ${conditions.join(' / ') || topology.workloadScope?.condition || topology.template?.name || '기본 워크로드'}`,
     `${verdict}${summary.unknownCount ? ` · 미확인 제약 ${summary.unknownCount}개` : ''}`,
     bounded ? '전달률 상한' : '',
     revisions.length ? `카탈로그 ${revisions.join(' / ')}` : '카탈로그 —',

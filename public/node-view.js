@@ -7,7 +7,41 @@ import { GLYPHS } from './glyphs.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS } from './icons.js';
 
 export const NODE_AXIS_LIMIT = 4;
-export const STATE_TOKEN = { healthy: '.', warning: '!', overloaded: '>', unknown: '?', invalid: 'x', disabled: 'x' };
+// 색을 지운 출력에서도 상태를 구별할 수 있어야 한다. 화면과 SVG가 이 token을 같이 쓴다.
+export const STATE_TOKEN = { healthy: '●', warning: '▲', overloaded: '■', unknown: '?', invalid: '×', disabled: '×' };
+export const DRIFT_AMPLITUDES = Object.freeze({ estimate: 0.04, datasheet: 0.015, third_party_test: 0.01, user_measured: 0, 'user-correction': 0 });
+
+// 표시 수치는 계산 결과를 바꾸지 않는다. 같은 factor를 부하와 사용률에 함께 적용해
+// 두 값이 서로 다른 상태를 말하지 않게 한다.
+export function sourceDriftAmplitude(sourceType) {
+  return ({ estimate: 0.04, datasheet: 0.015, third_party_test: 0.01, user_measured: 0, 'user-correction': 0 }[sourceType] ?? 0.04);
+}
+
+export function sourceDriftFactor(seed, phase, sourceType) {
+  const hash = [...String(seed)].reduce((value, character) => ((value * 31) + character.charCodeAt(0)) % 997, 17);
+  const amplitude = sourceDriftAmplitude(sourceType);
+  const wave = Math.sin(phase * 0.72 + hash * 0.13) * amplitude + Math.sin(phase * 0.23 + hash) * amplitude * 0.35;
+  return 1 + wave;
+}
+
+export function packetPixelSpeed(share) {
+  if (!Number.isFinite(share)) return 0;
+  // 초과한 패킷은 목적지까지 닿지 않으며, 정상 흐름보다 천천히 움직인다.
+  return share > 1 ? 12 : 30 + Math.min(Math.max(share, 0), 1) * 85;
+}
+
+export function packetReach(share) { return share > 1 ? 1 / share : 1; }
+
+export function packetMotion(share, length, direction = 'forward') {
+  if (!(share > 0)) return null;
+  const speed = packetPixelSpeed(share);
+  if (!(length > 0) || !speed) return null;
+  const reach = packetReach(share);
+  const forward = direction !== 'reverse';
+  const start = forward ? 0 : 1;
+  const end = forward ? reach : 1 - reach;
+  return { speed, reach, duration: Math.max(0.8, Math.min(7, (length * reach) / speed)), keyPoints: `${start};${end}`, keyTimes: '0;1', calcMode: 'linear' };
+}
 // 노드가 캔버스에서 차지하는 범위. 그룹 상자가 이 값으로 자식을 감싼다.
 export const NODE_REACH = { left: 54, right: 54, top: 18, bottom: 122 };
 export const GROUP_PAD = { base: 14, step: 8, label: 17 };
@@ -75,7 +109,7 @@ export function nodeAxes(device) {
  * 노드 하나가 말해야 하는 것 전부. 화면과 내보내기가 이 결과만 읽는다.
  * spof 는 훑기 결과가 있을 때만 채운다 — 없으면 단일 장애점 여부를 모른다는 뜻이지 아니라는 뜻이 아니다.
  */
-export function nodeView(device, { verdict = null, poolNote = '' } = {}) {
+export function nodeView(device, { verdict = null, poolNote = '', synthetic = false } = {}) {
   const status = device.active ? device.primaryStatus : 'disabled';
   const { rows, hidden } = nodeAxes(device);
   const spof = Boolean(device.active && verdict?.verdict === 'severs' && !verdict.endpoint);
@@ -89,13 +123,16 @@ export function nodeView(device, { verdict = null, poolNote = '' } = {}) {
     kindToken: kindInitial(device.kind),
     symbol: symbolFor(device.kind),
     status,
+    statusToken: STATE_TOKEN[status] || '?',
+    source: device.source || { type: 'estimate', label: '추정값' },
+    synthetic,
     spof,
     hidden,
     // 이미 죽은 장비에 "이게 죽으면 끊긴다"와 숨긴 축 개수를 붙이는 것은 소음이다.
     meta: [String(device.kind).toUpperCase(), behaviorToken(device), zonePath(device.zone).at(-1) || device.zone,
       spof ? 'SPOF' : '', device.active && hidden ? `+${hidden}` : '', poolNote, idle].filter(Boolean).join(' · '),
     // 죽은 장비에 축별 숫자를 남기면 아직 도는 것처럼 읽힌다. 화면과 같이 한 줄로 줄인다.
-    axes: !device.active ? [{ key: 'offline', label: 'OFFLINE', token: 'x', status: 'disabled', binding: false, load: '—', percent: 'DOWN', util: null }] : rows.map(([key, axis]) => ({
+    axes: !device.active ? [{ key: 'offline', label: 'OFFLINE', token: STATE_TOKEN.disabled, status: 'disabled', binding: false, load: '—', percent: 'DOWN', util: null }] : rows.map(([key, axis]) => ({
       key,
       label: nodeAxisLabel(key),
       token: STATE_TOKEN[axis.status] || '?',

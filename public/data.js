@@ -54,8 +54,9 @@ const source = {
   condition: 'Rack Mesh MVP fixture · 기능 비활성 · 정상 상태',
 };
 
-const device = (id, name, kind, zone, x, y, vendor, model, limits) => ({
+const device = (id, name, kind, zone, x, y, vendor, model, limits, metadata = null) => ({
   id, name, kind, zone, position: { x, y }, vendor, model, limits, source, enabled: true,
+  ...(metadata ? { metadata } : {}),
 });
 
 const link = (id, sourceId, targetId, capacityBps = 10e9) => ({
@@ -90,10 +91,10 @@ export const demoTopology = {
     device('fw-b', 'FW B', 'firewall', 'SECURITY', 300, 430, 'Fortinet', 'DEMO-FW-42K', { forwarding_bps: 10e9, forwarding_pps: 1.5e6, new_sessions_per_sec: 42e3, concurrent_sessions: 700e3 }),
     device('spine-a', 'SPINE A', 'switch', 'FABRIC', 490, 175, 'Juniper Networks', 'DEMO-SPN-20G', { forwarding_bps: 20e9, forwarding_pps: 3.2e6 }),
     device('spine-b', 'SPINE B', 'switch', 'FABRIC', 490, 405, 'Juniper Networks', 'DEMO-SPN-20G', { forwarding_bps: 20e9, forwarding_pps: 3.2e6 }),
-    device('leaf-a', 'LEAF A', 'switch', 'FABRIC / RACK 04', 675, 175, 'Arista', 'DEMO-LEAF-12G', { forwarding_bps: 12e9, forwarding_pps: 2.4e6 }),
-    device('leaf-b', 'LEAF B', 'switch', 'FABRIC / RACK 07', 675, 405, 'Arista', 'DEMO-LEAF-12G', { forwarding_bps: 12e9, forwarding_pps: 2.4e6 }),
-    device('api-a', 'API 01', 'server', 'FABRIC / RACK 04', 840, 175, 'Dell', 'DEMO-SRV-12G', { nic_bps: 12e9, nic_pps: null }),
-    device('api-b', 'API 02', 'server', 'FABRIC / RACK 07', 840, 405, 'Dell', 'DEMO-SRV-12G', { nic_bps: 12e9, nic_pps: null }),
+    device('leaf-a', 'LEAF A', 'switch', 'FABRIC / RACK 04', 675, 175, 'Arista', 'DEMO-LEAF-12G', { forwarding_bps: 12e9, forwarding_pps: 2.4e6 }, { powerBasis: 'typical', typicalDrawWatts: 180, uHeight: 1 }),
+    device('leaf-b', 'LEAF B', 'switch', 'FABRIC / RACK 07', 675, 405, 'Arista', 'DEMO-LEAF-12G', { forwarding_bps: 12e9, forwarding_pps: 2.4e6 }, { powerBasis: 'typical', typicalDrawWatts: 180, uHeight: 1 }),
+    device('api-a', 'API 01', 'server', 'FABRIC / RACK 04', 840, 175, 'Dell', 'DEMO-SRV-12G', { nic_bps: 12e9, nic_pps: null }, { powerBasis: 'typical', typicalDrawWatts: 420, uHeight: 2 }),
+    device('api-b', 'API 02', 'server', 'FABRIC / RACK 07', 840, 405, 'Dell', 'DEMO-SRV-12G', { nic_bps: 12e9, nic_pps: null }, { powerBasis: 'typical', typicalDrawWatts: 420, uHeight: 2 }),
   ],
   links: [
     link('edge-a-fw-a', 'edge-a', 'fw-a'),
@@ -126,6 +127,15 @@ export const demoTopology = {
         { id: 'sync-b', devices: ['api-a', 'leaf-a', 'spine-b', 'leaf-b', 'api-b'], links: ['leaf-a-api-a', 'spine-b-leaf-a', 'spine-b-leaf-b', 'leaf-b-api-b'] },
       ],
     },
+  ],
+  services: [{ id: 'public-api-service', name: 'Public API', demandIds: ['public-api'], requiredDeliveryRatio: 0.99 }],
+  failureDomains: [
+    { id: 'rack-04', name: 'RACK 04', deviceIds: ['leaf-a', 'api-a'] },
+    { id: 'rack-07', name: 'RACK 07', deviceIds: ['leaf-b', 'api-b'] },
+  ],
+  racks: [
+    { id: 'rack-04-budget', name: 'RACK 04', deviceIds: ['leaf-a', 'api-a'], powerBasis: 'typical', powerBudgetWatts: 1400, capacityU: 42 },
+    { id: 'rack-07-budget', name: 'RACK 07', deviceIds: ['leaf-b', 'api-b'], powerBasis: 'typical', powerBudgetWatts: 1400, capacityU: 42 },
   ],
 };
 

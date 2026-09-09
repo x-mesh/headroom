@@ -4,7 +4,7 @@ import { acceptEvidence, addDemand, addDevice, addLink, applySpec, clearEvidence
 import { importDeviceDefinition } from './device-import.js';
 import { parseProject, serializeProject } from './project.js';
 import { GLYPHS, GLYPH_SPRITE } from './glyphs.js';
-import { behaviorToken, cardBox, formatNodeValue, groupBoxes, GROUP_PAD, kindInitial, LINK_ROUTES, linkPath, nodeAxes, nodeAxisLabel, NODE_REACH, nodeView, placeLinkLabels, routeLink, segmentHitsBox, STATE_TOKEN, symbolFor, zonePath } from './node-view.js';
+import { behaviorToken, cardBox, formatNodeValue, groupBoxes, GROUP_PAD, kindInitial, LINK_ROUTES, linkPath, nodeAxes, nodeAxisLabel, NODE_REACH, nodeView, packetMotion, placeLinkLabels, routeLink, segmentHitsBox, sourceDriftFactor, STATE_TOKEN, symbolFor, zonePath } from './node-view.js';
 import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
 import { vendorLogoFor } from './logos.js';
 import { buildTemplate, templateGroups, templates } from './templates.js';
@@ -45,6 +45,10 @@ let telemetryTimer;
 const telemetryHistory = new Map();
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const mobileLayout = window.matchMedia('(max-width: 760px)');
+let previousBindingKey = null;
+const teaserTimers = new Set();
+let teaserActive = false;
+let restoredWorkingCopy = false;
 
 const element = (id) => document.getElementById(id);
 if (mobileLayout.matches) document.querySelector('.view-settings')?.removeAttribute('open');
@@ -77,7 +81,9 @@ function recalculate({ light = false } = {}) {
 }
 
 function resetScenario() {
-  state.disabledDevices.clear(); state.disabledLinks.clear(); state.connectSource = null;
+  cancelTeaser();
+  state.disabledDevices.clear(); state.disabledLinks.clear(); state.disabledDomains.clear(); state.scale = 1; state.connectSource = null;
+  element('scale-input').value = '100';
   if (!topology.devices.some(({ id }) => id === state.selectedId) && !topology.links.some(({ id }) => id === state.selectedId)) state.selectedId = topology.devices[0]?.id || null;
   recalculate();
 }
@@ -187,9 +193,9 @@ function renderBottleneck() {
     parts.push(`${resourceName(binding)}의 ${withParticle(`${direction}${catalog.label}`, 'subject')} ${axis.status === 'overloaded' ? '한계를 넘었습니다' : '가장 빠듯합니다'}.`);
     parts.push(`${withParticle(scale, 'instrumental')} ${formatPercent(axis.utilization)}입니다.`);
   }
-  if (current.summary.droppedLoadBps > 0) parts.push(`병목을 지나지 못한 ${formatCompact(current.summary.droppedLoadBps, 'bps')}가 버려집니다.`);
+  if (current.summary.droppedLoadBps > 0) parts.push(`용량 병목에서 ${formatCompact(current.summary.droppedLoadBps, 'bps')}가 드롭됩니다.`);
   if (current.summary.refusedSessionsPerSec > 0) parts.push(`신규 세션 ${formatCompact(current.summary.refusedSessionsPerSec, 'cps')}가 거절됩니다. 이미 맺힌 연결은 계속 흐릅니다.`);
-  if (current.summary.unreachableCount > 0) parts.push(`경로가 끊긴 demand가 ${current.summary.unreachableCount}개 있습니다.`);
+  if (current.summary.unreachableCount > 0) parts.push(`경로 단절로 ${formatCompact(current.summary.unreachableLoadBps, 'bps')}가 미전달되고 demand ${current.summary.unreachableCount}개가 끊겼습니다.`);
   if (current.demands.some(({ deliveredRatioBound }) => deliveredRatioBound === 'upper')) {
     parts.push('한계를 모르는 축이 있어 전달률은 상한값입니다.');
   }
@@ -258,7 +264,7 @@ function renderClassControl() {
       ${choices.map(([value, text]) => `<button type="button" data-${attribute}="${value}" aria-pressed="${current === value}">${escapeText(text)}</button>`).join('')}
     </div>`;
   element('class-control').innerHTML = group('배지', 'class-badge', classView.badge, [['off', '끔'], ['on', '켬']])
-    + group('떨림', 'number-motion', motionView.drift, [['off', '끔'], ['on', '켬']])
+    + group('미확정 표시', 'number-motion', motionView.drift, [['off', '끔'], ['on', '켬']])
     + group('수치', 'node-detail', detailView.level, [['off', '없앰'], ['brief', '요약'], ['full', '전체']])
     + group('선', 'link-route', routeView.mode, [['straight', '직선'], ['orthogonal', '직각'], ['curved', '곡선']]);
 }
@@ -324,8 +330,31 @@ function render() {
   renderClassControl();
   renderLearningPanel();
   syncLiveNumbers();
+  const bindingKey = current.summary.bindingResourceId && `${current.summary.bindingResourceId}:${current.summary.bindingAxis}`;
+  if (previousBindingKey && bindingKey && previousBindingKey !== bindingKey && !reducedMotion.matches) {
+    const node = document.querySelector(`[data-device-id="${CSS.escape(current.summary.bindingResourceId)}"]`);
+    if (node) { node.classList.remove('binding-pulse'); void node.offsetWidth; node.classList.add('binding-pulse'); }
+  }
+  previousBindingKey = bindingKey;
   document.querySelector('[data-editor-action="undo"]').disabled = !documentHistory.canUndo;
   document.querySelector('[data-editor-action="redo"]').disabled = !documentHistory.canRedo;
+}
+
+function cancelTeaser() {
+  for (const timer of teaserTimers) clearTimeout(timer);
+  teaserTimers.clear();
+  if (teaserActive) { teaserActive = false; state.scale = 1; element('scale-input').value = '100'; recalculate(); }
+}
+
+function startTeaser() {
+  const eligible = !restoredWorkingCopy && topology.template?.id === 'demo' && state.scale === 1 && !state.disabledDevices.size && !state.disabledLinks.size
+    && !state.disabledDomains.size && !reducedMotion.matches && !document.hidden;
+  if (!eligible) return;
+  try { if (sessionStorage.getItem('rack-mesh-demo-teaser')) return; sessionStorage.setItem('rack-mesh-demo-teaser', '1'); } catch { return; }
+  teaserActive = true;
+  const schedule = (callback, delay) => { const timer = setTimeout(() => { teaserTimers.delete(timer); callback(); }, delay); teaserTimers.add(timer); };
+  schedule(() => { state.scale = 1.2; element('scale-input').value = '120'; recalculate({ light: true }); }, 700);
+  schedule(() => { if (teaserActive) { state.scale = 1; element('scale-input').value = '100'; recalculate(); teaserActive = false; } }, 3000);
 }
 
 function renderSummary() {
@@ -339,20 +368,33 @@ function renderSummary() {
   element('summary-warning').textContent = `${summary.warningCount}개 자원 주의`;
   element('summary-unreachable').textContent = String(summary.unreachableCount).padStart(2, '0');
   element('summary-unreachable-load').textContent = `${formatCompact(summary.unreachableLoadBps, 'bps')} 미전달`;
+  element('summary-dropped-load').textContent = formatCompact(summary.droppedLoadBps, 'bps');
+  const growthRung = summary.growthLadder?.rungs?.[0];
+  const growth = summary.overloadedCount > 0 ? '초과'
+    : summary.growthLadder?.indeterminate ? '미확정'
+      : growthRung ? `${growthRung.breachScale.toFixed(2)}×` : '—';
+  const growthBinding = summary.overloadedCount > 0 ? '현재 용량 초과'
+    : summary.growthLadder?.indeterminate ? '성장 한계 미확정'
+      : growthRung ? `다음 병목 ${resourceName(resourceById(growthRung.resourceId)) || growthRung.resourceId} · ${axisCatalog[growthRung.axis]?.shortLabel || growthRung.axis}` : '다음 한계 없음';
+  element('summary-growth').textContent = growth;
+  element('summary-growth-binding').textContent = growthBinding;
   element('summary-faults').textContent = String(summary.activeFaults).padStart(2, '0');
   element('summary-delta').textContent = `headroom ${formatPercent(comparison.minHeadroomDelta, true)}`;
   // 엔진은 0.8 을 넘으면 warning 으로 판정하고 그 수를 summary.warningCount 에 담는데,
   // 상단 상태가 그 값을 보지 않아 주의 자원이 있어도 'BASELINE STABLE' 이라고 말했다.
   const runState = summary.evaluationStatus === 'invalid' ? { text: 'MODEL INVALID', tone: 'danger' }
     : summary.evaluationStatus === 'not-ready' ? { text: 'MODEL NOT READY', tone: 'unknown' }
-    : summary.evaluationStatus === 'unknown' ? { text: 'EVIDENCE INCOMPLETE', tone: 'unknown' }
     : summary.unreachableCount ? { text: 'TRAFFIC UNREACHABLE', tone: 'danger' }
     : summary.overloadedCount ? { text: 'CAPACITY EXCEEDED', tone: 'danger' }
     : summary.warningCount ? { text: `CAPACITY WARNING · ${summary.warningCount}`, tone: 'amber' }
     : summary.activeFaults ? { text: 'FAILURE CONTAINED', tone: 'amber' }
     : { text: 'BASELINE STABLE', tone: 'signal' };
-  element('run-state').textContent = runState.text;
-  element('run-state').parentElement.style.color = `var(--${runState.tone})`;
+  const evidence = summary.evaluationStatus === 'unknown' ? { text: `EVIDENCE ${summary.unknownCount || 0} UNKNOWN`, tone: 'unknown' } : { text: 'EVIDENCE VERIFIED', tone: 'signal' };
+  const capacity = { text: runState.text, tone: runState.tone === 'amber' ? 'warning' : runState.tone };
+  for (const [id, value] of [['evidence-state', evidence], ['capacity-state', capacity]]) {
+    const chip = element(id); chip.querySelector('span').textContent = value.text; chip.dataset.tone = value.tone;
+  }
+  element('baseline-reset').hidden = !(summary.activeFaults || state.scale !== 1);
   // headroom 은 엔진이 쓰는 임계값과 같은 기준으로 칠한다. 13% 가 초록이면 숫자가 거짓말을 한다.
   element('summary-headroom').dataset.tone = summary.minHeadroom == null ? 'unknown'
     : summary.minHeadroom <= 0 ? 'danger' : summary.minHeadroom < 0.2 ? 'amber' : 'signal-deep';
@@ -468,10 +510,11 @@ function vendorBadge(device) {
 
 function nodeAxisRow(device, key, axis, brief = false) {
   // unknown·invalid 축에는 data-live-util을 붙이지 않는다. 텔레메트리가 미확인 값을 숫자로 덮어쓰면 안 된다.
-  const live = axis.utilization == null ? '' : ` data-live-util="${axis.utilization}" data-live-seed="${escapeAttribute(device.id)}:${key}"`;
+  const sourceType = axis.source?.type || device.source?.type || 'estimate';
+  const live = axis.utilization == null ? '' : ` data-live-util="${axis.utilization}" data-live-seed="${escapeAttribute(device.id)}:${key}:percent" data-live-drift="${escapeAttribute(device.id)}:${key}" data-live-source-type="${escapeAttribute(sourceType)}"`;
   // 사용률만 떨고 부하는 그대로면 한쪽만 살아 있는 것처럼 보인다. 한계를 몰라 사용률이
   // 미확인인 축에도 부하는 알 수 있으므로, 부하는 부하대로 따라간다.
-  const liveLoad = Number.isFinite(axis.load) ? ` data-live-load="${axis.load}" data-live-seed="${escapeAttribute(device.id)}:${key}-load"` : '';
+  const liveLoad = Number.isFinite(axis.load) ? ` data-live-load="${axis.load}" data-live-seed="${escapeAttribute(device.id)}:${key}:load" data-live-drift="${escapeAttribute(device.id)}:${key}" data-live-source-type="${escapeAttribute(sourceType)}"` : '';
   const percent = axis.status === 'unknown' ? '\u2014' : axis.status === 'invalid' ? 'ERR' : formatPercent(axis.utilization);
   // 막대 후보가 쓰는 값. unknown 축은 넘기지 않아 막대가 그려지지 않는다.
   const meter = axis.utilization == null ? '' : ` style="--util:${Math.min(axis.utilization, 1.5)}"`;
@@ -835,6 +878,18 @@ function fitGroupTags() {
   }
 }
 
+let packetRuler = null;
+function pathLength(geometry) {
+  if (!packetRuler?.isConnected) {
+    packetRuler = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    packetRuler.setAttribute('visibility', 'hidden');
+    packetRuler.setAttribute('fill', 'none');
+    element('link-layer').append(packetRuler);
+  }
+  packetRuler.setAttribute('d', geometry);
+  try { return packetRuler.getTotalLength(); } catch { return 0; }
+}
+
 function renderTopology() {
   applyViewport();
   const devices = new Map(current.devices.map((item) => [item.id, item]));
@@ -931,11 +986,13 @@ function renderTopology() {
     return handles.join('');
   };
 
-  element('link-layer').innerHTML = groupMarkup + current.links.map((link) => {
+  element('link-layer').innerHTML = groupMarkup + (topology.synthetic ? '<text class="synthetic-marker" x="18" y="30">SYNTHETIC TOPOLOGY</text>' : '') + current.links.map((link) => {
     const onSeveredPath = !link.severed && severedPathLinks.has(link.id);
     const status = linkStatus(link);
     const spot = labelSpots.get(link.id);
-    const geometry = escapeAttribute(linkPath(routes.get(link.id), routeView.mode));
+    const geometryRaw = linkPath(routes.get(link.id), routeView.mode);
+    const geometry = escapeAttribute(geometryRaw);
+    const linkLength = pathLength(geometryRaw);
     const utilization = link.axes.forwarding_bps?.utilization;
     // 점은 방향마다 따로 흐른다. 하나로 합치면 요청과 응답이 같은 줄로 보여, returnPath 를 적어
     // 응답을 옮겨 놓고도 그림은 예전과 같아진다. 되돌아오는 점은 속을 비워 한눈에 갈리게 한다.
@@ -944,13 +1001,13 @@ function renderTopology() {
       const axis = link.directions?.[direction]?.axes?.forwarding_bps;
       const share = axis && axis.status !== 'unknown' ? axis.utilization : null;
       if (link.severed || onSeveredPath || !(share > 0)) return '';
-      const count = Math.min(3, Math.max(1, Math.ceil(share * 3)));
-      const duration = Math.max(1.25, 3.4 - Math.min(share, 1.5) * 1.25);
+      const count = Math.min(4, Math.max(1, Math.ceil(share * 3)));
+      const motion = packetMotion(share, linkLength, direction);
+      if (!motion) return '';
       const back = direction === 'reverse';
-      // 경로는 출발지에서 도착지로 그려져 있다. 응답은 그 길을 거꾸로 달리므로 keyPoints 를 뒤집는다.
-      const along = back ? ' keyPoints="1;0" keyTimes="0;1" calcMode="linear"' : '';
-      return Array.from({ length: count }, (_, index) => `<circle class="packet-dot ${status}${back ? ' response' : ''}" r="${back ? 2.6 : 3}">
-        <animateMotion path="${geometry}"${along} dur="${duration.toFixed(2)}s" begin="-${(duration * index / count).toFixed(2)}s" repeatCount="indefinite"></animateMotion>
+      const along = ` keyPoints="${motion.keyPoints}" keyTimes="${motion.keyTimes}" calcMode="${motion.calcMode}"`;
+      return Array.from({ length: count }, (_, index) => `<circle class="packet-dot ${status}${back ? ' response' : ''}${motion.reach < 1 ? ' dropped' : ''}" style="--packet-dur:${motion.duration.toFixed(2)}s;--packet-delay:-${(motion.duration * index / count).toFixed(2)}s" r="${back ? 2.6 : 3}">
+        <animateMotion path="${geometry}"${along} dur="${motion.duration.toFixed(2)}s" begin="-${(motion.duration * index / count).toFixed(2)}s" repeatCount="indefinite"></animateMotion>
       </circle>`).join('');
     };
     const packetDots = packetStream('forward') + packetStream('reverse');
@@ -959,7 +1016,7 @@ function renderTopology() {
       <path class="link ${status}" d="${geometry}"></path>
       <path class="link-hit" d="${geometry}" tabindex="0" role="button" aria-label="${escapeAttribute(`${resourceName(link)} 링크 검사${link.severed ? ' · 끊김' : onSeveredPath ? ' · 경로 단절' : ''}`)}"></path>
       ${packetDots}
-      ${spot ? `<text class="link-label"${link.severed ? '' : ` data-live-util="${utilization ?? ''}" data-live-seed="${link.id}"`} x="${spot.x}" y="${spot.y}" text-anchor="middle">${link.severed ? 'DOWN' : formatPercent(utilization)}</text>` : ''}
+      ${spot ? `<text class="link-label"${link.severed ? '' : ` data-live-util="${utilization ?? ''}" data-live-seed="${link.id}" data-live-source-type="${escapeAttribute(link.sourceInfo?.type || 'datasheet')}"`} x="${spot.x}" y="${spot.y}" text-anchor="middle">${link.severed ? 'DOWN' : formatPercent(utilization)}</text>` : ''}
       ${selectionHas('link', link.id) ? bendHandles(link) : ''}
     </g>`;
   }).join('') + diagramConnectors + groupLabels;
@@ -1002,9 +1059,9 @@ function renderTopology() {
     const axes = detailView.level === 'off' ? ''
       : device.active
         ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis, brief)).join('')
-        : '<span class="node-axis" data-axis-state="disabled"><i>x</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>';
+        : `<span class="node-axis" data-axis-state="disabled"><i>${STATE_TOKEN.disabled}</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>`;
     return `<button type="button" class="mesh-node ${status} ${state.selectedId === device.id ? 'selected' : ''} ${selectionHas('device', device.id) ? 'multi-selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x - viewport.minX}px;top:${device.position.y - viewport.minY}px" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
-      <span class="node-symbol">${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}${classView.badge === 'on' ? `<span class="node-class-badge">${escapeText(kindInitial(device.kind))}</span>` : ''}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolFor(device.kind).id}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}${pool || idle ? `<span class="node-pool"${idle ? ' data-warn=""' : ''}>${escapeText(pool || idle)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
+      <span class="node-symbol">${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}${topology.synthetic ? '<span class="synthetic-badge" aria-label="합성값">SYN</span>' : ''}${classView.badge === 'on' ? `<span class="node-class-badge">${escapeText(kindInitial(device.kind))}</span>` : ''}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolFor(device.kind).id}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}${pool || idle ? `<span class="node-pool"${idle ? ' data-warn=""' : ''}>${escapeText(pool || idle)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
     </button>`;
   }).join('');
 }
@@ -1404,15 +1461,10 @@ function renderAxis(axis, result, resourceId, resource = null) {
         aria-label="${escapeAttribute(`${catalog.label} 한계값. 좌우로 끌면 이 축의 목표 사용률을 정하고 그 값이 한계값이 됩니다.`)}" style="--axis-width:${width}%"><span style="--axis-width:${width}%"></span><i class="axis-grip"></i></div>`
     : `<div class="axis-meter" aria-label="${catalog.label} ${formatPercent(result.utilization)}"><span style="--axis-width:${width}%"></span></div>`;
   return `<div class="axis-row ${result.status}"${drag ? ' data-axis-editable=""' : ''}>
-    <div class="axis-title"><span>${catalog.label}</span><span>${stateLabel(result.status)} · <b data-live-util="${result.utilization ?? ''}" data-live-seed="${resourceId}:${axis}">${formatPercent(result.utilization)}</b></span></div>
+    <div class="axis-title"><span>${catalog.label}</span><span>${stateLabel(result.status)} · <b data-live-util="${result.utilization ?? ''}" data-live-seed="${resourceId}:${axis}:percent" data-live-drift="${resourceId}:${axis}" data-live-source-type="${escapeAttribute(result.source?.type || resource?.source?.type || 'estimate')}">${formatPercent(result.utilization)}</b></span></div>
     ${meter}
-    <div class="axis-values"><span data-live-load="${result.load}" data-live-unit="${catalog.unit}" data-live-seed="${resourceId}:${axis}-load">${formatCompact(result.load, catalog.unit)} load</span><span data-axis-limit="${escapeAttribute(axis)}">${formatCompact(result.limit, catalog.unit)} limit</span></div>
+    <div class="axis-values"><span data-live-load="${result.load}" data-live-unit="${catalog.unit}" data-live-seed="${resourceId}:${axis}:load" data-live-drift="${resourceId}:${axis}" data-live-source-type="${escapeAttribute(result.source?.type || resource?.source?.type || 'estimate')}">${formatCompact(result.load, catalog.unit)} load</span><span data-axis-limit="${escapeAttribute(axis)}">${formatCompact(result.limit, catalog.unit)} limit</span></div>
   </div>`;
-}
-
-function telemetryWave(seed, phase, amplitude = 0.015) {
-  const hash = [...seed].reduce((value, character) => ((value * 31) + character.charCodeAt(0)) % 997, 17);
-  return Math.sin(phase * 0.72 + hash * 0.13) * amplitude + Math.sin(phase * 0.23 + hash) * amplitude * 0.35;
 }
 
 // 트윈은 260ms, 떨림은 300ms 마다 한 걸음 나아간다. 진폭은 사용률 1.5퍼센트포인트라 70% 가
@@ -1430,7 +1482,7 @@ function liveTarget(node) {
   const value = raw === '' || raw == null ? Number.NaN : Number(raw);
   // 같은 숫자를 세 가지 모양으로 쓴다. 백분율, 인스펙터의 단위 붙은 부하, 노드 칸의 짧은 부하.
   const kind = node.dataset.liveUtil != null ? 'percent' : node.dataset.liveUnit != null ? 'unit' : 'compact';
-  return { seed: node.dataset.liveSeed, value, kind, load: kind !== 'percent' };
+  return { seed: node.dataset.liveSeed, driftSeed: node.dataset.liveDrift || node.dataset.liveSeed, value, kind, sourceType: node.dataset.liveSourceType, load: kind !== 'percent' };
 }
 function paintLive(node, value, kind) {
   const settled = Number(node.dataset.liveUtil ?? node.dataset.liveLoad);
@@ -1438,6 +1490,7 @@ function paintLive(node, value, kind) {
     : kind === 'unit' ? `${formatCompact(value, node.dataset.liveUnit, settled)} load`
     : formatNodeValue(value, settled);
   if (node.textContent !== text) node.textContent = text;
+  node.dataset.livePainted = String(value);
   // 백분율은 1%포인트 단위로만 바뀌어서, 그것만으로는 움직임으로 읽히지 않는다. 막대는 그
   // 사이를 이어 준다 - 눈이 실제로 잡는 것은 자릿수가 아니라 길이다. 인스펙터 미터는 끌어서
   // 한계값을 정하는 손잡이라 건드리지 않는다.
@@ -1472,7 +1525,7 @@ function stepMotion(now) {
   const phase = now / MOTION.driftCadence;
   let running = false;
   for (const node of liveNodes()) {
-    const { seed, value, kind } = liveTarget(node);
+    const { seed, driftSeed, value, kind, sourceType } = liveTarget(node);
     if (!seed || !Number.isFinite(value)) continue;
     const tween = liveTweens.get(seed);
     if (tween) {
@@ -1484,9 +1537,8 @@ function stepMotion(now) {
     // 떨림은 헤드라인 숫자에 걸지 않는다(DESIGN.md). 고정된 비교 패널과 다른 말을 하면
     // 읽는 사람은 어느 쪽을 적어야 할지 알 수 없다.
     if (!drifting || node.closest('.binding-callout')) { paintLive(node, value, kind); continue; }
-    const wave = telemetryWave(seed, phase, MOTION.amplitude);
-    // 백분율에는 퍼센트포인트로 더하고, 부하 수치에는 비율로 곱한다.
-    paintLive(node, Math.max(0, kind === 'percent' ? value + wave : value * (1 + wave)), kind);
+    // 같은 축의 부하와 percent가 하나의 비율 factor를 공유한다. 상태와 binding은 원값을 쓴다.
+    paintLive(node, Math.max(0, value * sourceDriftFactor(driftSeed, phase, sourceType)), kind);
   }
   if (running || drifting) motionFrame = requestAnimationFrame(stepMotion);
 }
@@ -2220,6 +2272,7 @@ function handleEditorAction(action) {
 }
 
 function toggleFailure(type, id) {
+  cancelTeaser();
   const set = type === 'device' ? state.disabledDevices : type === 'link' ? state.disabledLinks : state.disabledDomains;
   set.has(id) ? set.delete(id) : set.add(id);
   showToast(`${id.toUpperCase()} ${set.has(id) ? '비활성화' : '복구'} · 경로 재계산 완료`);
@@ -2389,8 +2442,8 @@ function closeMobileInspector() { element('inspector-panel').classList.remove('m
 element('inspector-close-mobile').addEventListener('click', closeMobileInspector);
 element('mobile-inspector-open').addEventListener('click', openMobileInspector);
 
-element('scale-input').addEventListener('input', (event) => { state.scale = Number(event.target.value) / 100; recalculate({ light: true }); });
-element('scale-input').addEventListener('change', (event) => { state.scale = Number(event.target.value) / 100; recalculate(); });
+element('scale-input').addEventListener('input', (event) => { const value = Number(event.target.value) / 100; cancelTeaser(); state.scale = value; event.target.value = String(value * 100); recalculate({ light: true }); });
+element('scale-input').addEventListener('change', (event) => { const value = Number(event.target.value) / 100; cancelTeaser(); state.scale = value; event.target.value = String(value * 100); recalculate(); });
 element('failure-list').addEventListener('click', (event) => {
   const button = event.target.closest('[data-failure-id]');
   if (button) toggleFailure(button.dataset.failureType, button.dataset.failureId);
@@ -2688,7 +2741,10 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'ArrowRight') { event.preventDefault(); runTourStep(tour.index + 1); }
   if (event.key === 'ArrowLeft') { event.preventDefault(); runTourStep(tour.index - 1); }
 });
-element('reset-button').addEventListener('click', () => { state.disabledDevices.clear(); state.disabledLinks.clear(); state.disabledDomains.clear(); state.scale = 1; element('scale-input').value = '100'; showToast('장애와 배율을 초기화했습니다.'); recalculate(); });
+element('reset-button').addEventListener('click', () => { resetScenario(); showToast('장애와 배율을 초기화했습니다.'); });
+element('baseline-reset').addEventListener('click', () => { resetScenario(); showToast('기준 상태로 돌아왔습니다.'); });
+document.addEventListener('pointerdown', () => { if (teaserActive) cancelTeaser(); }, { passive: true });
+document.addEventListener('keydown', () => { if (teaserActive) cancelTeaser(); }, { passive: true });
 function closeTopMenus({ restoreFocus = false } = {}) {
   document.querySelectorAll('.top-menu-trigger[aria-expanded="true"]').forEach((trigger) => {
     trigger.setAttribute('aria-expanded', 'false');
@@ -3459,7 +3515,7 @@ try {
   const saved = localStorage.getItem('rack-mesh-working-copy');
   if (saved) {
     const project = parseProject(saved);
-    topology = project.topology; state.scale = project.scenario.scale;
+    restoredWorkingCopy = true; topology = project.topology; state.scale = project.scenario.scale;
     state.disabledDevices = new Set(project.scenario.disabledDevices); state.disabledLinks = new Set(project.scenario.disabledLinks); state.disabledDomains = new Set(project.scenario.disabledDomains || []); state.namedScenarios = project.scenario.namedScenarios || [];
     state.selectedId = project.scenario.selectedId; state.viewMode = project.scenario.viewMode || 'edit';
     state.selection = state.selectedId ? [{ type: topology.links.some(({ id }) => id === state.selectedId) ? 'link' : 'device', id: state.selectedId }] : [];
@@ -3473,3 +3529,4 @@ setLeftPanel(state.leftPanel);
 render();
 centerCanvas();
 startTelemetry();
+startTeaser();

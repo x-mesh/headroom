@@ -80,6 +80,21 @@ test('the demo everyone lands on teaches the claim the tool is built on', () => 
   assert.equal(after.axes.new_sessions_per_sec.status, 'overloaded', '넘치는 축은 대역폭이 아니라 세션이어야 한다');
 });
 
+test('the default dual fabric exposes rack and rack failure domains', () => {
+  const topology = buildTemplate('dual-fabric');
+  assert.deepEqual(topology.failureDomains?.map(({ id, deviceIds }) => [id, deviceIds]), [['rack-04', ['leaf-a', 'api-a']], ['rack-07', ['leaf-b', 'api-b']]]);
+  assert.ok(calculateScenario(topology).racks.every(({ status }) => status === 'pass'));
+  assert.equal(calculateScenario(topology, { disabledDomains: ['rack-04'] }).summary.unreachableCount, 1);
+  assert.equal(calculateScenario(topology, { disabledDomains: ['rack-07'] }).summary.unreachableCount, 1);
+});
+
+test('the initial demo itself exposes service, rack domains, and rack budgets', () => {
+  const topology = cloneTopology();
+  assert.deepEqual(topology.services?.map(({ name, requiredDeliveryRatio }) => [name, requiredDeliveryRatio]), [['Public API', 0.99]]);
+  assert.deepEqual(topology.failureDomains?.map(({ id }) => id), ['rack-04', 'rack-07']);
+  assert.ok(calculateScenario(topology).racks.every(({ status }) => status === 'pass'));
+});
+
 // ── 새 설계가 넘지 못할 선 ────────────────────────────────────────────────
 // 아래 셋은 지금 21개가 이미 지키고 있다. 먼저 적어 두는 것은, 앞으로 더 복잡한 설계를
 // 넣을 때 무엇을 잃으면 안 되는지가 사람의 기억이 아니라 테스트에 있어야 하기 때문이다.

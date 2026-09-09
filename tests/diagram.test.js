@@ -167,7 +167,7 @@ test('stamps the calculation onto the exported frame', () => {
   const svg = exportDiagramSvg(topology, result, { sweep: sweepSingleFaults(topology), exportedAt: '2026-09-07 08:00' });
 
   // 이 그림이 어느 조건에서 나왔는지. 하나라도 빠지면 근거가 아니라 그림일 뿐이다.
-  for (const fragment of ['배율 1.00배', '장애 web-a', `엔진 ${result.engineVersion}`, '합성 데모', '내보냄 2026-09-07 08:00']) {
+  for (const fragment of ['배율 1.00배', '장애 web-a', `엔진 ${result.engineVersion}`, '합성 데모', '출처', '조건', 'SYN', '내보냄 2026-09-07 08:00']) {
     assert.ok(svg.includes(fragment), `스탬프에 ${fragment} 가 없습니다.`);
   }
   // 미확인이 있는 결과를 통과로 보이게 하지 않는다.

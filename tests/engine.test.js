@@ -491,6 +491,9 @@ test('the sweep ignores injected faults and stays deterministic', () => {
 
 test('the sweep counts demand endpoints apart and never calls an unknown design safe', () => {
   const topology = cloneTopology();
+  // 기본 데모는 이제 서비스 기준을 가져 endpoint 손실도 서비스 실패로 평가한다. 이 테스트는
+  // 서비스 기준이 없을 때 endpoint를 SPOF 집계에서 분리하는 기존 계약만 고정한다.
+  delete topology.services;
   const sweep = sweepSingleFaults(topology);
   // api-a 는 east-west 의 출발지다. 끄면 끊기지만 그건 이중화 문제가 아니다.
   const endpoint = sweep.resources.find((resource) => resource.id === 'api-a');

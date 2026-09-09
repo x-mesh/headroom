@@ -39,8 +39,8 @@
           </div>
         </div>
         <div class="run-state" aria-live="polite">
-          <span class="status-lamp" id="run-lamp"></span>
-          <span id="run-state">BASELINE STABLE</span>
+          <span class="status-chip" id="evidence-state"><i aria-hidden="true"></i><span>근거 확인 중</span></span>
+          <span class="status-chip" id="capacity-state"><i aria-hidden="true"></i><span>용량 계산 중</span></span>
         </div>
         <div class="top-actions">
           <button class="text-button" id="guide-button" type="button" aria-label="이 도구를 읽는 법"><span class="action-icon icon-help" aria-hidden="true"></span><span class="action-label">사용 안내</span></button>
@@ -98,13 +98,23 @@
           <output id="scale-output" for="scale-input">1.00×</output>
         </label>
         <div class="scenario-legend" aria-label="용량 상태 범례">
-          <span data-state="healthy"><i>.</i> 정상</span>
-          <span data-state="warning"><i>!</i> 주의</span>
-          <span data-state="overloaded"><i>&gt;</i> 용량 초과</span>
+          <span data-state="healthy"><i>●</i> 정상</span>
+          <span data-state="warning"><i>▲</i> 주의</span>
+          <span data-state="overloaded"><i>■</i> 용량 초과</span>
           <span data-state="unknown"><i>?</i> 한계 미확인</span>
-          <span data-state="disabled"><i>x</i> 비활성</span>
+          <span data-state="disabled"><i>×</i> 비활성</span>
         </div>
       </section>
+
+      <section class="summary-strip" aria-label="시나리오 요약">
+        <div class="summary-metric summary-metric-growth summary-metric-primary"><span>여유 배수</span><strong id="summary-growth">···</strong><small id="summary-growth-binding">다음 병목 계산 중</small></div>
+        <div class="summary-metric"><span>최소 headroom</span><strong id="summary-headroom">···</strong><small id="summary-binding">계산 중</small><svg class="metric-sparkline" data-series="headroom" viewBox="0 0 120 28" aria-label="최근 headroom 재계산 추이"><path></path><circle r="2.5"></circle></svg></div>
+        <div class="summary-metric"><span>과부하 자원</span><strong id="summary-overloaded">···</strong><small id="summary-warning">계산 중</small><svg class="metric-sparkline" data-series="overloaded" viewBox="0 0 120 28" aria-label="최근 최대 사용률 추이"><path></path><circle r="2.5"></circle></svg></div>
+        <div class="summary-metric"><span>무경로 미전달</span><strong id="summary-unreachable">···</strong><small id="summary-unreachable-load">계산 중</small><svg class="metric-sparkline" data-series="unreachable" viewBox="0 0 120 28" aria-label="최근 전달률 추이"><path></path><circle r="2.5"></circle></svg></div>
+        <div class="summary-metric"><span>용량 드롭</span><strong id="summary-dropped-load">···</strong><small>병목에서 버린 전달량</small></div>
+        <div class="summary-metric"><span>활성 장애</span><strong id="summary-faults">···</strong><small id="summary-delta">기준선 계산 중</small><svg class="metric-sparkline" data-series="faults" viewBox="0 0 120 28" aria-label="최근 전체 트래픽 추이"><path></path><circle r="2.5"></circle></svg></div>
+      </section>
+      <button class="baseline-reset" id="baseline-reset" type="button" hidden>기준 상태로 돌아가기</button>
 
       <section class="editor-deck" aria-label="설계 편집 도구">
         <div class="editor-tools" role="toolbar" aria-label="설계 편집">
@@ -126,13 +136,6 @@
           <header><div><span class="section-code">EDITOR TASK</span><h2 id="editor-panel-heading">설계 편집</h2></div><button type="button" id="editor-close" aria-label="편집 패널 닫기">닫기</button></header>
           <div class="editor-panel-content" id="editor-panel-content"></div>
         </section>
-      </section>
-
-      <section class="summary-strip" aria-label="시나리오 요약">
-        <div class="summary-metric summary-metric-primary"><span>최소 headroom</span><strong id="summary-headroom">···</strong><small id="summary-binding">계산 중</small><svg class="metric-sparkline" data-series="headroom" viewBox="0 0 120 28" aria-label="최근 headroom 재계산 추이"><path></path><circle r="2.5"></circle></svg></div>
-        <div class="summary-metric"><span>과부하 자원</span><strong id="summary-overloaded">···</strong><small id="summary-warning">계산 중</small><svg class="metric-sparkline" data-series="overloaded" viewBox="0 0 120 28" aria-label="최근 최대 사용률 추이"><path></path><circle r="2.5"></circle></svg></div>
-        <div class="summary-metric"><span>전달 실패</span><strong id="summary-unreachable">···</strong><small id="summary-unreachable-load">계산 중</small><svg class="metric-sparkline" data-series="unreachable" viewBox="0 0 120 28" aria-label="최근 전달률 추이"><path></path><circle r="2.5"></circle></svg></div>
-        <div class="summary-metric"><span>활성 장애</span><strong id="summary-faults">···</strong><small id="summary-delta">기준선 계산 중</small><svg class="metric-sparkline" data-series="faults" viewBox="0 0 120 28" aria-label="최근 전체 트래픽 추이"><path></path><circle r="2.5"></circle></svg></div>
       </section>
 
       <section class="mobile-fault-tray" aria-label="빠른 장애 주입">

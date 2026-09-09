@@ -720,16 +720,31 @@ export const templates = [
     group: 'basics',
     // 등급은 이 파일 안의 리터럴에서 나오는 설계의 성질이지, 열 때마다 알아내야 하는 값이 아니다.
     // experiment.observe 의 퍼센트와 같은 규율로 tests/templates.test.js 가 계산과 대조한다.
-    grade: { verdict: 'single-point', severs: 4 },
-    summary: 'ECMP 2경로에 방화벽과 리프 스위치를 둔 구성입니다.',
-    teaches: '대역폭은 넉넉한데 방화벽의 신규 세션이 먼저 찹니다. 방화벽 하나를 끄면 남은 쪽이 두 배를 받습니다.',
+    grade: { verdict: 'single-point', severs: 6 },
+    summary: 'ECMP 2경로와 99% Public API 수용 기준, 공유 랙 장애 도메인을 둔 구성입니다.',
+    teaches: '대역폭은 넉넉해도 방화벽 신규 세션이 먼저 찹니다. RACK 04 또는 RACK 07의 공유 장애는 Public API 전달률을 절반으로 낮춥니다.',
     tags: ['ECMP', '방화벽', '세션', '이중화'],
     experiment: {
       prompt: '방화벽 한 대가 멈추면 남은 쪽은 어느 축에서 먼저 무너질까요?',
       action: { type: 'fault-device', id: 'fw-a', label: 'FW A 장애 실험' },
       observe: 'FW B의 대역폭은 72%로 여유가 있는데 신규 세션이 171%가 됩니다. 넘치는 축은 대역폭이 아닙니다.',
     },
-    build: () => cloneTopology(),
+    build: () => {
+      const topology = cloneTopology();
+      for (const device of topology.devices) if (['leaf-a', 'leaf-b', 'api-a', 'api-b'].includes(device.id)) {
+        device.metadata = { powerBasis: 'typical', typicalDrawWatts: device.id.startsWith('api-') ? 420 : 180, uHeight: device.id.startsWith('api-') ? 2 : 1 };
+      }
+      topology.services = [{ id: 'public-api-service', name: 'Public API', demandIds: ['public-api'], requiredDeliveryRatio: 0.99 }];
+      topology.failureDomains = [
+        { id: 'rack-04', name: 'RACK 04', deviceIds: ['leaf-a', 'api-a'] },
+        { id: 'rack-07', name: 'RACK 07', deviceIds: ['leaf-b', 'api-b'] },
+      ];
+      topology.racks = [
+        { id: 'rack-04-budget', name: 'RACK 04', deviceIds: ['leaf-a', 'api-a'], powerBasis: 'typical', powerBudgetWatts: 1400, capacityU: 42 },
+        { id: 'rack-07-budget', name: 'RACK 07', deviceIds: ['leaf-b', 'api-b'], powerBasis: 'typical', powerBudgetWatts: 1400, capacityU: 42 },
+      ];
+      return topology;
+    },
   },
   {
     id: 'single-stack', name: '단일 경로 웹 서비스',

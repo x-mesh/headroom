@@ -213,9 +213,17 @@ async function verify(viewport, screenshot, interact = false) {
   const restingNote = await page.locator('#bottleneck-note').textContent();
   assert.match(restingNote, /가장 빠듯합니다/);
   assert.match(restingNote, /LEAF B → API 02/, 'a link must read by its endpoints, not its id');
-  // 미확인 축이 남은 설계는 알려진 축이 정상이어도 통과로 읽히면 안 된다.
-  assert.equal(await page.locator('#run-state').textContent(), 'EVIDENCE INCOMPLETE',
-    'unknown constraints must take precedence over a safe-looking headline');
+  // 근거와 용량은 서로 덮지 않는다. 미확정 근거가 있어도 실제 용량 상태를 함께 말한다.
+  assert.match(await page.locator('#evidence-state').textContent(), /EVIDENCE [0-9]+ UNKNOWN/);
+  assert.match(await page.locator('#capacity-state').textContent(), /BASELINE|WARNING/);
+  assert.ok(await page.locator('.summary-strip').evaluate((summary) => summary.compareDocumentPosition(document.querySelector('.editor-deck')) & Node.DOCUMENT_POSITION_FOLLOWING),
+    'the judgement summary must appear before the editing toolbar');
+  assert.equal(await page.locator('[data-editor-action="verification"]').count(), 1);
+  await page.locator('#analysis-menu-button').click();
+  await page.locator('[data-editor-action="verification"]').click();
+  const verificationCounts = await page.locator('[data-verification-tab] span').allTextContents();
+  assert.deepEqual(verificationCounts, ['1', '2', '2', '0'], 'the default scenario exposes service, rack domains, and rack budgets');
+  await page.locator('#editor-close').click();
   assert.match(await page.locator('#topology-heading').textContent(), /\d+%$/, 'the canvas headline states the answer, not the question');
   assert.equal(await page.locator('#summary-headroom').getAttribute('data-tone'), 'amber', 'headroom is coloured by the engine threshold');
   assert.ok(await page.locator('.packet-dot').count() > 0, 'active links must render packet dots');
@@ -273,7 +281,7 @@ async function verify(viewport, screenshot, interact = false) {
   await page.locator('#tab-failure').click();
   // 칸의 선은 그 칸의 숫자를 그려야 한다. 예전에는 활성 장애 칸이 배율을, 과부하 칸이
   // 헤드룸의 역수를 그렸다. 선이 다른 것을 말하면 읽는 사람은 선을 믿고 잘못 읽는다.
-  const paired = await page.evaluate(() => [...document.querySelectorAll('.summary-metric')].map((cell) => ({
+  const paired = await page.evaluate(() => [...document.querySelectorAll('.summary-metric:has(.metric-sparkline)')].map((cell) => ({
     figure: cell.querySelector('strong[id^="summary-"]')?.id.replace('summary-', '') ?? '',
     series: cell.querySelector('.metric-sparkline')?.dataset.series ?? '',
   })));
@@ -500,10 +508,12 @@ async function verify(viewport, screenshot, interact = false) {
   await page.locator('[data-editor-action="undo"]').click();
   await page.waitForFunction(() => !document.querySelector('#toast')?.textContent.includes('바꿨습니다'));
 
-  assert.equal(await page.locator('.failure-switch').count(), 20, 'every device and link must be failable, not two classes');
+  assert.equal(await page.locator('[data-failure-type="device"], [data-failure-type="link"]').count(), 20, 'every device and link must be failable, not two classes');
+  assert.equal(await page.locator('[data-failure-type="domain"]').count(), 2, 'the default rack failure domains must be injectable');
   assert.match(await page.locator('#failure-grade').textContent(), /단일 장애점 \d+개/, 'the panel must grade the design before anything is turned off');
-  const forecasts = await page.locator('.failure-forecast').evaluateAll((nodes) => nodes.map((node) => node.dataset.verdict));
+  const forecasts = await page.locator('[data-failure-type="device"] .failure-forecast, [data-failure-type="link"] .failure-forecast').evaluateAll((nodes) => nodes.map((node) => node.dataset.verdict));
   assert.ok(forecasts.every((verdict) => ['severs', 'overloads', 'absorbs', 'endpoint'].includes(verdict)), 'every row must carry a forecast');
+  assert.ok((await page.locator('[data-failure-type="domain"] .failure-forecast').allTextContents()).every((text) => text.includes('함께 중단')));
   assert.equal(forecasts[0], 'severs', 'the rows that sever the service sort first');
   assert.match(await page.locator('#bottleneck-note').textContent(), /단일 장애점이 \d+개/, 'the note must name the design as single-point');
   assert.ok(await page.locator('.mesh-node', { hasText: 'SPOF' }).count() > 0, 'a single point of failure must be marked on the canvas too');
@@ -525,11 +535,14 @@ async function verify(viewport, screenshot, interact = false) {
     await failure.click();
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
     assert.equal(await failure.getAttribute('aria-pressed'), 'true');
-    assert.equal(await page.locator('#run-state').textContent(), 'CAPACITY EXCEEDED');
+    assert.match(await page.locator('#evidence-state').textContent(), /EVIDENCE (VERIFIED|[0-9]+ UNKNOWN)/);
+    assert.equal(await page.locator('#capacity-state').textContent(), 'CAPACITY EXCEEDED');
     const faultNote = await page.locator('#bottleneck-note').textContent();
     assert.match(faultNote, /한계를 넘었습니다/);
-    assert.match(faultNote, /버려집니다/, 'the note must say what the overload costs');
+    assert.match(faultNote, /드롭됩니다/, 'the note must say what the overload costs');
     assert.match(faultNote, /거절됩니다/, 'refused sessions are separate from dropped bytes');
+    assert.ok(await page.locator('.packet-dot.dropped').count() > 0, 'overloaded packet dots stop before the destination');
+    assert.ok(await page.locator('.link.overloaded').first().locator('xpath=..').locator('.packet-dot').count() >= 4, 'overloaded links show the maximum packet density');
     await page.waitForTimeout(900);
     assert.match(await page.locator('[data-device-id="fw-a"]').innerText(), /OFFLINE[\s\S]*DOWN/, 'a disabled node must stay DOWN across telemetry ticks');
     await page.locator('[data-failure-type="link"][data-failure-id="spine-a-leaf-a"]').click();
@@ -628,7 +641,7 @@ async function verify(viewport, screenshot, interact = false) {
     const severId = await severs.getAttribute('data-failure-id');
     await severs.click();
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
-    assert.equal(await page.locator('#run-state').textContent(), 'TRAFFIC UNREACHABLE',
+    assert.equal(await page.locator('#capacity-state').textContent(), 'TRAFFIC UNREACHABLE',
       `the forecast promised ${severId} would sever the service, so turning it off must do that`);
     await page.locator(`[data-failure-id="${severId}"]`).click();
     await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '00');
@@ -1277,8 +1290,10 @@ async function verifyNumberMotion() {
   // 배율을 바꾸면 숫자가 곧바로 튀지 않고 이전 값에서 새 값으로 이어진다.
   // 표본은 페이지 안에서 뜬다. 브라우저를 왕복하며 읽으면 260ms 트윈을 놓친다.
   const tween = await page.evaluate(async () => {
-    const read = () => document.querySelector('.binding-callout strong span:last-child').textContent;
+    const read = () => document.querySelector('[data-device-id="fw-b"] .node-axis[data-binding] s').textContent;
+    const raw = () => document.querySelector('[data-device-id="fw-b"] .node-axis[data-binding] s').dataset.liveUtil;
     const first = read();
+    const rawFirst = raw();
     const seen = new Set([first]);
     const input = document.getElementById('scale-input');
     input.value = '150';
@@ -1288,9 +1303,10 @@ async function verifyNumberMotion() {
       const tick = () => { seen.add(read()); (performance.now() - started < 420 ? requestAnimationFrame(tick) : done()); };
       requestAnimationFrame(tick);
     });
-    return { first, settled: read(), seen: [...seen] };
+    return { first, settled: read(), rawFirst, rawSettled: raw(), seen: [...seen] };
   });
-  assert.notEqual(tween.settled, tween.first, '배율을 바꾸면 값이 달라져야 한다');
+  assert.notEqual(tween.rawSettled, tween.rawFirst, '배율을 바꾸면 원값이 달라져야 한다');
+  assert.notEqual(tween.settled, tween.first, '배율을 바꾸면 표시값도 달라져야 한다');
   assert.ok(tween.seen.length >= 4, `값이 이어지지 않고 곧바로 튀었습니다: ${tween.seen.join(' ')}`);
 
   // 떨림이 켜져 있으면 같은 계산 결과 위에서 값이 미세하게 달라진다. 헤드라인은 떨지 않는다.
@@ -1312,6 +1328,18 @@ async function verifyNumberMotion() {
 
   const moving = await sampleMotion(2000);
   assert.ok(moving.axis.length >= 2, `떨림이 켜져 있는데 값이 그대로입니다: ${moving.axis.join(' ')}`);
+  const arithmetic = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.axis-row')].find((item) => item.querySelector('[data-live-util]') && item.querySelector('[data-live-load]') && item.querySelector('[data-axis-limit]'));
+    const percentNode = row.querySelector('[data-live-util]');
+    const loadNode = row.querySelector('[data-live-load]');
+    const rawPercent = Number(percentNode.dataset.liveUtil);
+    const rawLoad = Number(loadNode.dataset.liveLoad);
+    const percent = Number(percentNode.dataset.livePainted);
+    const shownLoad = Number(loadNode.dataset.livePainted);
+    const limit = rawLoad / rawPercent;
+    return { percent, derived: shownLoad / limit };
+  });
+  assert.ok(Math.abs(arithmetic.percent - arithmetic.derived) <= 1e-6, 'displayed load and percent must share one drift factor');
 
   // 사용률만 떨고 부하는 그대로면 한쪽만 살아 있는 것처럼 보인다. 그리고 떨리는 값이 자릿수까지
   // 정하면 10.0G 가 9.85G 와 10.2G 사이를 오가며 열 너비가 춤춘다 - 움직임이 아니라 고장이다.
