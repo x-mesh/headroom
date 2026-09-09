@@ -1,8 +1,8 @@
 {
   "upstream": "https://github.com/simple-icons/simple-icons",
-  "version": "16.29.0",
+  "version": "16.30.0",
   "license": "CC0-1.0",
-  "fetchedAt": "2026-09-06",
+  "fetchedAt": "2026-09-08",
   "vendors": [
     {
       "slug": "cisco",
@@ -75,8 +75,16 @@
     {
       "slug": "akamai",
       "title": "Akamai"
+    },
+    {
+      "slug": "synology",
+      "title": "Synology"
+    },
+    {
+      "slug": "intel",
+      "title": "Intel"
     }
   ],
-  "subsetSha256": "f1570cc180a4c749be8c8e963502b1653acbc3f32f018a48acbee05237bf8976",
+  "subsetSha256": "4d62321896df31ee86fe351288de0e740fecaa515a42809ade0bb086654dacbc",
   "note": "Marks remain trademarks of their owners. Used for identification only."
 }

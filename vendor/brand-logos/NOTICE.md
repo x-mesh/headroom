@@ -1,6 +1,6 @@
 # Brand marks
 
-Device manufacturer marks come from simple-icons (CC0-1.0), version 16.29.0.
+Device manufacturer marks come from simple-icons (CC0-1.0), version 16.30.0.
 
 Each mark stays the trademark of its owner. Rack Mesh shows a mark to identify which
 device a limit belongs to. A mark does not mean the owner endorses, certifies, or

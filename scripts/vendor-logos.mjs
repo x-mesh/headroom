@@ -18,6 +18,7 @@ export const VENDORS = [
   'Cisco', 'Juniper Networks', 'Fortinet', 'Palo Alto Networks', 'F5', 'Huawei',
   'Dell', 'NVIDIA', 'Broadcom', 'MikroTik', 'Ubiquiti', 'NETGEAR', 'TP-Link',
   'Citrix', 'VMware', 'NGINX', 'Cloudflare', 'Akamai',
+  'Synology', 'Intel',
 ];
 
 const slugOf = (title) => title.toLowerCase().replace(/[^a-z0-9]/g, '');
