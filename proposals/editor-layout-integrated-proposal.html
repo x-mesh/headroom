@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rack Mesh · 통합 편집 레이아웃 제안</title>
+  <style>
+    :root {
+      color-scheme:light; --ground:#e7f0ea; --surface:#f7faf7; --raised:#fff; --tint:#dceae2; --canvas:#eaf2ed;
+      --deep:#16332d; --mid:#20483f; --panel-line:#365a50; --on-deep:#f4fbf7; --on-deep-muted:#dceae2;
+      --line:#9eb9ad; --line-soft:#c9d9d1; --text:#13241f; --muted:#526e64; --signal:#b8e737; --signal-deep:#587d00;
+      --cyan:#087d70; --amber:#9a5a00; --danger:#b83c34; --unknown:#697286;
+      --ui:"Avenir Next",Avenir,"Segoe UI",sans-serif; --data:"SFMono-Regular",Menlo,Consolas,monospace;
+    }
+    * { box-sizing:border-box; }
+    html { background:var(--ground); }
+    body { min-width:320px; margin:0; color:var(--text); background:var(--ground); font:400 11px/1.55 var(--ui); }
+    button,input,select { color:inherit; font:inherit; }
+    button { cursor:pointer; }
+    button:disabled { cursor:not-allowed; opacity:.42; }
+    [hidden] { display:none!important; }
+    ::selection { color:#0a120f; background:var(--signal); }
+    :focus-visible { outline:2px solid var(--signal); outline-offset:2px; }
+    ::-webkit-scrollbar { width:10px; height:10px; }
+    ::-webkit-scrollbar-track { background:var(--tint); }
+    ::-webkit-scrollbar-thumb { border:2px solid var(--tint); background:var(--line); }
+
+    .proposal-bar { min-height:38px; padding:7px 18px; display:flex; align-items:center; justify-content:space-between; gap:18px; border-bottom:1px solid var(--line); background:var(--tint); color:var(--muted); font:600 10px/1.3 var(--data); letter-spacing:.04em; }
+    .proposal-bar strong { color:var(--text); }
+    .preview-switch { display:flex; align-items:center; gap:3px; }
+    .preview-switch>span { margin-right:5px; }
+    .preview-switch button { min-height:28px; padding:0 8px; border:1px solid var(--line); background:var(--surface); color:var(--muted); font:600 8px/1 var(--data); }
+    .preview-switch button[aria-pressed="true"] { border-color:var(--signal-deep); background:var(--raised); color:var(--signal-deep); }
+
+    .app { min-height:calc(100vh - 38px); display:grid; grid-template-rows:auto auto auto minmax(0,1fr) auto; }
+    .topbar { min-height:66px; padding:10px 22px; display:grid; grid-template-columns:minmax(230px,1fr) auto minmax(400px,1fr); align-items:center; gap:20px; border-bottom:1px solid var(--panel-line); background:var(--deep); color:var(--on-deep); }
+    .brand { display:flex; align-items:center; gap:11px; min-width:0; }
+    .brand-mark { width:34px; height:34px; flex:0 0 auto; fill:var(--signal); stroke:var(--signal); stroke-width:1.5; }
+    .brand strong,.brand span { display:block; }
+    .brand strong { font:600 17px/1 var(--data); letter-spacing:.08em; }
+    .brand span { margin-top:6px; overflow:hidden; color:var(--on-deep-muted); font:500 8px/1 var(--data); letter-spacing:.12em; text-overflow:ellipsis; white-space:nowrap; }
+    .run-state { display:flex; align-items:center; justify-content:center; gap:9px; color:var(--amber); font:600 10px/1 var(--data); letter-spacing:.07em; white-space:nowrap; }
+    .status-lamp { width:7px; height:7px; background:currentColor; box-shadow:0 2px 9px color-mix(in srgb,currentColor 70%,transparent); }
+    .top-actions { justify-self:end; display:flex; align-items:center; gap:7px; }
+    .menu-wrap { position:relative; }
+    .button { min-height:40px; padding:0 13px; display:inline-flex; align-items:center; justify-content:center; gap:8px; border:1px solid var(--panel-line); background:transparent; color:var(--on-deep); font:600 10px/1 var(--data); white-space:nowrap; }
+    .button:hover,.button[aria-expanded="true"] { border-color:var(--signal); color:var(--signal); }
+    .button.primary { border-color:var(--signal); background:var(--signal); color:#173028; }
+    .button.primary:hover { color:#173028; filter:brightness(1.06); }
+    .top-icon { display:none; width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.7; }
+    .chevron { width:7px; height:7px; border-right:1px solid currentColor; border-bottom:1px solid currentColor; transform:translateY(-2px) rotate(45deg); }
+    .menu { position:absolute; z-index:80; top:calc(100% + 7px); right:0; width:310px; max-height:calc(100vh - 90px); overflow:auto; border:1px solid var(--panel-line); background:var(--deep); color:var(--on-deep); box-shadow:0 16px 34px color-mix(in srgb,var(--deep) 30%,transparent); }
+    .menu-head { margin:0; padding:14px 16px 12px; border-bottom:1px solid var(--panel-line); font:600 10px/1.2 var(--data); }
+    .menu-head span { display:block; margin-top:6px; color:var(--on-deep-muted); font:400 10px/1.4 var(--ui); }
+    .menu-group { padding:6px 0; border-bottom:1px solid var(--panel-line); }
+    .menu-group:last-child { border-bottom:0; }
+    .menu-label { padding:5px 16px; color:var(--signal); font:600 8px/1 var(--data); letter-spacing:.1em; }
+    .menu-item { width:100%; min-height:48px; padding:8px 16px; display:grid; gap:4px; border:0; background:transparent; color:var(--on-deep); text-align:left; }
+    .menu-item:hover,.menu-item:focus-visible { background:var(--mid); outline:none; }
+    .menu-item strong { font:600 10px/1 var(--data); }
+    .menu-item small { color:var(--on-deep-muted); font:400 10px/1.3 var(--ui); }
+
+    .scenario { min-height:74px; padding:11px 22px; display:grid; grid-template-columns:minmax(200px,1fr) minmax(280px,470px) auto auto; align-items:center; gap:22px; border-bottom:1px solid var(--line-soft); background:var(--surface); }
+    .scenario-copy { display:flex; align-items:center; gap:16px; min-width:0; }
+    .code { color:var(--signal-deep); font:600 9px/1 var(--data); letter-spacing:.12em; white-space:nowrap; }
+    .scenario-copy strong,.scenario-copy span { display:block; }
+    .scenario-copy strong { margin-bottom:4px; overflow:hidden; font-size:17px; line-height:1.2; text-overflow:ellipsis; white-space:nowrap; }
+    .scenario-copy span { color:var(--muted); font-size:10px; }
+    .scale { display:grid; grid-template-columns:auto 1fr 48px; align-items:center; gap:12px; font:500 10px/1 var(--data); }
+    .scale input { width:100%; accent-color:var(--signal-deep); }
+    .scale output { color:var(--signal-deep); font-weight:700; text-align:right; }
+    .scenario-actions { display:flex; align-items:center; gap:7px; }
+    .scenario-actions button,.context-trigger { min-height:36px; padding:0 11px; border:1px solid var(--line); background:var(--raised); color:var(--text); font:600 9px/1 var(--data); white-space:nowrap; }
+    .analysis-wrap { position:relative; }
+    .analysis-trigger { border-color:var(--cyan); color:var(--cyan); }
+
+    .summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border-bottom:1px solid var(--line); background:var(--surface); }
+    .metric { min-height:86px; padding:13px 18px; display:grid; grid-template-columns:1fr auto; grid-template-rows:auto auto auto; gap:5px 10px; border-right:1px solid var(--line-soft); }
+    .metric:last-child { border-right:0; }
+    .metric>span { color:var(--muted); font-size:10px; }
+    .metric strong { grid-row:1/span 2; color:var(--signal-deep); font:600 20px/.95 var(--data); font-variant-numeric:tabular-nums; }
+    .metric small { overflow:hidden; color:var(--text); font:500 9px/1.3 var(--data); text-overflow:ellipsis; white-space:nowrap; }
+    .metric-line { grid-column:1/-1; height:3px; background:var(--tint); }
+    .metric-line i { display:block; height:100%; background:var(--cyan); }
+    .metric.warning strong { color:var(--amber); } .metric.warning .metric-line i { background:var(--amber); }
+    .metric.danger strong { color:var(--danger); } .metric.danger .metric-line i { background:var(--danger); }
+
+    .workspace { min-height:0; display:grid; grid-template-columns:250px minmax(650px,1fr) 330px; border-bottom:1px solid var(--line); }
+    .left-panel,.inspector { min-height:0; overflow:auto; background:var(--surface); }
+    .left-panel { border-right:1px solid var(--line); } .inspector { border-left:1px solid var(--line); }
+    .panel-head { min-height:76px; padding:16px 18px; display:flex; align-items:flex-start; justify-content:space-between; gap:10px; border-bottom:1px solid var(--line-soft); }
+    .panel-head h1,.panel-head h2 { margin:7px 0 0; letter-spacing:-.025em; }
+    .panel-head h1 { font-size:clamp(20px,2vw,31px); } .panel-head h2 { font-size:17px; }
+    .state-tag { padding:7px 8px; border:1px solid currentColor; color:var(--amber); font:600 9px/1 var(--data); letter-spacing:.05em; }
+    .tabs { display:flex; border-bottom:1px solid var(--line-soft); }
+    .tabs button { min-height:40px; padding:0 14px; border:0; border-bottom:2px solid transparent; background:none; color:var(--muted); font:600 9px/1 var(--data); letter-spacing:.1em; }
+    .tabs button[aria-selected="true"] { color:var(--text); border-bottom-color:var(--signal-deep); }
+    .panel-hint { margin:0; padding:12px 16px; border-bottom:1px solid var(--line-soft); color:var(--muted); font-size:11px; line-height:1.5; }
+    .tool-group { border-bottom:1px solid var(--line-soft); }
+    .tool-group summary { min-height:38px; padding:0 12px; display:flex; align-items:center; justify-content:space-between; color:var(--muted); cursor:pointer; list-style:none; font:600 9px/1 var(--data); letter-spacing:.08em; }
+    .tool-group summary::-webkit-details-marker { display:none; } .tool-group summary::after { content:'+'; font-size:11px; } .tool-group[open] summary::after { content:'−'; }
+    .device-list,.tool-grid { display:grid; gap:1px; padding:1px; border-top:1px solid var(--line-soft); background:var(--line-soft); }
+    .tool-grid { grid-template-columns:1fr 1fr; }
+    .device-row { min-height:42px; padding:0 11px; display:grid; grid-template-columns:1fr 36px; align-items:center; border:0; background:var(--raised); text-align:left; }
+    .device-row strong,.device-row small { display:block; } .device-row strong { font-size:10px; } .device-row small { margin-top:3px; color:var(--muted); font:500 8px/1 var(--data); } .device-row>span:last-child { color:var(--muted); text-align:center; }
+    .tool { min-height:52px; padding:7px 8px; display:grid; grid-template-columns:24px 1fr; align-items:center; gap:7px; border:0; background:var(--raised); color:var(--text); text-align:left; }
+    .tool:hover,.device-row:hover { color:var(--signal-deep); background:var(--surface); } .tool.wide { grid-column:1/-1; min-height:42px; }
+    .tool svg { width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.6; } .tool small { display:block; margin-top:3px; color:var(--muted); font:500 8px/1 var(--data); }
+    .failure-grade { margin:0; padding:13px 16px; border-bottom:1px solid var(--line-soft); color:var(--danger); font:600 10px/1.4 var(--data); }
+    .failure-item { width:100%; min-height:54px; padding:8px 14px; display:grid; grid-template-columns:1fr auto; gap:4px 10px; border:0; border-bottom:1px solid var(--line-soft); background:var(--surface); text-align:left; }
+    .failure-item small { grid-column:1/-1; color:var(--muted); font-size:10px; } .failure-item em { color:var(--danger); font:600 8px/1 var(--data); font-style:normal; }
+
+    .canvas-panel { min-width:0; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr) auto; background:var(--canvas); }
+    .canvas-head { min-height:76px; padding:13px 18px; display:flex; align-items:center; justify-content:space-between; gap:16px; border-bottom:1px solid var(--line-soft); background:var(--surface); }
+    .canvas-copy { min-width:0; } .canvas-copy h1 { margin:7px 0 0; overflow:hidden; font-size:clamp(20px,2vw,31px); line-height:1.15; letter-spacing:-.025em; text-overflow:ellipsis; white-space:nowrap; }
+    .canvas-controls { display:flex; align-items:center; gap:7px; } .control-group { display:flex; gap:1px; border:1px solid var(--line); background:var(--line); } .control-group button { min-width:36px; min-height:36px; border:0; background:var(--raised); font:600 10px/1 var(--data); }
+    .mode-readout { min-height:36px; padding:0 10px; display:flex; align-items:center; gap:7px; border:1px solid var(--line); background:var(--raised); color:var(--muted); font:600 8px/1 var(--data); letter-spacing:.07em; white-space:nowrap; }
+    .mode-readout i { width:6px; height:6px; background:var(--cyan); } .view-wrap { position:relative; }
+    .canvas-scroll { min-height:0; overflow:auto; overscroll-behavior:contain; } .pan-cue { display:none; }
+    .topology { position:relative; min-width:760px; min-height:500px; margin:20px; border:1px solid var(--line); background:var(--tint); }
+    .zone { position:absolute; border:1px solid var(--line); color:var(--muted); font:600 8px/1 var(--data); letter-spacing:.1em; } .zone span { position:absolute; top:-16px; left:0; } .zone.security { top:72px; left:32px; width:145px; height:330px; } .zone.fabric { inset:115px 38px 42px 178px; }
+    .route { position:absolute; z-index:1; height:2px; border:0; background:var(--cyan); transform-origin:left center; } .route::after { content:''; position:absolute; inset:-12px 0; } .route.a { top:197px; left:128px; width:207px; transform:rotate(-17deg); } .route.b { top:282px; left:128px; width:205px; transform:rotate(17deg); } .route.c { top:166px; left:345px; width:230px; transform:rotate(20deg); } .route.d { top:314px; left:345px; width:230px; transform:rotate(-20deg); }
+    .shape { position:absolute; z-index:2; top:36px; left:430px; min-width:135px; min-height:46px; border:1px dashed var(--line); background:transparent; color:var(--muted); font:600 8px/1 var(--data); letter-spacing:.08em; }
+    .node { position:absolute; z-index:3; width:126px; min-height:78px; padding:4px; border:0; background:transparent; text-align:center; }
+    .node-symbol { width:64px; height:34px; margin:0 auto 6px; display:grid; place-items:center; color:var(--text); } .node-symbol svg { width:64px; height:34px; fill:var(--raised); stroke:currentColor; stroke-width:1.8; }
+    .node strong,.node small,.node em { display:block; } .node strong { font:600 10px/1 var(--data); } .node small { margin-top:4px; color:var(--muted); font:500 8px/1 var(--data); } .node em { margin-top:5px; color:var(--amber); font:600 8px/1 var(--data); font-style:normal; } .node[aria-pressed="true"] .node-symbol { outline:2px solid var(--signal-deep); outline-offset:4px; }
+    .node-fw { top:190px; left:42px; } .node-leaf-a { top:114px; left:280px; } .node-leaf-b { top:286px; left:280px; } .node-api-a { top:130px; left:575px; } .node-api-b { top:300px; left:575px; }
+    .canvas-foot { min-height:58px; padding:10px 18px; display:grid; grid-template-columns:1fr auto; align-items:center; gap:12px; border-top:1px solid var(--line-soft); background:var(--surface); }
+    .bottleneck strong,.bottleneck span { display:block; } .bottleneck strong { font:600 10px/1.3 var(--data); } .bottleneck span { margin-top:4px; color:var(--muted); font-size:10px; }
+    .baseline-delta { display:flex; gap:1px; border:1px solid var(--line); background:var(--line); } .baseline-delta span { min-width:92px; padding:8px 9px; background:var(--raised); color:var(--muted); font:500 8px/1.3 var(--data); } .baseline-delta b { display:block; margin-top:4px; color:var(--text); font-size:9px; }
+
+    .selection-summary { padding:13px 18px; border-bottom:1px solid var(--line-soft); background:var(--tint); } .selection-summary strong,.selection-summary span { display:block; } .selection-summary strong { font:600 10px/1.2 var(--data); } .selection-summary span { margin-top:5px; color:var(--muted); font-size:10px; }
+    .inspect-section { padding:15px 18px; border-bottom:1px solid var(--line-soft); } .inspect-section h3 { margin:0 0 11px; color:var(--muted); font:600 9px/1 var(--data); letter-spacing:.09em; }
+    .quick-actions { display:grid; gap:1px; background:var(--line-soft); } .quick-actions button { min-height:40px; padding:0 12px; border:0; background:var(--raised); text-align:left; font-size:10px; } .quick-actions button:hover { color:var(--signal-deep); } .quick-actions .danger { color:var(--danger); }
+    .field { display:grid; gap:5px; margin-top:10px; color:var(--muted); font:600 8px/1 var(--data); } .field:first-child { margin-top:0; } .field select,.field input { width:100%; min-height:36px; padding:0 8px; border:1px solid var(--line); background:var(--raised); color:var(--text); font:500 10px/1 var(--data); }
+    .axis { margin-top:12px; } .axis:first-of-type { margin-top:0; } .axis-head { display:flex; justify-content:space-between; gap:10px; font:600 9px/1 var(--data); } .axis-head span:last-child { color:var(--amber); } .meter { height:7px; margin-top:7px; background:var(--tint); } .meter i { display:block; height:100%; background:var(--amber); } .meter.cyan i { background:var(--cyan); }
+    .inspect-note { margin:9px 0 0; color:var(--muted); font-size:10px; line-height:1.5; } .evidence { padding:9px; border:1px solid var(--line); color:var(--muted); font:500 9px/1.45 var(--data); } .evidence strong { display:block; color:var(--text); } .empty-state { padding:28px 18px; color:var(--muted); line-height:1.6; } .empty-state strong { display:block; margin-bottom:6px; color:var(--text); font-size:11px; }
+
+    .comparison { padding:16px 22px 20px; border-bottom:1px solid var(--line); background:var(--surface); } .comparison header { display:flex; align-items:flex-end; justify-content:space-between; gap:18px; } .comparison h2 { margin:7px 0 0; font-size:17px; } .comparison header p { margin:0; color:var(--muted); } .comparison-grid { margin-top:12px; display:grid; grid-template-columns:repeat(4,1fr); border:1px solid var(--line); } .comparison-item { min-height:64px; padding:11px 13px; border-right:1px solid var(--line-soft); } .comparison-item:last-child { border-right:0; } .comparison-item span,.comparison-item b { display:block; } .comparison-item span { color:var(--muted); font:500 9px/1 var(--data); } .comparison-item b { margin-top:7px; font:600 10px/1.3 var(--data); }
+    .mobile-dock,.mobile-close { display:none; }
+    .toast { position:fixed; z-index:100; right:18px; bottom:18px; max-width:360px; padding:12px 14px; border:1px solid var(--panel-line); background:var(--deep); color:var(--on-deep); box-shadow:0 12px 28px color-mix(in srgb,var(--deep) 28%,transparent); font:600 10px/1.4 var(--data); transform:translateY(100px); opacity:0; transition:transform 180ms ease-out,opacity 180ms ease-out; pointer-events:none; } .toast.visible { transform:translateY(0); opacity:1; }
+
+    @media (max-width:1180px) {
+      .topbar { grid-template-columns:minmax(210px,1fr) auto; } .run-state { display:none; } .scenario { grid-template-columns:minmax(200px,1fr) minmax(280px,420px); } .scenario-actions,.analysis-wrap { justify-self:end; }
+      .workspace { grid-template-columns:230px minmax(650px,1fr); overflow-x:auto; }
+      .inspector { grid-column:1/-1; display:grid; grid-template-columns:230px repeat(3,minmax(220px,1fr)); border-left:0; border-top:1px solid var(--line); } .inspector .panel-head { grid-row:1/span 2; } .inspector .selection-summary { grid-column:2/-1; } .inspector .inspect-section { border-right:1px solid var(--line-soft); }
+    }
+    @media (max-width:760px) {
+      body { padding-bottom:62px; } .proposal-bar { align-items:flex-start; flex-direction:column; gap:7px; } .preview-switch { width:100%; overflow-x:auto; padding-bottom:2px; } .preview-switch button { min-width:50px; min-height:44px; }
+      .topbar { min-height:62px; padding:8px 12px; grid-template-columns:auto 1fr; gap:10px; } .brand span { display:none; } .brand-mark { width:30px; height:30px; } .top-actions { gap:4px; } .button { min-width:44px; min-height:44px; padding:0; } .top-label,.chevron,#guide-button { display:none; } .top-icon { display:block; }
+      .menu { position:fixed; top:64px; right:10px; width:min(310px,calc(100vw - 20px)); }
+      .scenario { padding:12px 14px; grid-template-columns:1fr; gap:12px; } .scale { grid-template-columns:1fr 48px; } .scale>span { grid-column:1/-1; } .scale input { min-height:44px; } .scenario-actions { justify-self:start; } .scenario-actions button,.context-trigger { min-height:44px; } .analysis-wrap { position:static; justify-self:start; }
+      .summary { grid-template-columns:1fr 1fr; } .metric { min-height:80px; padding:12px 14px; } .metric:nth-child(2) { border-right:0; } .metric:nth-child(-n+2) { border-bottom:1px solid var(--line-soft); }
+      .workspace { display:block; overflow:visible; } .canvas-panel { min-height:590px; } .canvas-head { min-height:auto; padding:12px 14px; align-items:flex-start; flex-direction:column; } .canvas-copy h1 { white-space:normal; } .canvas-controls { width:100%; justify-content:space-between; flex-wrap:wrap; } .control-group button { min-width:44px; } .control-group button,.mode-readout,.context-trigger { min-height:44px; } .mode-readout { max-width:150px; overflow:hidden; text-overflow:ellipsis; }
+      .pan-cue { position:sticky; left:0; top:0; z-index:12; width:100vw; min-height:30px; display:flex; align-items:center; justify-content:center; gap:16px; border-bottom:1px solid var(--panel-line); background:var(--deep); color:var(--on-deep); font:600 8px/1 var(--data); letter-spacing:.07em; } .canvas-scroll { max-height:500px; position:relative; overflow:auto; } .topology { margin:0; min-width:760px; } .canvas-foot { padding:11px 14px; grid-template-columns:1fr; } .baseline-delta { overflow-x:auto; } .baseline-delta span { min-width:104px; }
+      .left-panel,.inspector { position:fixed; z-index:90; left:0; right:0; bottom:62px; max-height:72vh; display:block; border:1px solid var(--line); border-bottom:0; background:var(--surface); box-shadow:0 -16px 34px color-mix(in srgb,var(--deep) 24%,transparent); transform:translateY(calc(100% + 70px)); transition:transform 180ms ease-out; } body[data-mobile-panel="tools"] .left-panel,body[data-mobile-panel="inspector"] .inspector { transform:translateY(0); } .left-panel .panel-head,.inspector .panel-head { min-height:68px; } .mobile-close { display:block; min-width:44px; min-height:44px; border:1px solid var(--line); background:var(--raised); } .tabs button,.tool,.device-row,.failure-item,.quick-actions button { min-height:44px; } .field select,.field input { min-height:44px; } .inspector .selection-summary { grid-column:auto; }
+      .comparison { padding:16px 14px 20px; } .comparison header { align-items:flex-start; flex-direction:column; } .comparison-grid { grid-template-columns:1fr 1fr; } .comparison-item:nth-child(2) { border-right:0; } .comparison-item:nth-child(-n+2) { border-bottom:1px solid var(--line-soft); }
+      .mobile-dock { position:fixed; z-index:95; left:0; right:0; bottom:0; min-height:62px; display:grid; grid-template-columns:repeat(3,1fr); gap:1px; padding:7px 10px calc(7px + env(safe-area-inset-bottom)); border-top:1px solid var(--panel-line); background:var(--deep); } .mobile-dock button { min-height:48px; border:1px solid var(--panel-line); background:var(--mid); color:var(--on-deep); font:600 10px/1 var(--data); } .mobile-dock button[aria-pressed="true"] { border-color:var(--signal); color:var(--signal); } .toast { right:10px; bottom:72px; left:10px; max-width:none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="proposal-bar">
+    <span><strong>통합 편집 레이아웃 제안</strong> · 기존 결과·장애·비교 기능을 유지하고 도구만 작업 맥락에 따라 재배치했습니다.</span>
+    <div class="preview-switch" aria-label="검사 상태 미리보기"><span>검사 상태</span><button type="button" data-preview="device" aria-pressed="true">장비</button><button type="button" data-preview="link" aria-pressed="false">링크</button><button type="button" data-preview="shape" aria-pressed="false">도형</button><button type="button" data-preview="multi" aria-pressed="false">다중</button><button type="button" data-preview="empty" aria-pressed="false">없음</button></div>
+  </div>
+  <main class="app">
+    <header class="topbar">
+      <div class="brand" aria-label="Rack Mesh"><svg class="brand-mark" viewBox="0 0 36 36" aria-hidden="true"><path d="M6 8h24M6 18h24M6 28h24M10 5v26M26 5v26"/><circle cx="10" cy="8" r="2"/><circle cx="26" cy="18" r="2"/><circle cx="10" cy="28" r="2"/></svg><div><strong>RACK MESH</strong><span>INFRASTRUCTURE CONSTRAINT SIMULATOR</span></div></div>
+      <div class="run-state" aria-live="polite"><i class="status-lamp"></i>EVIDENCE INCOMPLETE · 2 AXES</div>
+      <div class="top-actions">
+        <button class="button" id="guide-button" type="button" data-toast="사용 안내를 엽니다.">사용 안내</button>
+        <div class="menu-wrap"><button class="button" type="button" data-menu-trigger="project-menu" aria-expanded="false" aria-label="프로젝트 메뉴"><svg class="top-icon" viewBox="0 0 24 24"><path d="M3 7h7l2 2h9l-3 10H5z"/></svg><span class="top-label">프로젝트</span><i class="chevron" aria-hidden="true"></i></button><div class="menu" id="project-menu" role="menu" hidden><p class="menu-head">프로젝트<span>설계 파일과 외부 자료를 관리합니다.</span></p><div class="menu-group"><div class="menu-label">설계 파일</div><button class="menu-item" role="menuitem"><strong>새 설계</strong><small>템플릿에서 시작합니다.</small></button><button class="menu-item" role="menuitem"><strong>프로젝트 열기</strong><small>Rack Mesh JSON을 불러옵니다.</small></button><button class="menu-item" role="menuitem"><strong>프로젝트 저장</strong><small>설계, 근거, 시나리오를 저장합니다.</small></button></div><div class="menu-group"><div class="menu-label">가져오기</div><button class="menu-item" role="menuitem"><strong>장비 데이터</strong><small>Rack Mesh 또는 NetBox JSON</small></button><button class="menu-item" role="menuitem"><strong>drawio 다이어그램</strong><small>도형과 연결선을 읽습니다.</small></button></div></div></div>
+        <div class="menu-wrap"><button class="button primary" type="button" data-menu-trigger="export-menu" aria-expanded="false" aria-label="결과 내보내기 메뉴"><svg class="top-icon" viewBox="0 0 24 24"><path d="M12 4v11M8 8l4-4 4 4M5 14v6h14v-6"/></svg><span class="top-label">결과 내보내기</span><i class="chevron" aria-hidden="true"></i></button><div class="menu" id="export-menu" role="menu" hidden><p class="menu-head">결과 내보내기<span>분석 데이터 또는 공유용 그림을 선택합니다.</span></p><div class="menu-group"><button class="menu-item" role="menuitem"><strong>결과 JSON</strong><small>계산 결과와 기준선</small></button><button class="menu-item" role="menuitem"><strong>SVG 이미지</strong><small>편집 가능한 벡터 이미지</small></button><button class="menu-item" role="menuitem"><strong>PNG 이미지</strong><small>문서 공유용 이미지</small></button></div></div></div>
+      </div>
+    </header>
+    <section class="scenario" aria-label="시나리오 제어">
+      <div class="scenario-copy"><span class="code">SCENARIO</span><div><strong>Dual fabric API cluster</strong><span>합성 데모 · 장비 5 · 링크 4 · 수요 2</span></div></div>
+      <label class="scale"><span>워크로드 배율</span><input id="scale" type="range" min="50" max="180" value="100" step="5"><output id="scale-output">1.00×</output></label>
+      <div class="scenario-actions"><button type="button" data-toast="현재 설계와 시나리오를 기준선으로 확정했습니다.">기준선 확정</button><button type="button" id="scenario-reset">시나리오 초기화</button></div>
+      <div class="analysis-wrap"><button class="context-trigger analysis-trigger" type="button" data-menu-trigger="analysis-menu" aria-expanded="false">분석 설정 ▾</button><div class="menu" id="analysis-menu" role="menu" hidden><p class="menu-head">분석 설정<span>설계 전체의 계산 조건을 관리합니다.</span></p><div class="menu-group"><button class="menu-item" role="menuitem"><strong>워크로드 조건</strong><small>프레임, 전송 계층, 기능 조건</small></button><button class="menu-item" role="menuitem"><strong>서비스 생존성</strong><small>수요별 최소 전달률</small></button><button class="menu-item" role="menuitem"><strong>장애 도메인</strong><small>함께 멈출 장비와 링크</small></button><button class="menu-item" role="menuitem"><strong>랙 검증</strong><small>전력 예산과 U 공간</small></button><button class="menu-item" role="menuitem"><strong>시나리오 저장</strong><small>현재 장애와 부하를 이름으로 보관</small></button></div></div></div>
+    </section>
+    <section class="summary" aria-label="시나리오 요약"><div class="metric warning"><span>최소 headroom</span><strong>16%</strong><small>LEAF B · 처리량 84%</small><div class="metric-line"><i style="width:84%"></i></div></div><div class="metric"><span>과부하 자원</span><strong>00</strong><small>주의 1 · 미확인 2축</small><div class="metric-line"><i style="width:42%"></i></div></div><div class="metric"><span>전달 실패</span><strong>00</strong><small>0 Mbps 미전달</small><div class="metric-line"><i style="width:0%"></i></div></div><div class="metric danger"><span>활성 장애</span><strong>01</strong><small>FW A 중단 · 기준선 대비</small><div class="metric-line"><i style="width:25%"></i></div></div></section>
+    <section class="workspace">
+      <aside class="left-panel" aria-labelledby="tools-heading"><header class="panel-head"><div><span class="code">DESIGN BOARD</span><h2 id="tools-heading">설계 도구</h2></div><button class="mobile-close" type="button">닫기</button></header><div class="tabs" role="tablist" aria-label="설계 도구"><button type="button" role="tab" data-tool-tab="create" aria-selected="true">만들기</button><button type="button" role="tab" data-tool-tab="failure" aria-selected="false">장애 주입</button></div>
+        <div data-tool-panel="create"><p class="panel-hint">장비, 연결, 도형과 수요를 이곳에서 새로 만듭니다.</p><details class="tool-group" open><summary>네트워크 · 5종</summary><div class="device-list"><button class="device-row"><span><strong>스위치</strong><small>모델 8 · 프로필 12</small></span><span>+</span></button><button class="device-row"><span><strong>라우터</strong><small>모델 2 · 프로필 8</small></span><span>+</span></button><button class="device-row"><span><strong>허브 · 무선 AP · 회선 종단</strong><small>일반 장비로 배치</small></span><span>·</span></button></div></details><details class="tool-group"><summary>보안 · 트래픽 · 6종</summary><div class="device-list"><button class="device-row"><span><strong>방화벽 · WAF · 로드밸런서</strong><small>모델과 측정 프로필</small></span><span>+</span></button><button class="device-row"><span><strong>IPS · IPsec VPN · SSL VPN</strong><small>일반 장비로 배치</small></span><span>·</span></button></div></details><details class="tool-group"><summary>서버 · 스토리지 · 9종</summary><div class="device-list"><button class="device-row"><span><strong>서버 · 웹 · VM · DB · 메일</strong><small>NIC 프로필 선택 가능</small></span><span>+</span></button><button class="device-row"><span><strong>메인프레임 · 스토리지 · NAS · 백업</strong><small>장비 또는 어댑터 프로필</small></span><span>+</span></button></div></details><details class="tool-group"><summary>외부 · 단말 · 2종</summary><div class="device-list"><button class="device-row"><span><strong>외부망 · 클라이언트</strong><small>경계와 단말</small></span><span>+</span></button></div></details><details class="tool-group" open><summary>연결 · 도형 · 모델링</summary><div class="tool-grid"><button class="tool wide" data-mode="CONNECT"><svg viewBox="0 0 24 24"><path d="M9 15 7 17a3 3 0 0 1-4-4l3-3a3 3 0 0 1 4 0M15 9l2-2a3 3 0 0 1 4 4l-3 3a3 3 0 0 1-4 0M8 16l8-8"/></svg><span>장비 링크<small>두 장비를 차례로 선택</small></span></button><button class="tool wide"><svg viewBox="0 0 24 24"><path d="M5 18 19 6M5 6h14v12H5z"/></svg><span>주석 연결<small>계산과 분리된 설명선</small></span></button><button class="tool"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14"/></svg><span>사각형</span></button><button class="tool"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="8" ry="6"/></svg><span>타원</span></button><button class="tool"><svg viewBox="0 0 24 24"><path d="M5 5h14M12 5v14M8 19h8"/></svg><span>텍스트</span></button><button class="tool"><svg viewBox="0 0 24 24"><path d="M4 17h16M5 14l4-4 3 3 6-7M15 6h3v3"/></svg><span>트래픽 수요</span></button></div></details></div>
+        <div data-tool-panel="failure" hidden><p class="panel-hint">자원을 끄기 전에 서비스 단절과 남은 용량을 예측합니다.</p><p class="failure-grade">단일 장애점 · 2개 자원이 서비스를 끊습니다.</p><button class="failure-item"><strong>FW A</strong><em>ACTIVE</em><small>끄면 FW B 신규 세션이 142%가 됩니다.</small></button><button class="failure-item"><strong>LEAF A</strong><em>UP</em><small>끄면 LEAF B 처리량이 113%가 됩니다.</small></button><button class="failure-item"><strong>EDGE LINK 02</strong><em>UP</em><small>끄면 Public API 수요가 전달되지 않습니다.</small></button></div>
+      </aside>
+      <section class="canvas-panel" aria-labelledby="canvas-heading"><header class="canvas-head"><div class="canvas-copy"><span class="code">LIVE TOPOLOGY</span><h1 id="canvas-heading">LEAF B · 처리량 84% · 가장 빠듯함</h1></div><div class="canvas-controls"><div class="control-group"><button type="button" disabled aria-label="실행 취소">↶</button><button type="button" aria-label="다시 실행">↷</button></div><div class="mode-readout"><i></i><span id="mode-label">SELECT MODE</span></div><div class="control-group"><button type="button" aria-label="축소">−</button><button type="button">100%</button><button type="button" aria-label="확대">+</button><button type="button">맞춤</button></div><div class="view-wrap"><button class="context-trigger" type="button" data-menu-trigger="view-menu" aria-expanded="false">보기 ▾</button><div class="menu" id="view-menu" role="menu" hidden><p class="menu-head">보기 설정<span>계산은 바꾸지 않고 표현만 조정합니다.</span></p><div class="menu-group"><button class="menu-item"><strong>노드 상세</strong><small>전체 · 요약 · 숨김</small></button><button class="menu-item"><strong>숫자 움직임</strong><small>켜기 · 끄기</small></button><button class="menu-item"><strong>링크 경로</strong><small>자동 · 직선 · 직교</small></button><button class="menu-item"><strong>클래스 배지</strong><small>표시 · 숨김</small></button></div></div></div></div></header>
+        <div class="canvas-scroll"><div class="pan-cue"><span>←</span> 좌우로 캔버스 탐색 <span>→</span></div><div class="topology"><div class="zone security"><span>SECURITY</span></div><div class="zone fabric"><span>FABRIC</span></div><button class="route a" type="button" aria-label="FW A에서 LEAF A 링크" data-select="link"></button><button class="route b" type="button" aria-label="FW A에서 LEAF B 링크" data-select="link"></button><button class="route c" type="button" aria-label="LEAF A에서 API 01 링크"></button><button class="route d" type="button" aria-label="LEAF B에서 API 02 링크"></button><button class="shape" type="button" data-select="shape">API SERVICE ZONE</button>
+          <button class="node node-fw" type="button" data-select="device" aria-pressed="false"><span class="node-symbol"><svg viewBox="0 0 64 34"><path d="M4 28V9l28-6 28 6v19zM10 15h44M10 21h44"/></svg></span><strong>FW A</strong><small>FortiGate 1000F</small><em>신규 세션 76%</em></button><button class="node node-leaf-a" type="button" data-select="device" aria-pressed="false"><span class="node-symbol"><svg viewBox="0 0 64 34"><rect x="3" y="8" width="58" height="18"/><path d="M10 15h5M20 15h5M30 15h5M40 15h5M50 15h5"/></svg></span><strong>LEAF A</strong><small>Arista 7050SDX4</small><em>처리량 71%</em></button><button class="node node-leaf-b" type="button" data-select="device" aria-pressed="true"><span class="node-symbol"><svg viewBox="0 0 64 34"><rect x="3" y="8" width="58" height="18"/><path d="M10 15h5M20 15h5M30 15h5M40 15h5M50 15h5"/></svg></span><strong>LEAF B</strong><small>Arista 7050SDX4</small><em>처리량 84%</em></button><button class="node node-api-a" type="button" data-select="device" aria-pressed="false"><span class="node-symbol"><svg viewBox="0 0 64 34"><rect x="14" y="2" width="36" height="30"/><path d="M20 9h24M20 16h24M20 23h16"/></svg></span><strong>API 01</strong><small>SERVER · 25GBE</small><em>NIC 71%</em></button><button class="node node-api-b" type="button" data-select="device" aria-pressed="false"><span class="node-symbol"><svg viewBox="0 0 64 34"><rect x="14" y="2" width="36" height="30"/><path d="M20 9h24M20 16h24M20 23h16"/></svg></span><strong>API 02</strong><small>SERVER · 25GBE</small><em>NIC 70%</em></button>
+        </div></div><footer class="canvas-foot"><div class="bottleneck"><strong>LEAF B의 처리량이 84%로 가장 빠듯합니다.</strong><span>현재 부하의 1.19배에서 한계를 넘습니다. 그다음은 FW A의 신규 세션입니다.</span></div><div class="baseline-delta"><span>headroom<b>24% → 16%</b></span><span>전달률<b>100% → 100%</b></span><span>활성 장애<b>0 → 1</b></span></div></footer>
+      </section>
+      <aside class="inspector" aria-labelledby="inspector-heading"><header class="panel-head"><div><span class="code">SELECTION INSPECTOR</span><h2 id="inspector-heading">선택 검사 및 편집</h2></div><button class="mobile-close" type="button">닫기</button><span class="state-tag" id="inspector-state">주의</span></header><div id="inspector-body"></div></aside>
+    </section>
+    <section class="comparison"><header><div><span class="code">BASELINE COMPARISON</span><h2>설계 변화</h2></div><p>기준선은 설계를 불러온 시점에 고정됩니다.</p></header><div class="comparison-grid"><div class="comparison-item"><span>제한 축</span><b>LEAF B · 처리량 유지</b></div><div class="comparison-item"><span>headroom</span><b>24% → 16% · −8%p</b></div><div class="comparison-item"><span>전달 실패</span><b>0 Mbps → 0 Mbps</b></div><div class="comparison-item"><span>장애 판정</span><b>FW A 중단을 흡수</b></div></div></section>
+  </main>
+  <nav class="mobile-dock" aria-label="모바일 작업"><button type="button" data-mobile="tools" aria-pressed="false">설계 도구</button><button type="button" data-mobile="inspector" aria-pressed="false">선택 검사</button><button type="button" data-mobile="failure" aria-pressed="false">장애 주입</button></nav><div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script>
+    const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)]; let toastTimer;
+    const views={
+      device:`<div class="selection-summary"><strong>LEAF B</strong><span>Arista 7050SDX4-48D8 · SWITCH · FABRIC</span></div><section class="inspect-section"><h3>빠른 편집</h3><div class="quick-actions"><button>복제</button><button>여기서 링크 시작</button><button class="danger">선택 장비 삭제 · 되돌릴 수 있음</button></div></section><section class="inspect-section"><h3>장비 및 측정 조건</h3><label class="field">장비<select><option>Arista 7050SDX4-48D8</option></select></label><label class="field">측정 프로필<select><option>48×100G + 8×400G · LEAF</option></select></label></section><section class="inspect-section"><h3>성능 축</h3><div class="axis"><div class="axis-head"><span>처리량</span><span>84% · 9.8 / 11.7 Tbps</span></div><div class="meter"><i style="width:84%"></i></div></div><div class="axis"><div class="axis-head"><span>패킷 처리량</span><span>61% · 1.12 Bpps</span></div><div class="meter cyan"><i style="width:61%"></i></div></div></section><section class="inspect-section"><h3>근거 및 보정</h3><div class="evidence"><strong>데이터시트 · 조건 일치</strong>frame_size=IMIX · transport=TCP<br>보정한 축 없음 · 원문과 snapshot 보존</div></section>`,
+      link:`<div class="selection-summary"><strong>FW A → LEAF B</strong><span>장비 링크 · 방향별 full-duplex capacity</span></div><section class="inspect-section"><h3>방향별 용량</h3><label class="field">정방향 (bps)<input value="100000000000"></label><label class="field">역방향 (bps)<input value="100000000000"></label></section><section class="inspect-section"><h3>경로 편집</h3><div class="quick-actions"><button>굴곡 추가</button><button>자동 경로로 되돌리기</button><button class="danger">링크 삭제 · 되돌릴 수 있음</button></div><p class="inspect-note">링크를 선택하면 캔버스에 굴곡 손잡이가 표시됩니다.</p></section>`,
+      shape:`<div class="selection-summary"><strong>API SERVICE ZONE</strong><span>텍스트 도형 · 계산 그래프와 분리됨</span></div><section class="inspect-section"><h3>도형 편집</h3><label class="field">텍스트<input value="API SERVICE ZONE"></label><label class="field">너비<input value="135"></label><label class="field">높이<input value="46"></label></section><section class="inspect-section"><h3>의미 지정</h3><div class="quick-actions"><button>장비로 지정</button><button>주석 연결 시작</button><button class="danger">도형 삭제 · 되돌릴 수 있음</button></div></section>`,
+      multi:`<div class="selection-summary"><strong>3개 요소 선택</strong><span>장비 2 · 도형 1</span></div><section class="inspect-section"><h3>배치</h3><div class="quick-actions"><button>그룹</button><button>그룹 해제</button><button>왼쪽 정렬</button><button>가로 분배</button></div></section><section class="inspect-section"><h3>선택 작업</h3><div class="quick-actions"><button>복사</button><button class="danger">선택 요소 삭제 · 되돌릴 수 있음</button></div></section>`,
+      empty:`<div class="empty-state"><strong>선택한 요소가 없습니다.</strong>캔버스에서 장비, 링크 또는 도형을 선택하세요. 여러 요소를 고르려면 Shift를 누른 채 클릭하거나 선택 상자를 드래그하세요.</div>`
+    };
+    function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('visible'),2200)}
+    function inspect(k){$('#inspector-body').innerHTML=views[k];$('#inspector-state').textContent=({device:'주의',link:'정상',shape:'도형',multi:'3 SELECTED',empty:'선택 없음'})[k];$('#inspector-state').style.color=k==='device'?'var(--amber)':k==='link'?'var(--cyan)':'var(--muted)';$$('[data-preview]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.preview===k)));$$('.node').forEach(n=>n.setAttribute('aria-pressed',String(k==='device'&&n.classList.contains('node-leaf-b'))))}
+    function closeMenus(except=null){$$('[data-menu-trigger]').forEach(t=>{const m=$('#'+t.dataset.menuTrigger);if(m===except)return;t.setAttribute('aria-expanded','false');m.hidden=true})}
+    $$('[data-menu-trigger]').forEach(t=>t.addEventListener('click',e=>{e.stopPropagation();const m=$('#'+t.dataset.menuTrigger),open=m.hidden;closeMenus(m);m.hidden=!open;t.setAttribute('aria-expanded',String(open));if(open)$('.menu-item',m)?.focus()}));
+    document.addEventListener('click',e=>{if(!e.target.closest('.menu'))closeMenus()});document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeMenus();document.body.removeAttribute('data-mobile-panel')}});
+    $$('.menu-item').forEach(i=>i.addEventListener('click',()=>{toast(i.querySelector('strong').textContent+' 작업을 엽니다.');closeMenus()}));
+    $$('[data-tool-tab]').forEach(t=>t.addEventListener('click',()=>{$$('[data-tool-tab]').forEach(x=>x.setAttribute('aria-selected',String(x===t)));$$('[data-tool-panel]').forEach(p=>p.hidden=p.dataset.toolPanel!==t.dataset.toolTab)}));
+    $$('[data-preview]').forEach(b=>b.addEventListener('click',()=>inspect(b.dataset.preview)));$$('[data-select]').forEach(b=>b.addEventListener('click',()=>inspect(b.dataset.select)));$$('[data-mode]').forEach(b=>b.addEventListener('click',()=>{$('#mode-label').textContent=b.dataset.mode+' · SELECT TARGET';toast('연결 모드입니다. Esc로 취소할 수 있습니다.')}));$$('[data-toast]').forEach(b=>b.addEventListener('click',()=>toast(b.dataset.toast)));
+    $('#scale').addEventListener('input',e=>$('#scale-output').textContent=(e.target.value/100).toFixed(2)+'×');$('#scenario-reset').addEventListener('click',()=>{$('#scale').value=100;$('#scale-output').textContent='1.00×';toast('장애와 워크로드 배율을 초기화했습니다.')});
+    $$('[data-mobile]').forEach(b=>b.addEventListener('click',()=>{const requested=b.dataset.mobile==='failure'?'tools':b.dataset.mobile,same=document.body.dataset.mobilePanel===requested;if(b.dataset.mobile==='failure')$('[data-tool-tab="failure"]')?.click();document.body.dataset.mobilePanel=same?'':requested;$$('[data-mobile]').forEach(x=>x.setAttribute('aria-pressed',String(!same&&x===b)))}));$$('.mobile-close').forEach(b=>b.addEventListener('click',()=>{document.body.removeAttribute('data-mobile-panel');$$('[data-mobile]').forEach(x=>x.setAttribute('aria-pressed','false'))}));inspect('device');
+  </script>
+</body>
+</html>

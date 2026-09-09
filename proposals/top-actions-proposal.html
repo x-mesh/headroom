@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Rack Mesh · 상단 작업 영역 재구성 제안</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ground: #e7f0ea;
+        --surface: #f7faf7;
+        --surface-raised: #ffffff;
+        --surface-tint: #dceae2;
+        --panel-deep: #16332d;
+        --panel-mid: #20483f;
+        --panel-line: #365a50;
+        --on-deep: #f4fbf7;
+        --on-deep-muted: #dceae2;
+        --line: #9eb9ad;
+        --line-soft: #c9d9d1;
+        --text: #13241f;
+        --muted: #526e64;
+        --signal: #b8e737;
+        --signal-deep: #587d00;
+        --amber: #9a5a00;
+        --danger: #b83c34;
+        --unknown: #697286;
+        --cyan: #087d70;
+        --font-ui: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+        --font-data: "SFMono-Regular", Menlo, Consolas, monospace;
+      }
+
+      * { box-sizing: border-box; }
+      html { background: var(--ground); }
+      body { margin: 0; min-width: 320px; color: var(--text); background: var(--ground); font-family: var(--font-ui); }
+      button, input { font: inherit; }
+      button { color: inherit; }
+      button:disabled { cursor: not-allowed; opacity: .45; }
+      ::selection { color: #0a120f; background: var(--signal); }
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-track { background: var(--surface-tint); }
+      ::-webkit-scrollbar-thumb { border: 2px solid var(--surface-tint); background: var(--line); }
+      :focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
+
+      .icon { width: 16px; height: 16px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-linecap: square; stroke-linejoin: miter; stroke-width: 1.65; }
+      .proposal-bar { min-height: 38px; padding: 7px 18px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--line); background: var(--surface-tint); color: var(--muted); font: 600 11px/1.2 var(--font-data); letter-spacing: .05em; }
+      .proposal-bar strong { color: var(--text); }
+      .proposal-bar a { color: var(--signal-deep); text-underline-offset: 3px; }
+
+      .topbar { min-height: 66px; padding: 10px 22px; display: grid; grid-template-columns: minmax(230px, 1fr) auto minmax(390px, 1fr); align-items: center; gap: 20px; border-bottom: 1px solid var(--panel-line); background: var(--panel-deep); color: var(--on-deep); }
+      .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+      .brand-mark { width: 34px; height: 34px; flex: 0 0 auto; fill: var(--signal); stroke: var(--signal); stroke-width: 1.5; }
+      .brand strong, .brand span { display: block; }
+      .brand strong { font: 600 16px/1 var(--font-data); letter-spacing: .08em; }
+      .brand span { margin-top: 6px; overflow: hidden; color: var(--on-deep-muted); font: 500 8px/1 var(--font-data); letter-spacing: .12em; text-overflow: ellipsis; white-space: nowrap; }
+      .run-state { min-width: 184px; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--amber); font: 600 10px/1 var(--font-data); letter-spacing: .07em; white-space: nowrap; }
+      .status-lamp { width: 7px; height: 7px; background: currentColor; box-shadow: 0 2px 9px color-mix(in srgb, currentColor 70%, transparent); }
+      .global-actions { justify-self: end; display: flex; align-items: center; gap: 7px; }
+      .button { min-height: 38px; padding: 0 13px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--on-deep-line, #628279); background: transparent; color: var(--on-deep); cursor: pointer; font: 600 10px/1 var(--font-data); letter-spacing: .02em; white-space: nowrap; }
+      .button:hover, .button[aria-expanded="true"] { border-color: var(--signal); color: var(--signal); }
+      .button.primary { border-color: var(--signal); background: var(--signal); color: #173028; }
+      .button.primary:hover, .button.primary[aria-expanded="true"] { background: var(--signal); color: #173028; filter: brightness(1.08); }
+      .button.icon-only { width: 38px; padding: 0; }
+      .chevron { width: 10px; height: 10px; margin-left: 2px; transition: transform 160ms ease-out; }
+      [aria-expanded="true"] .chevron { transform: rotate(180deg); }
+
+      .menu-wrap { position: relative; }
+      .menu { position: absolute; z-index: 30; top: calc(100% + 9px); right: 0; width: 318px; border: 1px solid var(--panel-line); background: var(--surface-raised); color: var(--text); box-shadow: 0 14px 30px rgba(22, 51, 45, .2); }
+      .menu[hidden] { display: none; }
+      .menu::before { content: ""; position: absolute; top: -7px; right: 20px; width: 12px; height: 12px; border-top: 1px solid var(--panel-line); border-left: 1px solid var(--panel-line); background: var(--surface-raised); transform: rotate(45deg); }
+      .menu-head { padding: 17px 17px 12px; border-bottom: 1px solid var(--line-soft); }
+      .menu-head strong { display: block; font-size: 17px; line-height: 1.2; }
+      .menu-head span { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+      .menu-section { padding: 8px; }
+      .menu-section + .menu-section { border-top: 1px solid var(--line-soft); }
+      .menu-label { padding: 5px 9px 7px; color: var(--signal-deep); font: 600 8px/1 var(--font-data); letter-spacing: .12em; }
+      .menu-item { width: 100%; min-height: 48px; padding: 8px 9px; display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 9px; border: 0; background: transparent; text-align: left; cursor: pointer; }
+      .menu-item:hover { background: var(--surface-tint); }
+      .menu-item > .icon { color: var(--cyan); }
+      .menu-item strong, .menu-item small { display: block; }
+      .menu-item strong { margin-bottom: 4px; font-size: 11px; line-height: 1.15; }
+      .menu-item small { color: var(--muted); font-size: 8px; line-height: 1.35; }
+      .file-type { color: var(--unknown); font: 600 9px/1 var(--font-data); }
+      .menu-note { padding: 11px 17px 13px; border-top: 1px solid var(--line-soft); background: var(--surface); color: var(--muted); font-size: 8px; line-height: 1.45; }
+
+      .scenario-deck { min-height: 76px; padding: 11px 22px; display: grid; grid-template-columns: minmax(300px, 1fr) minmax(300px, 480px) auto; align-items: center; gap: 26px; border-bottom: 1px solid var(--line-soft); background: var(--surface); }
+      .scenario-copy { min-width: 0; }
+      .scenario-copy strong, .scenario-copy span { display: block; }
+      .scenario-copy strong { overflow: hidden; font-size: 17px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+      .scenario-copy span { margin-top: 5px; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+      .scale-control { display: grid; grid-template-columns: auto minmax(100px, 1fr) 54px; align-items: center; gap: 13px; font: 500 10px/1 var(--font-data); }
+      .scale-control input { width: 100%; accent-color: var(--signal-deep); cursor: pointer; }
+      .scale-control output { color: var(--signal-deep); text-align: right; font-weight: 600; }
+      .scenario-actions { display: flex; align-items: center; gap: 7px; }
+      .scenario-actions .button { min-height: 36px; border-color: var(--line); color: var(--text); }
+      .scenario-actions .button:hover { border-color: var(--cyan); color: var(--cyan); }
+
+      .editor-deck { min-height: 51px; padding: 7px 22px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); background: var(--surface-tint); }
+      .editor-label { color: var(--muted); font: 600 8px/1 var(--font-data); letter-spacing: .1em; white-space: nowrap; }
+      .editor-tools { min-width: 0; display: flex; align-items: center; gap: 5px; overflow-x: auto; scrollbar-width: thin; }
+      .editor-tools .button { min-height: 34px; padding: 0 10px; border-color: var(--line); background: var(--surface); color: var(--text); }
+      .editor-tools .button:hover, .editor-tools .button[aria-expanded="true"] { border-color: var(--cyan); color: var(--cyan); }
+      .editor-tools .button.icon-only { width: 34px; padding: 0; }
+      .tool-divider { width: 1px; height: 22px; margin: 0 3px; flex: 0 0 auto; background: var(--line); }
+      .editor-state { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--muted); font: 600 8px/1 var(--font-data); letter-spacing: .08em; white-space: nowrap; }
+      .editor-state i { width: 6px; height: 6px; background: var(--cyan); }
+      .tool-menu { top: calc(100% + 6px); right: auto; left: 0; width: 260px; }
+      .tool-menu::before { right: auto; left: 19px; }
+      .tool-menu .menu-item { min-height: 40px; grid-template-columns: 23px minmax(0, 1fr); }
+      .tool-menu .menu-item strong { margin: 0; }
+
+      .summary-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--line); }
+      .metric { min-height: 92px; padding: 14px 20px; display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto; align-content: center; gap: 8px 10px; border-right: 1px solid var(--line-soft); background: var(--surface); }
+      .metric:last-child { border-right: 0; }
+      .metric span { color: var(--muted); font-size: 11px; }
+      .metric strong { grid-row: 1 / span 2; color: var(--signal-deep); font: 600 31px/.95 var(--font-data); font-variant-numeric: tabular-nums; }
+      .metric small { overflow: hidden; font: 500 8px/1 var(--font-data); text-overflow: ellipsis; white-space: nowrap; }
+      .metric[data-tone="unknown"] strong { color: var(--unknown); }
+
+      .workspace { min-height: 510px; display: grid; grid-template-columns: 248px minmax(560px, 1fr) 280px; background: var(--canvas, #eaf2ed); }
+      .side-panel { min-width: 0; background: var(--surface); }
+      .side-panel:first-child { border-right: 1px solid var(--line); }
+      .side-panel:last-child { border-left: 1px solid var(--line); }
+      .panel-head { min-height: 58px; padding: 13px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line-soft); }
+      .panel-head span { color: var(--signal-deep); font: 600 8px/1 var(--font-data); letter-spacing: .11em; }
+      .panel-head h2 { margin: 5px 0 0; font-size: 17px; line-height: 1; }
+      .tool-groups { padding: 8px 12px 14px; }
+      .tool-group { border-bottom: 1px solid var(--line-soft); }
+      .tool-group:last-child { border-bottom: 0; }
+      .tool-group summary { min-height: 38px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; color: var(--muted); font: 600 8px/1 var(--font-data); letter-spacing: .1em; list-style: none; }
+      .tool-group summary::-webkit-details-marker { display: none; }
+      .tool-group summary::after { content: "+"; color: var(--signal-deep); font-size: 11px; }
+      .tool-group[open] summary::after { content: "−"; }
+      .palette { padding: 0 0 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+      .palette button { min-height: 58px; padding: 8px; display: grid; place-items: center; gap: 5px; border: 1px solid var(--line-soft); background: var(--surface-raised); cursor: pointer; font: 600 9px/1 var(--font-data); }
+      .palette button:hover { border-color: var(--cyan); color: var(--cyan); }
+      .palette button[data-wide] { grid-column: 1 / -1; min-height: 42px; grid-template-columns: 22px 1fr; justify-items: start; text-align: left; }
+      .palette .icon { width: 21px; height: 21px; }
+      .device-picker { padding: 0 0 12px; }
+      .device-picker[hidden], .palette[hidden] { display: none; }
+      .picker-head { min-height: 43px; display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: center; gap: 7px; border-bottom: 1px solid var(--line-soft); }
+      .picker-head button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--line); background: var(--surface-raised); cursor: pointer; }
+      .picker-head button:hover { border-color: var(--cyan); color: var(--cyan); }
+      .picker-head strong, .picker-head span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .picker-head strong { font-size: 11px; line-height: 1.1; }
+      .picker-head span { margin-top: 4px; color: var(--muted); font: 500 8px/1 var(--font-data); }
+      .picker-list { margin-top: 8px; display: grid; gap: 5px; }
+      .device-option { width: 100%; min-height: 58px; padding: 8px 9px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid var(--line-soft); background: var(--surface-raised); text-align: left; cursor: pointer; }
+      .device-option:hover, .device-option[aria-selected="true"] { border-color: var(--cyan); background: var(--surface-tint); }
+      .device-option[aria-selected="true"] { box-shadow: inset 3px 0 0 var(--cyan); }
+      .device-option strong, .device-option small { display: block; }
+      .device-option strong { font: 600 9px/1.2 var(--font-data); }
+      .device-option small { margin-top: 5px; color: var(--muted); font: 500 8px/1.3 var(--font-data); }
+      .device-option .profile { color: var(--signal-deep); font: 600 8px/1 var(--font-data); text-align: right; }
+      .picker-help { margin: 9px 0 0; color: var(--muted); font-size: 8px; line-height: 1.45; }
+      .canvas { position: relative; min-width: 0; overflow: hidden; background: #eaf2ed; }
+      .canvas-head { min-height: 58px; padding: 12px 17px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 70%, transparent); }
+      .canvas-head strong { display: block; font-size: 17px; }
+      .canvas-head span { display: block; margin-top: 4px; color: var(--muted); font-size: 8px; }
+      .zoom { padding: 7px 9px; border: 1px solid var(--line); background: var(--surface-raised); font: 600 9px/1 var(--font-data); }
+      .topology { position: relative; height: 450px; min-width: 780px; }
+      .zone { position: absolute; border: 1px dashed var(--line); background: rgba(247, 250, 247, .38); }
+      .zone span { position: absolute; top: 9px; left: 10px; color: var(--muted); font: 600 8px/1 var(--font-data); letter-spacing: .08em; }
+      .zone.security { top: 45px; left: 34px; width: 180px; height: 340px; }
+      .zone.fabric { top: 45px; left: 234px; right: 32px; height: 340px; }
+      .link { position: absolute; height: 2px; transform-origin: left center; background: var(--cyan); }
+      .link.one { top: 147px; left: 172px; width: 193px; transform: rotate(-16deg); }
+      .link.two { top: 151px; left: 172px; width: 193px; transform: rotate(17deg); }
+      .link.three { top: 133px; left: 365px; width: 195px; transform: rotate(18deg); }
+      .link.four { top: 244px; left: 365px; width: 195px; transform: rotate(-18deg); }
+      .node { position: absolute; z-index: 2; width: 116px; padding: 9px 10px; border-top: 2px solid var(--cyan); background: var(--surface-raised); box-shadow: 0 6px 15px rgba(22, 51, 45, .11); }
+      .node strong, .node small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .node strong { font: 600 10px/1.2 var(--font-data); }
+      .node small { margin-top: 5px; color: var(--muted); font: 500 8px/1 var(--font-data); }
+      .node em { display: inline-block; margin-top: 8px; color: var(--amber); font: 600 8px/1 var(--font-data); font-style: normal; }
+      .node.fw { top: 114px; left: 74px; border-color: var(--amber); }
+      .node.leaf-a { top: 84px; left: 308px; }
+      .node.leaf-b { top: 206px; left: 308px; border-color: var(--amber); }
+      .node.api-a { top: 97px; left: 540px; }
+      .node.api-b { top: 227px; left: 540px; border-color: var(--amber); }
+      .inspector-body { padding: 17px; }
+      .selected-name { padding-bottom: 15px; border-bottom: 1px solid var(--line-soft); }
+      .selected-name strong, .selected-name span { display: block; }
+      .selected-name strong { font: 600 12px/1 var(--font-data); }
+      .selected-name span { margin-top: 6px; color: var(--muted); font-size: 8px; }
+      .axis { margin-top: 17px; }
+      .axis-row { display: flex; justify-content: space-between; gap: 10px; font: 600 9px/1 var(--font-data); }
+      .axis-row span:last-child { color: var(--amber); }
+      .meter { height: 7px; margin-top: 8px; background: var(--surface-tint); }
+      .meter i { display: block; width: 86%; height: 100%; background: var(--amber); }
+      .axis small { display: block; margin-top: 6px; color: var(--muted); font: 500 8px/1.4 var(--font-data); }
+      .inspector-actions { margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+      .inspector-actions button { min-height: 34px; border: 1px solid var(--line); background: var(--surface-raised); cursor: pointer; font: 600 9px/1 var(--font-data); }
+
+      .before { margin: 18px; border: 1px solid var(--line); background: var(--surface); }
+      .before summary { padding: 14px 16px; cursor: pointer; color: var(--signal-deep); font: 600 10px/1 var(--font-data); }
+      .before img { width: 100%; display: block; border-top: 1px solid var(--line); }
+      .toast { position: fixed; z-index: 50; right: 18px; bottom: 18px; max-width: 360px; padding: 13px 15px; border: 1px solid var(--panel-line); background: var(--panel-deep); color: var(--on-deep); box-shadow: 0 12px 26px rgba(22, 51, 45, .22); font-size: 11px; line-height: 1.45; transform: translateY(20px); opacity: 0; pointer-events: none; transition: opacity 160ms ease-out, transform 160ms ease-out; }
+      .toast.visible { transform: translateY(0); opacity: 1; }
+
+      @media (max-width: 1120px) {
+        .topbar { grid-template-columns: minmax(210px, 1fr) auto; }
+        .run-state { display: none; }
+        .scenario-deck { grid-template-columns: minmax(260px, 1fr) minmax(280px, 420px); }
+        .scenario-actions { grid-column: 1 / -1; justify-content: flex-end; }
+        .workspace { grid-template-columns: 224px minmax(560px, 1fr); overflow-x: auto; }
+        .side-panel:last-child { display: none; }
+      }
+
+      @media (max-width: 760px) {
+        .proposal-bar { align-items: flex-start; flex-direction: column; gap: 4px; }
+        .topbar { padding: 9px 12px; grid-template-columns: auto 1fr; gap: 10px; }
+        .brand span { display: none; }
+        .global-actions { gap: 5px; }
+        .global-actions > .button span, .global-actions > .menu-wrap > .button > span { display: none; }
+        .global-actions .button { width: 38px; padding: 0; }
+        .scenario-deck { padding: 13px 14px; display: flex; align-items: stretch; flex-direction: column; gap: 14px; }
+        .scenario-actions { justify-content: flex-start; overflow-x: auto; }
+        .editor-deck { padding: 7px 12px; }
+        .editor-label { display: none; }
+        .editor-state { display: none; }
+        .summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .metric:nth-child(2) { border-right: 0; }
+        .metric:nth-child(-n + 2) { border-bottom: 1px solid var(--line-soft); }
+        .workspace { display: block; min-height: 450px; overflow: hidden; }
+        .side-panel { display: none; }
+        .workspace > .side-panel:first-child { display: block; border-right: 0; border-bottom: 1px solid var(--line); }
+        .workspace > .side-panel:first-child .panel-head { min-height: 48px; padding: 10px 14px; }
+        .workspace > .side-panel:first-child .panel-head span { display: none; }
+        .workspace > .side-panel:first-child .panel-head h2 { margin: 0; }
+        .tool-groups { padding: 0 12px 12px; display: flex; gap: 12px; overflow-x: auto; }
+        .tool-group { min-width: 210px; border-bottom: 0; }
+        .tool-group:has(.device-picker:not([hidden])) { min-width: min(354px, calc(100vw - 36px)); }
+        .tool-group summary { min-height: 34px; }
+        .canvas { overflow-x: auto; }
+        .menu { position: fixed; top: 114px; right: 12px; left: 12px; width: auto; max-height: calc(100vh - 130px); overflow-y: auto; }
+        .menu::before { display: none; }
+        .tool-menu { top: 188px; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <svg width="0" height="0" aria-hidden="true" style="position:absolute">
+      <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.8 9a2.3 2.3 0 0 1 4.4 1c0 1.8-2.2 2-2.2 3.7M12 17.5v.1"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v10H3z"/></symbol>
+      <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 4v11M8 8l4-4 4 4M5 14v6h14v-6"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 12 12"><path d="m2 4 4 4 4-4"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h5"/></symbol>
+      <symbol id="i-image" viewBox="0 0 24 24"><path d="M3 5h18v14H3zM7 15l3-3 2 2 3-4 4 6M8 9h.1"/></symbol>
+      <symbol id="i-save" viewBox="0 0 24 24"><path d="M4 4h14l2 2v14H4zM8 4v6h8V4M8 20v-6h8v6"/></symbol>
+      <symbol id="i-open" viewBox="0 0 24 24"><path d="M3 7h7l2 2h9l-3 10H5z"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M9 15 7 17a3 3 0 0 1-4-4l3-3a3 3 0 0 1 4 0M15 9l2-2a3 3 0 0 1 4 4l-3 3a3 3 0 0 1-4 0M8 16l8-8"/></symbol>
+      <symbol id="i-shape" viewBox="0 0 24 24"><rect x="3" y="4" width="8" height="8"/><circle cx="17" cy="16" r="4"/></symbol>
+      <symbol id="i-demand" viewBox="0 0 24 24"><path d="M4 17h16M5 14l4-4 3 3 6-7M15 6h3v3"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h4M12 7h8M4 17h8M16 17h4"/><rect x="8" y="4" width="4" height="6"/><rect x="12" y="14" width="4" height="6"/></symbol>
+      <symbol id="i-align" viewBox="0 0 24 24"><path d="M4 5h16M4 10h10M4 15h14M4 20h8"/></symbol>
+      <symbol id="i-undo" viewBox="0 0 24 24"><path d="m8 7-4 4 4 4M5 11h8a6 6 0 0 1 6 6"/></symbol>
+      <symbol id="i-redo" viewBox="0 0 24 24"><path d="m16 7 4 4-4 4M19 11h-8a6 6 0 0 0-6 6"/></symbol>
+      <symbol id="i-device" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16"/><path d="M8 8h8M8 12h8M8 16h5"/></symbol>
+      <symbol id="i-template" viewBox="0 0 24 24"><path d="M4 4h16v16H4zM4 10h16M10 10v10"/></symbol>
+      <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 20V9M8 13l4-4 4 4M5 4h14"/></symbol>
+      <symbol id="i-reset" viewBox="0 0 24 24"><path d="M5 8V4M5 4h4M5.5 5.5A8 8 0 1 1 4 14"/></symbol>
+      <symbol id="i-baseline" viewBox="0 0 24 24"><path d="M4 19h16M6 16V9M12 16V5M18 16v-4"/></symbol>
+    </svg>
+
+    <div class="proposal-bar">
+      <span><strong>상단 작업 영역 재구성 제안</strong> · 기능을 프로젝트, 시나리오, 편집, 내보내기 맥락으로 분리했습니다.</span>
+      <a href="#before">기존 구성과 비교</a>
+    </div>
+
+    <header class="topbar">
+      <div class="brand" aria-label="Rack Mesh">
+        <svg class="brand-mark" viewBox="0 0 36 36" aria-hidden="true"><path d="M6 8h24M6 18h24M6 28h24M10 5v26M26 5v26"/><circle cx="10" cy="8" r="2"/><circle cx="26" cy="18" r="2"/><circle cx="10" cy="28" r="2"/></svg>
+        <div><strong>RACK MESH</strong><span>INFRASTRUCTURE CONSTRAINT SIMULATOR</span></div>
+      </div>
+      <div class="run-state"><i class="status-lamp"></i><span>EVIDENCE INCOMPLETE</span></div>
+      <div class="global-actions">
+        <button class="button" type="button" data-demo="사용 안내를 엽니다."><svg class="icon"><use href="#i-help"/></svg><span>도움말</span></button>
+        <div class="menu-wrap">
+          <button class="button" type="button" data-menu-trigger="project-menu" aria-expanded="false"><svg class="icon"><use href="#i-folder"/></svg><span>프로젝트</span><svg class="icon chevron"><use href="#i-chevron"/></svg></button>
+          <div class="menu" id="project-menu" hidden>
+            <div class="menu-head"><strong>프로젝트</strong><span>설계 파일과 외부 자료를 한곳에서 관리합니다.</span></div>
+            <div class="menu-section">
+              <div class="menu-label">설계 파일</div>
+              <button class="menu-item" type="button" data-demo="새 설계 템플릿을 선택합니다."><svg class="icon"><use href="#i-template"/></svg><span><strong>새 설계</strong><small>템플릿에서 새 프로젝트를 시작합니다.</small></span><span></span></button>
+              <button class="menu-item" type="button" data-demo="프로젝트 JSON을 엽니다."><svg class="icon"><use href="#i-open"/></svg><span><strong>프로젝트 열기</strong><small>Rack Mesh 설계 파일을 불러옵니다.</small></span><span class="file-type">JSON</span></button>
+              <button class="menu-item" type="button" data-demo="현재 프로젝트를 저장합니다."><svg class="icon"><use href="#i-save"/></svg><span><strong>프로젝트 저장</strong><small>토폴로지, 조건, 장애 상태를 저장합니다.</small></span><span class="file-type">JSON</span></button>
+            </div>
+            <div class="menu-section">
+              <div class="menu-label">가져오기</div>
+              <button class="menu-item" type="button" data-demo="장비 JSON을 가져옵니다."><svg class="icon"><use href="#i-import"/></svg><span><strong>장비 데이터</strong><small>Rack Mesh 또는 NetBox 장비 정보를 읽습니다.</small></span><span class="file-type">JSON</span></button>
+              <button class="menu-item" type="button" data-demo="drawio 설계를 가져옵니다."><svg class="icon"><use href="#i-import"/></svg><span><strong>drawio 다이어그램</strong><small>도형과 연결선을 편집 가능한 요소로 읽습니다.</small></span><span class="file-type">XML</span></button>
+            </div>
+          </div>
+        </div>
+        <div class="menu-wrap">
+          <button class="button primary" type="button" data-menu-trigger="export-menu" aria-expanded="false"><svg class="icon"><use href="#i-export"/></svg><span>결과 내보내기</span><svg class="icon chevron"><use href="#i-chevron"/></svg></button>
+          <div class="menu" id="export-menu" hidden>
+            <div class="menu-head"><strong>결과 내보내기</strong><span>분석용 데이터 또는 공유용 그림을 선택합니다.</span></div>
+            <div class="menu-section">
+              <div class="menu-label">분석 데이터</div>
+              <button class="menu-item" type="button" data-demo="계산 결과 JSON을 내보냅니다."><svg class="icon"><use href="#i-file"/></svg><span><strong>계산 결과</strong><small>기준선, 현재 판정, 근거와 토폴로지 전체</small></span><span class="file-type">JSON</span></button>
+            </div>
+            <div class="menu-section">
+              <div class="menu-label">보고서 이미지</div>
+              <button class="menu-item" type="button" data-demo="다이어그램 SVG를 내보냅니다."><svg class="icon"><use href="#i-image"/></svg><span><strong>벡터 다이어그램</strong><small>계산 판정과 장애 조건이 포함된 원본 크기 그림</small></span><span class="file-type">SVG</span></button>
+              <button class="menu-item" type="button" data-demo="다이어그램 PNG를 내보냅니다."><svg class="icon"><use href="#i-image"/></svg><span><strong>이미지 다이어그램</strong><small>문서와 메신저에 바로 붙일 수 있는 그림</small></span><span class="file-type">PNG</span></button>
+            </div>
+            <div class="menu-note">모든 파일은 현재 계산 조건과 엔진 버전을 함께 기록합니다.</div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <section class="scenario-deck" aria-label="시나리오 제어">
+      <div class="scenario-copy"><strong>Dual fabric API cluster</strong><span>합성 데모 · 장비 10 · 링크 10 · 정상 상태 계산</span></div>
+      <label class="scale-control" for="scale"><span>워크로드 배율</span><input id="scale" type="range" min="50" max="180" value="100" step="5"><output id="scale-output" for="scale">1.00×</output></label>
+      <div class="scenario-actions">
+        <button class="button" type="button" data-demo="현재 계산을 비교 기준으로 확정합니다."><svg class="icon"><use href="#i-baseline"/></svg>기준선 확정</button>
+        <button class="button" type="button" disabled title="활성 장애가 없습니다"><svg class="icon"><use href="#i-reset"/></svg>장애 초기화</button>
+      </div>
+    </section>
+
+    <section class="editor-deck" aria-label="설계 편집 도구">
+      <span class="editor-label">선택 항목 편집</span>
+      <div class="editor-tools" role="toolbar" aria-label="설계 편집">
+        <button class="button icon-only" type="button" disabled aria-label="실행 취소" title="실행 취소"><svg class="icon"><use href="#i-undo"/></svg></button>
+        <button class="button icon-only" type="button" disabled aria-label="다시 실행" title="다시 실행"><svg class="icon"><use href="#i-redo"/></svg></button>
+        <span class="tool-divider" aria-hidden="true"></span>
+        <div class="menu-wrap">
+          <button class="button" type="button" data-menu-trigger="condition-menu" aria-expanded="false"><svg class="icon"><use href="#i-sliders"/></svg>조건 · 검증<svg class="icon chevron"><use href="#i-chevron"/></svg></button>
+          <div class="menu tool-menu" id="condition-menu" hidden>
+            <div class="menu-section">
+              <button class="menu-item" type="button" data-demo="워크로드 조건을 편집합니다."><svg class="icon"><use href="#i-sliders"/></svg><span><strong>워크로드 조건</strong></span></button>
+              <button class="menu-item" type="button" data-demo="검증 설정을 편집합니다."><svg class="icon"><use href="#i-baseline"/></svg><span><strong>검증 설정</strong></span></button>
+            </div>
+          </div>
+        </div>
+        <div class="menu-wrap">
+          <button class="button" type="button" data-menu-trigger="arrange-menu" aria-expanded="false"><svg class="icon"><use href="#i-align"/></svg>정리<svg class="icon chevron"><use href="#i-chevron"/></svg></button>
+          <div class="menu tool-menu" id="arrange-menu" hidden>
+            <div class="menu-section">
+              <button class="menu-item" type="button" data-demo="선택 요소를 그룹으로 묶습니다."><svg class="icon"><use href="#i-template"/></svg><span><strong>그룹</strong></span></button>
+              <button class="menu-item" type="button" data-demo="선택 그룹을 해제합니다."><svg class="icon"><use href="#i-template"/></svg><span><strong>그룹 해제</strong></span></button>
+              <button class="menu-item" type="button" data-demo="선택 요소를 왼쪽에 맞춥니다."><svg class="icon"><use href="#i-align"/></svg><span><strong>왼쪽 정렬</strong></span></button>
+              <button class="menu-item" type="button" data-demo="선택 요소를 같은 간격으로 배치합니다."><svg class="icon"><use href="#i-align"/></svg><span><strong>가로 분배</strong></span></button>
+              <button class="menu-item" type="button" data-demo="선택 도형을 장비로 지정합니다."><svg class="icon"><use href="#i-device"/></svg><span><strong>장비로 지정</strong></span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="editor-state"><i></i>SELECT · SHIFT+CLICK TO ADD · RIGHT-DRAG TO PAN</div>
+    </section>
+
+    <section class="summary-strip" aria-label="시나리오 요약">
+      <div class="metric"><span>최소 headroom</span><strong>14%</strong><small>leaf-b-api-b · BPS</small></div>
+      <div class="metric"><span>과부하 자원</span><strong>00</strong><small>3개 자원 주의</small></div>
+      <div class="metric"><span>전달 실패</span><strong>00</strong><small>0 Mbps 미전달</small></div>
+      <div class="metric" data-tone="unknown"><span>활성 장애</span><strong>00</strong><small>장애 없음</small></div>
+    </section>
+
+    <main class="workspace">
+      <aside class="side-panel">
+        <header class="panel-head"><div><span>DESIGN BOARD</span><h2>설계 도구</h2></div></header>
+        <div class="tool-groups">
+          <details class="tool-group" open>
+            <summary>장비</summary>
+            <div class="palette">
+              <button type="button" id="switch-picker-trigger" aria-expanded="false" aria-controls="switch-picker"><svg class="icon"><use href="#i-device"/></svg>스위치</button>
+              <button type="button" data-demo="라우터를 추가합니다."><svg class="icon"><use href="#i-device"/></svg>라우터</button>
+              <button type="button" data-demo="방화벽을 추가합니다."><svg class="icon"><use href="#i-device"/></svg>방화벽</button>
+              <button type="button" data-demo="서버를 추가합니다."><svg class="icon"><use href="#i-device"/></svg>서버</button>
+              <button type="button" data-demo="로드 밸런서를 추가합니다."><svg class="icon"><use href="#i-device"/></svg>LB</button>
+              <button type="button" data-demo="스토리지를 추가합니다."><svg class="icon"><use href="#i-device"/></svg>스토리지</button>
+            </div>
+            <div class="device-picker" id="switch-picker" hidden>
+              <div class="picker-head">
+                <button type="button" id="switch-picker-back" aria-label="장비 종류로 돌아가기"><svg class="icon"><use href="#i-undo"/></svg></button>
+                <div><strong>스위치 선택</strong><span>모델과 배치 프로필을 고르세요.</span></div>
+              </div>
+              <div class="picker-list" role="listbox" aria-label="스위치 모델">
+                <button class="device-option" type="button" role="option" aria-selected="false" data-device-choice="Cisco Catalyst 9300-48T · 단독"><span><strong>Cisco Catalyst 9300-48T</strong><small>액세스 · 256 Gbps · 190.47 Mpps</small></span><span class="profile">단독</span></button>
+                <button class="device-option" type="button" role="option" aria-selected="false" data-device-choice="Cisco Catalyst 9300X-48TX · 스택 구성"><span><strong>Cisco Catalyst 9300X-48TX</strong><small>액세스 · 2.76 Tbps · 2.23 Bpps</small></span><span class="profile">스택</span></button>
+                <button class="device-option" type="button" role="option" aria-selected="false" data-device-choice="Arista 7050DX4-32S · 스파인 400G"><span><strong>Arista 7050DX4-32S</strong><small>스파인 · 32×400G · 12.8 Tbps</small></span><span class="profile">SPINE</span></button>
+                <button class="device-option" type="button" role="option" aria-selected="false" data-device-choice="Arista 7050SDX4-48D8 · 리프 100G"><span><strong>Arista 7050SDX4-48D8</strong><small>리프 · 48×100G + 8×400G</small></span><span class="profile">LEAF</span></button>
+                <button class="device-option" type="button" role="option" aria-selected="false" data-device-choice="Cisco Nexus 93180YC-FX · 리프 25G"><span><strong>Cisco Nexus 93180YC-FX</strong><small>리프 · 48×25G + 6×100G</small></span><span class="profile">LEAF</span></button>
+              </div>
+              <p class="picker-help">선택하면 해당 프로필을 들고 캔버스에 놓는 모드로 전환됩니다.</p>
+            </div>
+          </details>
+          <details class="tool-group" open>
+            <summary>연결</summary>
+            <div class="palette">
+              <button type="button" data-wide data-demo="두 장비를 연결할 링크 모드로 전환합니다."><svg class="icon"><use href="#i-link"/></svg>장비 링크</button>
+              <button type="button" data-wide data-demo="주석 연결선을 추가합니다."><svg class="icon"><use href="#i-link"/></svg>주석 연결선</button>
+            </div>
+          </details>
+          <details class="tool-group" open>
+            <summary>도형</summary>
+            <div class="palette">
+              <button type="button" data-demo="사각형을 추가합니다."><svg class="icon"><use href="#i-shape"/></svg>사각형</button>
+              <button type="button" data-demo="타원을 추가합니다."><svg class="icon"><use href="#i-shape"/></svg>타원</button>
+              <button type="button" data-wide data-demo="텍스트를 추가합니다."><svg class="icon"><use href="#i-file"/></svg>텍스트</button>
+            </div>
+          </details>
+          <details class="tool-group" open>
+            <summary>모델링</summary>
+            <div class="palette">
+              <button type="button" data-wide data-demo="트래픽 수요 편집 패널을 엽니다."><svg class="icon"><use href="#i-demand"/></svg>트래픽 수요</button>
+            </div>
+          </details>
+        </div>
+      </aside>
+      <section class="canvas" aria-label="토폴로지 캔버스">
+        <header class="canvas-head"><div><strong>Dual fabric API cluster</strong><span>합성 데모 · 계산 결과 미리보기</span></div><div class="zoom">100% · 맞춤</div></header>
+        <div class="topology">
+          <div class="zone security"><span>SECURITY</span></div><div class="zone fabric"><span>FABRIC</span></div>
+          <i class="link one"></i><i class="link two"></i><i class="link three"></i><i class="link four"></i>
+          <div class="node fw"><strong>FW A</strong><small>DEMO-FW-42K</small><em>신규 세션 86%</em></div>
+          <div class="node leaf-a"><strong>LEAF A</strong><small>DEMO-LEAF-48X</small><em>처리량 71%</em></div>
+          <div class="node leaf-b"><strong>LEAF B</strong><small>DEMO-LEAF-48X</small><em>처리량 84%</em></div>
+          <div class="node api-a"><strong>API 01</strong><small>DEMO-SRV-12G</small><em>NIC 71%</em></div>
+          <div class="node api-b"><strong>API 02</strong><small>DEMO-SRV-12G</small><em>NIC 70%</em></div>
+        </div>
+      </section>
+      <aside class="side-panel">
+        <header class="panel-head"><div><span>AXIS INSPECTOR</span><h2>장비 검사</h2></div></header>
+        <div class="inspector-body">
+          <div class="selected-name"><strong>FW A</strong><span>Fortinet DEMO-FW-42K · SECURITY</span></div>
+          <div class="axis"><div class="axis-row"><span>신규 세션</span><span>주의 · 86%</span></div><div class="meter"><i></i></div><small>36 Kcps load · 42 Kcps limit</small></div>
+          <div class="axis"><div class="axis-row"><span>처리량</span><span style="color:var(--cyan)">정상 · 34%</span></div><div class="meter"><i style="width:34%;background:var(--cyan)"></i></div><small>3.6 Gbps load · 10 Gbps limit</small></div>
+          <div class="inspector-actions"><button type="button" data-demo="장비 편집을 엽니다.">장비 편집</button><button type="button" data-demo="FW A 장애를 주입합니다.">장애 주입</button></div>
+        </div>
+      </aside>
+    </main>
+
+    <details class="before" id="before">
+      <summary>기존 구성 스크린샷 펼치기</summary>
+      <img src="./current-toolbar.png" alt="변경 전 Rack Mesh 화면">
+    </details>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script>
+      const triggers = [...document.querySelectorAll('[data-menu-trigger]')];
+      const closeMenus = (except = '') => {
+        for (const trigger of triggers) {
+          const isExcept = trigger.dataset.menuTrigger === except;
+          trigger.setAttribute('aria-expanded', isExcept ? 'true' : 'false');
+          document.getElementById(trigger.dataset.menuTrigger).hidden = !isExcept;
+        }
+      };
+
+      for (const trigger of triggers) {
+        trigger.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const id = trigger.dataset.menuTrigger;
+          closeMenus(trigger.getAttribute('aria-expanded') === 'true' ? '' : id);
+        });
+      }
+
+      document.addEventListener('click', (event) => { if (!event.target.closest('.menu')) closeMenus(); });
+      document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeMenus(); });
+
+      const scale = document.getElementById('scale');
+      const scaleOutput = document.getElementById('scale-output');
+      scale.addEventListener('input', () => { scaleOutput.value = `${(Number(scale.value) / 100).toFixed(2)}×`; });
+
+      const toast = document.getElementById('toast');
+      let toastTimer;
+      const switchTrigger = document.getElementById('switch-picker-trigger');
+      const switchPicker = document.getElementById('switch-picker');
+      const devicePalette = switchTrigger.closest('.palette');
+      const closeSwitchPicker = () => {
+        switchPicker.hidden = true;
+        devicePalette.hidden = false;
+        switchTrigger.setAttribute('aria-expanded', 'false');
+      };
+      switchTrigger.addEventListener('click', () => {
+        devicePalette.hidden = true;
+        switchPicker.hidden = false;
+        switchTrigger.setAttribute('aria-expanded', 'true');
+        switchPicker.querySelector('[role="option"]')?.focus();
+      });
+      document.getElementById('switch-picker-back').addEventListener('click', () => {
+        closeSwitchPicker();
+        switchTrigger.focus();
+      });
+      switchPicker.addEventListener('click', (event) => {
+        const option = event.target.closest('[data-device-choice]');
+        if (!option) return;
+        switchPicker.querySelectorAll('[role="option"]').forEach((item) => item.setAttribute('aria-selected', String(item === option)));
+        toast.textContent = `${option.dataset.deviceChoice} 선택 · 캔버스에서 놓을 위치를 고르세요.`;
+        toast.classList.add('visible');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toast.classList.remove('visible'), 3200);
+      });
+      document.addEventListener('click', (event) => {
+        const demo = event.target.closest('[data-demo]');
+        if (!demo) return;
+        closeMenus();
+        toast.textContent = `${demo.dataset.demo} · 제안 시제품`;
+        toast.classList.add('visible');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toast.classList.remove('visible'), 2200);
+      });
+    </script>
+  </body>
+</html>
