@@ -9,7 +9,7 @@ import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
 import { vendorLogoFor } from './logos.js';
 import { buildTemplate, templateGroups, templates } from './templates.js';
 import { buildSpec, catalogEntry, catalogFor, catalogProfile } from './devices/catalog.js';
-import { addConnector, addShape, alignSelection, copySelection, distributeSelection, exportDiagramSvg, groupSelection, importDrawio, moveSelection, pasteSelection, removeDiagramElements, ungroupSelection, updateShape } from './diagram.js';
+import { addConnector, addShape, alignSelection, copySelection, distributeSelection, exportDiagramSvg, groupSelection, importDrawio, moveSelection, pasteSelection, removeDiagramElements, ungroupSelection, updateConnector, updateGroup, updateShape } from './diagram.js';
 import { createHistory } from './history.js';
 import { acceptanceDigest, evidenceApplicability } from './evidence.js';
 
@@ -31,6 +31,16 @@ let toastTimer;
 let dragState = null;
 let diagramDrag = null;
 let suppressNodeClick = false;
+const SHAPE_MIN_SIZE = 24;
+const SHAPE_COORD_LIMIT = 1e6;
+const SHAPE_DRAW_DEFAULTS = {
+  rect: { width: 180, height: 90, text: '그룹', fill: '#ffffff', stroke: '#13241f', textColor: '#13241f' },
+  ellipse: { width: 180, height: 90, text: '영역', fill: '#ffffff', stroke: '#13241f', textColor: '#13241f' },
+  text: { width: 160, height: 44, text: '설명', fill: 'none', stroke: 'none', textColor: '#13241f' },
+};
+const SHAPE_COLOR_PALETTE = ['#ffffff', '#f5f5f5', '#d9d9d9', '#808080', '#000000', '#f8cecc', '#fff2cc', '#d5e8d4', '#dae8fc', '#e1d5e7', '#f5f5dc', '#b8e737', '#087d70', '#587d00', '#9a5a00', '#b83c34', '#16332d', '#526e64'];
+let shapeInspectorTab = 'style';
+let shapeStyleClipboard = null;
 let telemetryTimer;
 const telemetryHistory = new Map();
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -90,8 +100,15 @@ function historyStep(direction) {
   const entry = direction === 'undo' ? documentHistory.undo() : documentHistory.redo();
   if (!entry) return;
   topology = structuredClone(entry);
-  state.selectedId = topology.devices.some(({ id }) => id === state.selectedId) ? state.selectedId : topology.devices[0]?.id || null;
-  state.selection = state.selectedId ? [{ type: 'device', id: state.selectedId }] : [];
+  const prior = state.selection[0];
+  const shapeExists = prior?.type === 'shape' && topology.diagram?.shapes?.some(({ id }) => id === prior.id);
+  const connectorExists = prior?.type === 'connector' && topology.diagram?.connectors?.some(({ id }) => id === prior.id);
+  const groupExists = prior?.type === 'group' && topology.diagram?.groups?.some(({ id }) => id === prior.id);
+  if (shapeExists || connectorExists || groupExists) state.selection = [prior];
+  else {
+    state.selectedId = topology.devices.some(({ id }) => id === state.selectedId) ? state.selectedId : topology.devices[0]?.id || null;
+    state.selection = state.selectedId ? [{ type: 'device', id: state.selectedId }] : [];
+  }
   recalculate();
   showToast(direction === 'undo' ? '이전 편집으로 돌아갔습니다.' : '편집을 다시 적용했습니다.');
 }
@@ -511,7 +528,7 @@ const PALETTE = [
   { kind: 'firewall', label: '방화벽', group: '보안 · 트래픽', limits: { forwarding_bps: null, forwarding_pps: null, new_sessions_per_sec: null, concurrent_sessions: null } },
   { kind: 'ips', label: 'IPS · IDS', group: '보안 · 트래픽', limits: { forwarding_bps: null, forwarding_pps: null, concurrent_sessions: null } },
   { kind: 'waf', label: 'WAF · 프록시', group: '보안 · 트래픽', limits: { forwarding_bps: null, new_sessions_per_sec: null, concurrent_sessions: null, tls_full_handshakes_per_sec: null } },
-  { kind: 'lb', label: '로드밸런서', group: '보안 · 트래픽', limits: { forwarding_bps: null, new_sessions_per_sec: null, concurrent_sessions: null, tls_full_handshakes_per_sec: null, tls_resumed_handshakes_per_sec: null } },
+  { kind: 'lb', label: '로드밸런서', group: '네트워크', limits: { forwarding_bps: null, new_sessions_per_sec: null, concurrent_sessions: null, tls_full_handshakes_per_sec: null, tls_resumed_handshakes_per_sec: null } },
   { kind: 'vpn', label: 'IPsec VPN', group: '보안 · 트래픽', limits: { forwarding_bps: null, forwarding_pps: null, vpn_tunnels: null } },
   { kind: 'sslvpn', label: 'SSL VPN', group: '보안 · 트래픽', limits: { forwarding_bps: null, concurrent_sessions: null, vpn_tunnels: null, tls_full_handshakes_per_sec: null } },
   { kind: 'server', label: '서버', group: '서버 · 스토리지', limits: { nic_bps: null, nic_pps: null } },
@@ -542,8 +559,12 @@ function paletteCatalog(kind, label) {
       .map(([axis, value]) => `${axisCatalog[axis]?.nodeLabel || axis} ${value == null ? '미확인' : formatCompact(value, axisCatalog[axis]?.unit)}`)
       .join(' · ');
     const haystack = [entry.vendor, entry.model, profile.label, profile.note, limits].join(' ').toLowerCase();
+    const mark = vendorLogoFor(entry.vendor);
+    const vendorBadge = mark
+      ? `<svg class="palette-vendor-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false" style="--mark:${mark.hex}"><path d="${escapeAttribute(mark.path)}"></path></svg>`
+      : `<span class="palette-vendor-fallback" aria-hidden="true">${escapeText(String(entry.vendor || '').replace(/[^a-z0-9]/gi, '').slice(0, 3).toUpperCase())}</span>`;
     return `<button type="button" class="palette-model" data-palette-kind="${escapeAttribute(kind)}" data-palette-catalog="${escapeAttribute(entry.id)}" data-palette-profile="${escapeAttribute(profile.id)}" data-palette-search="${escapeAttribute(haystack)}" aria-label="${escapeAttribute(`${entry.vendor} ${entry.model} · ${profile.label} 추가`)}">
-      <span class="palette-model-glyph"><svg aria-hidden="true" focusable="false"><use href="#${symbolFor(kind).id}"></use></svg></span>
+      <span class="palette-model-glyph">${vendorBadge}<svg aria-hidden="true" focusable="false"><use href="#${symbolFor(kind).id}"></use></svg></span>
       <span class="palette-model-copy"><strong>${escapeText(`${entry.vendor} ${entry.model}`)}</strong><span>${escapeText(profile.label)}</span><small>${escapeText(limits)}</small></span>
     </button>`;
   })).join('');
@@ -591,9 +612,9 @@ function renderPalette() {
       <button type="button" data-editor-action="device"><strong>직접 입력 장비</strong><small>종류와 한계값을 직접 작성</small></button>
       <button type="button" data-editor-action="connect"><strong>장비 링크</strong><small>두 장비를 차례로 선택</small></button>
       <button type="button" data-editor-action="annotation-connect"><strong>주석 연결</strong><small>설명선을 연결</small></button>
-      <button type="button" data-editor-action="shape-rect"><strong>사각형</strong><small>영역을 표시</small></button>
-      <button type="button" data-editor-action="shape-ellipse"><strong>타원</strong><small>영역을 표시</small></button>
-      <button type="button" data-editor-action="shape-text"><strong>텍스트</strong><small>설명을 추가</small></button>
+      <button type="button" data-editor-action="shape-rect"><strong>사각형</strong><small>보이는 캔버스 가운데에 추가</small></button>
+      <button type="button" data-editor-action="shape-ellipse"><strong>타원</strong><small>보이는 캔버스 가운데에 추가</small></button>
+      <button type="button" data-editor-action="shape-text"><strong>텍스트</strong><small>보이는 캔버스 가운데에 추가</small></button>
       <button type="button" data-editor-action="demand"><strong>트래픽 수요</strong><small>수요를 정의</small></button>
     </div>
   </section>`;
@@ -668,6 +689,32 @@ function canvasPoint(event) {
     y: (event.clientY - canvas.top) / state.zoom + viewport.minY,
     inside: event.clientX >= drop.left && event.clientX <= drop.right && event.clientY >= drop.top && event.clientY <= drop.bottom,
   };
+}
+
+function createShapeAtVisibleCanvasCenter(kind) {
+  const defaults = SHAPE_DRAW_DEFAULTS[kind];
+  if (!defaults) return;
+  const scroll = document.querySelector('.topology-scroll');
+  const canvas = element('topology-canvas');
+  const canvasBox = canvas.getBoundingClientRect();
+  const scrollBox = scroll.getBoundingClientRect();
+  const left = Math.max(canvasBox.left, scrollBox.left);
+  const right = Math.min(canvasBox.right, scrollBox.right);
+  const top = Math.max(canvasBox.top, scrollBox.top);
+  const bottom = Math.min(canvasBox.bottom, scrollBox.bottom);
+  const centerX = (left + right) / 2;
+  const centerY = (top + bottom) / 2;
+  const x = Math.round(((centerX - canvasBox.left) / state.zoom + viewport.minX - defaults.width / 2) / 15) * 15;
+  const y = Math.round(((centerY - canvasBox.top) / state.zoom + viewport.minY - defaults.height / 2) / 15) * 15;
+  try {
+    topology = addShape(topology, kind, { ...defaults, x, y });
+    const shape = topology.diagram.shapes.at(-1);
+    state.selection = [{ type: 'shape', id: shape.id }];
+    shapeInspectorTab = 'style';
+    closeEditorPanel();
+    commitTopology(`${defaults.text} 도형을 추가했습니다.`);
+    openMobileInspector();
+  } catch (error) { showToast(error.message); }
 }
 
 function nextDeviceName(kind) {
@@ -813,7 +860,28 @@ function renderTopology() {
     const source = endpointPoint(connector.source); const target = endpointPoint(connector.target);
     if (!source || !target) return '';
     const points = [source, ...(connector.waypoints || []), target].map(({ x, y }) => `${x},${y}`).join(' ');
-    return `<g class="diagram-connector" data-connector-id="${escapeAttribute(connector.id)}"><polyline points="${points}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4"></polyline></g>`;
+    const selected = state.selection.some((item) => item.type === 'connector' && item.id === connector.id);
+    const stroke = connector.stroke || 'var(--muted)';
+    const width = connector.strokeWidth || 1.5;
+    const dash = connector.dashed === false ? '' : ' stroke-dasharray="5 4"';
+    const labelPoint = points.split(' ').map((point) => point.split(',').map(Number)).reduce((sum, point) => ({ x: sum.x + point[0], y: sum.y + point[1] }), { x: 0, y: 0 });
+    const count = points.split(' ').length;
+    const label = connector.label ? `<text class="diagram-connector-label" x="${labelPoint.x / count}" y="${labelPoint.y / count}" text-anchor="middle">${escapeText(connector.label)}</text>` : '';
+    const selectedStroke = selected ? 'var(--signal-deep)' : stroke;
+    const hitWidth = Math.max(width + 12, 16);
+    const marker = (side) => {
+      const arrow = connector[`${side}Arrow`] || 'none';
+      if (arrow === 'none') return { attribute: '', definition: '' };
+      const id = `diagram-marker-${connector.id}-${side}`;
+      const path = arrow === 'open' ? 'M 1 1 L 9 5 L 1 9' : arrow === 'block' ? 'M 0 0 L 10 5 L 0 10 L 2 5 Z' : 'M 0 0 L 10 5 L 0 10 Z';
+      const fill = arrow === 'open' ? 'none' : selectedStroke;
+      return {
+        attribute: ` marker-${side === 'start' ? 'start' : 'end'}="url(#${id})"`,
+        definition: `<defs><marker id="${id}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="${path}" fill="${escapeAttribute(fill)}" stroke="${escapeAttribute(selectedStroke)}" stroke-width="1.2"></path></marker></defs>`,
+      };
+    };
+    const startMarker = marker('start'); const endMarker = marker('end');
+    return `<g class="diagram-connector${selected ? ' selected' : ''}" data-connector-id="${escapeAttribute(connector.id)}">${startMarker.definition}${endMarker.definition}<polyline class="diagram-connector-hit" points="${points}" fill="none" stroke="transparent" stroke-width="${hitWidth}" tabindex="0" role="button" aria-label="${escapeAttribute(`${connector.label || connector.id} 연결선 검사`)}"></polyline><polyline class="diagram-connector-line" points="${points}" fill="none" stroke="${escapeAttribute(selectedStroke)}" stroke-width="${selected ? Math.max(width + 2, 2.5) : width}"${dash}${startMarker.attribute}${endMarker.attribute}></polyline>${label}</g>`;
   }).join('');
   // 라벨이 어디에 앉을지 먼저 정한다. 한 링크만 보고는 옆 라벨과 겹치는지 알 수 없다.
   const selectionHas = (type, id) => state.selection.some((item) => item.type === type && item.id === id)
@@ -897,8 +965,18 @@ function renderTopology() {
   }).join('') + diagramConnectors + groupLabels;
   fitGroupTags();
 
-  element('diagram-layer').innerHTML = (topology.diagram?.shapes || []).map((shape) =>
-    `<button type="button" class="diagram-shape${selectionHas('shape', shape.id) ? ' selected' : ''}" data-shape-id="${escapeAttribute(shape.id)}" data-kind="${escapeAttribute(shape.kind)}" style="left:${shape.x - viewport.minX}px;top:${shape.y - viewport.minY}px;width:${shape.width}px;height:${shape.height}px">${escapeText(shape.text || '')}</button>`).join('');
+  element('diagram-layer').innerHTML = (topology.diagram?.shapes || []).map((shape) => {
+    const selected = selectionHas('shape', shape.id);
+    const resizeSelected = state.selection.length === 1 && state.selection[0].type === 'shape' && state.selection[0].id === shape.id;
+    const handles = resizeSelected ? ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
+      .map((direction) => `<span class="diagram-resize-handle ${direction}" data-shape-resize="${direction}" aria-hidden="true"></span>`).join('') : '';
+    const fill = shape.fill && shape.fill !== 'none' ? shape.fill : 'transparent';
+    const stroke = shape.stroke && shape.stroke !== 'none' ? shape.stroke : 'transparent';
+    const background = shape.gradient && fill !== 'transparent' ? `linear-gradient(180deg, ${shape.gradientColor || '#ffffff'}, ${fill})` : fill;
+    const effects = [shape.rounded ? ' rounded' : '', shape.sketch ? ' sketch' : '', shape.glass ? ' glass' : '', shape.shadow ? ' shadow' : '', shape.lineStyle === 'dashed' ? ' dashed' : '', shape.lineStyle === 'dotted' ? ' dotted' : ''].join('');
+    const style = `left:${shape.x - viewport.minX}px;top:${shape.y - viewport.minY}px;width:${shape.width}px;height:${shape.height}px;background:${background};border-color:${stroke};border-width:${shape.strokeWidth ?? 1}px;border-radius:${shape.rounded && shape.kind !== 'ellipse' ? '10px' : ''};opacity:${shape.opacity ?? 1};color:${shape.textColor || 'var(--text)'};font-size:${shape.fontSize || 11}px;font-weight:${shape.fontWeight || 500};text-align:${shape.textAlign || 'center'};align-items:${shape.verticalAlign === 'top' ? 'start' : shape.verticalAlign === 'bottom' ? 'end' : 'center'};justify-items:${shape.textAlign === 'left' ? 'start' : shape.textAlign === 'right' ? 'end' : 'center'};`;
+    return `<button type="button" class="diagram-shape${selected ? ' selected' : ''}${effects}" data-shape-id="${escapeAttribute(shape.id)}" data-kind="${escapeAttribute(shape.kind)}" style="${escapeAttribute(style)}"><span class="diagram-shape-label">${escapeText(shape.text || '')}</span>${handles}</button>`;
+  }).join('');
 
   const pools = backendPoolIndex(current.demands);
   element('node-layer').innerHTML = current.devices.map((device) => {
@@ -932,13 +1010,42 @@ function renderTopology() {
 }
 
 function renderInspector() {
+  const selectedGroupId = state.selection.length === 1 && state.selection[0].type === 'group' ? state.selection[0].id : null;
+  const selectedGroup = selectedGroupId ? topology.diagram?.groups?.find(({ id }) => id === selectedGroupId) : null;
+  const selectedConnectorId = state.selection.length === 1 && state.selection[0].type === 'connector' ? state.selection[0].id : null;
+  const selectedConnector = selectedConnectorId ? topology.diagram?.connectors?.find(({ id }) => id === selectedConnectorId) : null;
+  if (selectedGroup) {
+    setInspectorHeading('DIAGRAM INSPECTOR', '그룹 검사');
+    element('resource-state').textContent = '그룹 편집';
+    element('resource-state').style.color = 'var(--signal-deep)';
+    element('inspector-content').innerHTML = renderGroupEditor(selectedGroup);
+    return;
+  }
+  if (selectedConnector) {
+    setInspectorHeading('DIAGRAM INSPECTOR', '연결선 검사');
+    element('resource-state').textContent = '연결선 편집';
+    element('resource-state').style.color = 'var(--signal-deep)';
+    element('inspector-content').innerHTML = renderConnectorEditor(selectedConnector);
+    return;
+  }
+  const selectedShapeId = state.selection.length === 1 && state.selection[0].type === 'shape' ? state.selection[0].id : null;
+  const selectedShape = selectedShapeId ? topology.diagram?.shapes?.find(({ id }) => id === selectedShapeId) : null;
+  if (selectedShape) {
+    setInspectorHeading('DRAW.IO INSPECTOR', shapeInspectorTitle(selectedShape));
+    element('resource-state').textContent = '도형 편집';
+    element('resource-state').style.color = 'var(--signal-deep)';
+    element('inspector-content').innerHTML = renderShapeEditor(selectedShape);
+    return;
+  }
   const resource = resourceById(state.selectedId) || current.devices[0];
   if (!resource) {
+    setInspectorHeading('AXIS INSPECTOR', '장비 검사');
     element('resource-state').textContent = '빈 설계';
     element('inspector-content').innerHTML = '<div class="empty-inspector"><strong>장비가 없습니다.</strong><span>상단의 장비 추가 또는 장비 JSON 가져오기로 시작하세요.</span></div>';
     return;
   }
   const isDevice = 'kind' in resource;
+  setInspectorHeading('AXIS INSPECTOR', isDevice ? '장비 검사' : '링크 검사');
   const source = isDevice ? resource.source : { label: '링크 정격', condition: '방향별 full-duplex capacity' };
   element('resource-state').textContent = resource.active ? stateLabel(resource.primaryStatus) : '비활성';
   element('resource-state').style.color = `var(--${resource.active ? ({ overloaded: 'danger', warning: 'amber', invalid: 'danger', unknown: 'unknown', healthy: 'cyan' })[resource.primaryStatus] || 'unknown' : 'danger'})`;
@@ -953,6 +1060,125 @@ function renderInspector() {
     ${isDevice ? renderSpecBlock(resource) : ''}
     ${renderSourceNote(source, isDevice ? resource : null)}
     ${isDevice ? renderDeviceEditor(resource) : renderLinkEditor(resource)}`;
+}
+
+function setInspectorHeading(code, title) {
+  element('inspector-code').textContent = code;
+  element('inspector-heading').textContent = title;
+  element('mobile-inspector-open').textContent = `${title} 열기`;
+  element('inspector-close-mobile').setAttribute('aria-label', `${title} 닫기`);
+}
+
+function shapeInspectorTitle(shape) {
+  const label = { rect: '사각형', ellipse: '타원', text: '텍스트', note: '메모' }[shape.kind] || shape.kind;
+  return `${shape.text || shape.id} · ${label}`;
+}
+
+function shapeColorValue(shape, property) {
+  if (shape[property]) return shape[property];
+  if (property === 'fill') return shape.kind === 'text' ? 'none' : '#ffffff';
+  if (property === 'stroke') return shape.kind === 'text' ? 'none' : '#13241f';
+  return '#13241f';
+}
+
+function colorPickerIcon() {
+  return '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"></circle><path d="M10 3a7 7 0 0 1 0 14c1.7-2 1.7-4 0-6s-1.7-4 0-8Z"></path></svg>';
+}
+
+function eyedropperIcon() {
+  return '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M 12 3 L 17 8 L 15 10 L 14 9 L 7 16 L 4 16 L 4 13 L 11 6 L 10 5 Z"></path><path d="M 5 13 L 7 15"></path></svg>';
+}
+
+function renderShapeColorControl(shape, property, label, { allowNone = true } = {}) {
+  const value = shapeColorValue(shape, property);
+  const visible = value === 'none' ? '#ffffff' : value;
+  const options = SHAPE_COLOR_PALETTE.map((color) => `<button type="button" class="shape-color-chip" data-shape-color-value="${escapeAttribute(property)}" data-color="${color}" style="--chip:${color}" aria-label="${escapeAttribute(`${label} ${color}`)}" aria-pressed="${value === color}"></button>`).join('');
+  const transparent = allowNone ? `<button type="button" class="shape-color-chip transparent" data-shape-color-value="${escapeAttribute(property)}" data-color="none" aria-label="${escapeAttribute(`${label} 없음`)}" aria-pressed="${value === 'none'}"></button>` : '';
+  return `<section class="shape-style-section" data-shape-color-control="${escapeAttribute(property)}">
+    <div class="shape-style-heading"><h3>${escapeText(label)}</h3><span>${value === 'none' ? '없음' : '선택됨'}</span></div>
+    <div class="shape-color-toolbar">
+      <button type="button" class="shape-current-color${value === 'none' ? ' transparent' : ''}" data-shape-color-toggle="${escapeAttribute(property)}" aria-expanded="false" aria-controls="shape-color-${escapeAttribute(property)}" style="--current:${visible}" aria-label="${escapeAttribute(`${label} 기본 색상 열기`)}"></button>
+      <button type="button" class="shape-color-auto" data-shape-color-value="${escapeAttribute(property)}" data-color="${property === 'fill' ? '#ffffff' : '#13241f'}">Auto</button>
+      <button type="button" class="shape-eyedropper" data-shape-eyedropper="${escapeAttribute(property)}" aria-label="${escapeAttribute(`${label} 스포이드`)}">${eyedropperIcon()}</button>
+      <label class="shape-native-color" aria-label="${escapeAttribute(`${label} 사용자 색상`)}">${colorPickerIcon()}<input type="color" data-shape-native-color="${escapeAttribute(property)}" value="${escapeAttribute(visible)}"></label>
+      <input type="hidden" name="${escapeAttribute(property)}" value="${escapeAttribute(value)}">
+    </div>
+    <div class="shape-color-palette" id="shape-color-${escapeAttribute(property)}" hidden>${transparent}${options}</div>
+  </section>`;
+}
+
+function renderShapeEditor(shape) {
+  const kinds = [['rect', '사각형'], ['ellipse', '타원'], ['text', '텍스트'], ['note', '메모']];
+  const tab = (id, label) => `<button type="button" role="tab" id="shape-tab-${id}" aria-selected="${shapeInspectorTab === id}" aria-controls="shape-panel-${id}" tabindex="${shapeInspectorTab === id ? 0 : -1}" data-shape-inspector-tab="${id}">${label}</button>`;
+  const panel = (id, content) => `<section id="shape-panel-${id}" class="shape-inspector-panel" role="tabpanel" aria-labelledby="shape-tab-${id}"${shapeInspectorTab === id ? '' : ' hidden'}>${content}</section>`;
+  const selection = state.selection.filter(({ type }) => type === 'device' || type === 'shape');
+  const arrangeActions = `<div class="shape-arrange-actions"><button type="button" data-editor-action="align-left"${selection.length >= 2 ? '' : ' disabled'}>왼쪽 정렬</button><button type="button" data-editor-action="distribute-x"${selection.length >= 3 ? '' : ' disabled'}>가로 분배</button><button type="button" data-editor-action="group"${selection.length >= 2 ? '' : ' disabled'}>그룹</button></div>`;
+  return `<form class="shape-editor" novalidate data-resource-form="shape" data-resource-id="${escapeAttribute(shape.id)}">
+    <div class="resource-identity"><strong>${escapeText(shape.text || shape.id)}</strong><span>도형 · ${escapeText(shape.kind)}</span></div>
+    <div class="shape-inspector-tabs" role="tablist" aria-label="도형 검사 탭">${tab('style', 'Style')}${tab('text', 'Text')}${tab('arrange', 'Arrange')}</div>
+    ${panel('style', `${renderShapeColorControl(shape, 'fill', '채우기')}
+      <label class="shape-option-row"><input type="checkbox" name="gradient" data-shape-effect${shape.gradient ? ' checked' : ''}><span>그라데이션</span><small>채우기 색상</small></label>
+      ${shape.gradient ? renderShapeColorControl(shape, 'gradientColor', '그라데이션 색상', { allowNone: false }) : ''}
+      ${renderShapeColorControl(shape, 'stroke', '둘레')}
+      <div class="shape-style-section"><div class="shape-style-heading"><h3>선</h3></div><div class="shape-line-controls">
+        <label><span>스타일</span><select name="lineStyle" data-shape-style-field><option value="solid"${!shape.lineStyle || shape.lineStyle === 'solid' ? ' selected' : ''}>실선</option><option value="dashed"${shape.lineStyle === 'dashed' ? ' selected' : ''}>파선</option><option value="dotted"${shape.lineStyle === 'dotted' ? ' selected' : ''}>점선</option></select></label>
+        <label><span>굵기</span><select name="strokeWidth" data-shape-style-field><option value="0"${(shape.strokeWidth ?? 1) === 0 ? ' selected' : ''}>없음</option>${[1, 2, 3, 4, 6].map((width) => `<option value="${width}"${(shape.strokeWidth ?? 1) === width ? ' selected' : ''}>${width} pt</option>`).join('')}</select></label>
+      </div></div>
+      <div class="shape-style-section"><div class="shape-style-heading"><h3>불투명도</h3><output data-shape-opacity-output>${Math.round((shape.opacity ?? 1) * 100)}%</output></div><input class="shape-opacity-range" name="opacity" type="range" min="0" max="1" step="0.05" value="${shape.opacity ?? 1}" data-shape-style-field></div>
+      <details class="shape-effects"><summary>효과</summary><div><label><input type="checkbox" name="rounded" data-shape-effect${shape.rounded ? ' checked' : ''}>둥근 모서리</label><label><input type="checkbox" name="sketch" data-shape-effect${shape.sketch ? ' checked' : ''}>스케치</label><label><input type="checkbox" name="glass" data-shape-effect${shape.glass ? ' checked' : ''}>유리 효과</label><label><input type="checkbox" name="shadow" data-shape-effect${shape.shadow ? ' checked' : ''}>그림자</label></div></details>
+      <div class="shape-style-edit"><span>편집</span><button type="button" data-shape-style-copy>스타일 복사</button><button type="button" data-shape-style-paste${shapeStyleClipboard ? '' : ' disabled'}>스타일 붙여넣기</button></div>`)}
+    ${panel('text', `<div class="shape-editor-grid">
+      <label class="shape-editor-wide"><span>텍스트</span><input name="text" value="${escapeAttribute(shape.text || '')}" maxlength="10000"></label>
+      ${renderShapeColorControl(shape, 'textColor', '글자 색상', { allowNone: false })}
+      <label><span>글자 크기</span><input name="fontSize" type="number" min="8" max="72" value="${shape.fontSize || 11}"></label>
+      <label><span>가로 정렬</span><select name="textAlign"><option value="left"${shape.textAlign === 'left' ? ' selected' : ''}>왼쪽</option><option value="center"${!shape.textAlign || shape.textAlign === 'center' ? ' selected' : ''}>가운데</option><option value="right"${shape.textAlign === 'right' ? ' selected' : ''}>오른쪽</option></select></label>
+      <label><span>세로 정렬</span><select name="verticalAlign"><option value="top"${shape.verticalAlign === 'top' ? ' selected' : ''}>위</option><option value="middle"${!shape.verticalAlign || shape.verticalAlign === 'middle' ? ' selected' : ''}>가운데</option><option value="bottom"${shape.verticalAlign === 'bottom' ? ' selected' : ''}>아래</option></select></label>
+      <label><span>글자 굵기</span><select name="fontWeight"><option value="normal"${shape.fontWeight === 'normal' ? ' selected' : ''}>보통</option><option value="bold"${!shape.fontWeight || shape.fontWeight === 'bold' ? ' selected' : ''}>굵게</option></select></label>
+    </div>`)}
+    ${panel('arrange', `<h3 class="shape-inspector-section">Properties</h3><div class="shape-editor-grid">
+      <label><span>종류</span><select name="kind">${kinds.map(([value, label]) => `<option value="${value}"${shape.kind === value ? ' selected' : ''}>${label}</option>`).join('')}</select></label>
+      <label class="shape-lock"><input id="shape-lock-ratio" type="checkbox"><span>비율 고정</span></label>
+      <label><span>X</span><input name="x" type="number" step="1" min="-${SHAPE_COORD_LIMIT}" max="${SHAPE_COORD_LIMIT}" value="${shape.x}"></label>
+      <label><span>Y</span><input name="y" type="number" step="1" min="-${SHAPE_COORD_LIMIT}" max="${SHAPE_COORD_LIMIT}" value="${shape.y}"></label>
+      <label><span>가로</span><input name="width" type="number" step="1" min="1" max="${SHAPE_COORD_LIMIT}" value="${shape.width}"></label>
+      <label><span>세로</span><input name="height" type="number" step="1" min="1" max="${SHAPE_COORD_LIMIT}" value="${shape.height}"></label>
+    </div><h3 class="shape-inspector-section">정렬</h3>${arrangeActions}<p class="shape-editor-help">모서리 손잡이를 끌어 크기를 조절할 수 있습니다.</p>`)}
+    <p class="shape-editor-error editor-error" role="alert"></p>
+    <div class="form-actions"${shapeInspectorTab === 'style' ? ' hidden' : ''}><button type="submit">도형 저장</button></div>
+  </form>`;
+}
+
+function renderGroupEditor(group) {
+  const members = group.memberIds.map((id) => {
+    const device = topology.devices.find((item) => item.id === id);
+    const shape = topology.diagram?.shapes?.find((item) => item.id === id);
+    if (device) return `<button type="button" class="group-member" data-group-member-type="device" data-group-member-id="${escapeAttribute(id)}">${escapeText(device.name || id)}<small>장비</small></button>`;
+    if (shape) return `<button type="button" class="group-member" data-group-member-type="shape" data-group-member-id="${escapeAttribute(id)}">${escapeText(shape.text || id)}<small>${escapeText(shape.kind)}</small></button>`;
+    return '';
+  }).join('');
+  return `<form class="shape-editor" data-resource-form="group" data-resource-id="${escapeAttribute(group.id)}">
+    <div class="resource-identity"><strong>${escapeText(group.name)}</strong><span>그룹 · ${group.memberIds.length}개 요소</span></div>
+    <div class="shape-editor-grid"><label class="shape-editor-wide"><span>그룹 이름</span><input name="name" value="${escapeAttribute(group.name)}" maxlength="80"></label></div>
+    <div class="group-member-list"><strong>멤버</strong>${members}</div>
+    <p class="shape-editor-help">멤버를 선택하면 종류와 크기를 개별 편집할 수 있습니다.</p>
+    <p class="shape-editor-error editor-error" role="alert"></p><div class="form-actions"><button type="submit">그룹 저장</button></div>
+  </form>`;
+}
+
+function renderConnectorEditor(connector) {
+  const arrowOptions = [['none', '없음'], ['classic', '삼각형'], ['open', '열림'], ['block', '블록']];
+  return `<form class="shape-editor" data-resource-form="connector" data-resource-id="${escapeAttribute(connector.id)}">
+    <div class="resource-identity"><strong>${escapeText(connector.label || connector.id)}</strong><span>연결선 · ${escapeText(connector.kind || 'annotation')}</span></div>
+    <div class="shape-editor-grid">
+      <label class="shape-editor-wide"><span>라벨</span><input name="label" value="${escapeAttribute(connector.label || '')}" maxlength="1000"></label>
+      <label><span>종류</span><select name="kind"><option value="annotation"${connector.kind !== 'dependency' ? ' selected' : ''}>주석</option><option value="dependency"${connector.kind === 'dependency' ? ' selected' : ''}>의존성</option></select></label>
+      <label><span>선 색상</span><input name="stroke" value="${escapeAttribute(connector.stroke || '#526e64')}"></label>
+      <label><span>선 굵기</span><input name="strokeWidth" type="number" min="0.5" max="20" step="0.5" value="${connector.strokeWidth || 1.5}"></label>
+      <label><span>시작 화살표</span><select name="startArrow">${arrowOptions.map(([value, label]) => `<option value="${value}"${(connector.startArrow || 'none') === value ? ' selected' : ''}>${label}</option>`).join('')}</select></label>
+      <label><span>끝 화살표</span><select name="endArrow">${arrowOptions.map(([value, label]) => `<option value="${value}"${(connector.endArrow || 'none') === value ? ' selected' : ''}>${label}</option>`).join('')}</select></label>
+    </div><label class="shape-lock"><input name="dashed" type="checkbox"${connector.dashed === false ? '' : ' checked'}><span>점선</span></label>
+    <p class="shape-editor-error editor-error" role="alert"></p><div class="form-actions"><button type="submit">연결선 저장</button></div>
+  </form>`;
 }
 
 // 축이 전부 0인 장비를 앞에 두고 "왜 0인가"를 스스로 알아내게 두지 않는다. 한계값이 비어서
@@ -1347,6 +1573,7 @@ function renderEditorMode() {
   const labels = { select: 'SELECT · DRAG TO BOX · RIGHT-DRAG TO PAN · SHIFT+CLICK TO ADD', connect: state.connectSource ? `CONNECT · ${state.connectSource.toUpperCase()} → SELECT TARGET` : 'CONNECT · SELECT SOURCE' };
   element('editor-mode').lastChild.textContent = labels[state.editorMode] || state.editorMode.toUpperCase();
   document.querySelector('[data-editor-action="connect"]')?.setAttribute('aria-pressed', String(state.editorMode === 'connect'));
+  for (const kind of Object.keys(SHAPE_DRAW_DEFAULTS)) document.querySelector(`[data-editor-action="shape-${kind}"]`)?.setAttribute('aria-pressed', 'false');
   const editableSelection = state.selection.filter(({ type }) => type === 'device' || type === 'shape');
   const count = editableSelection.length;
   const selectedShape = count === 1 && state.selection[0].type === 'shape';
@@ -1957,13 +2184,7 @@ function handleEditorAction(action) {
   if (action === 'export-png') exportPng().catch((error) => showToast(error.message));
   if (action === 'new') openTemplatePicker();
   if (action === 'new-blank') applyTemplate('blank');
-  if (action.startsWith('shape-')) {
-    const kind = action.slice(6);
-    const label = kind === 'text' ? '설명' : kind === 'ellipse' ? '영역' : '그룹';
-    topology = addShape(topology, kind, { text: label, x: viewport.minX + 80, y: viewport.minY + 70, width: kind === 'text' ? 160 : 180, height: kind === 'text' ? 44 : 90 });
-    const shape = topology.diagram.shapes.at(-1); state.selection = [{ type: 'shape', id: shape.id }];
-    commitTopology(`${label} 도형을 추가했습니다.`);
-  }
+  if (action.startsWith('shape-')) createShapeAtVisibleCanvasCenter(action.slice(6));
   if (action === 'group' && state.selection.length > 1) {
     topology = groupSelection(topology, state.selection, '설계 그룹');
     const group = topology.diagram.groups.at(-1);
@@ -2142,8 +2363,7 @@ function runContextAction(action) {
 }
 
 function selectElement(type, id, additive = false) {
-  const group = type === 'shape' ? topology.diagram?.groups?.find(({ memberIds }) => memberIds.includes(id)) : null;
-  const entry = group && !additive ? { type: 'group', id: group.id } : { type, id };
+  const entry = { type, id };
   if (additive) {
     const exists = state.selection.some((item) => item.type === type && item.id === id);
     state.selection = exists ? state.selection.filter((item) => item.type !== type || item.id !== id) : [...state.selection, entry];
@@ -2300,7 +2520,11 @@ element('diagram-layer').addEventListener('click', (event) => {
   const shape = event.target.closest('[data-shape-id]');
   if (!shape) return;
   selectElement('shape', shape.dataset.shapeId, event.shiftKey || event.metaKey || event.ctrlKey);
-  renderTopology();
+  renderTopology(); renderInspector();
+});
+element('link-layer').addEventListener('click', (event) => {
+  const connector = event.target.closest('[data-connector-id]');
+  if (connector) { selectElement('connector', connector.dataset.connectorId, event.shiftKey || event.metaKey || event.ctrlKey); renderTopology(); renderInspector(); }
 });
 element('diagram-layer').addEventListener('dblclick', (event) => {
   const target = event.target.closest('[data-shape-id]'); if (!target) return;
@@ -2310,23 +2534,64 @@ element('diagram-layer').addEventListener('dblclick', (event) => {
 });
 element('diagram-layer').addEventListener('pointerdown', (event) => {
   const target = event.target.closest('[data-shape-id]'); if (!target || event.button !== 0) return;
+  const resize = event.target.closest('[data-shape-resize]');
+  if (resize) {
+    const shape = topology.diagram?.shapes?.find(({ id }) => id === target.dataset.shapeId);
+    if (!shape) return;
+    diagramDrag = { mode: 'resize', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, initial: structuredClone(topology), shapeId: shape.id, direction: resize.dataset.shapeResize, target, lockRatio: Boolean(element('shape-lock-ratio')?.checked) };
+    target.setPointerCapture(event.pointerId); event.preventDefault(); event.stopPropagation();
+    return;
+  }
   if (!event.shiftKey && !event.metaKey && !event.ctrlKey && !state.selection.some((item) => item.type === 'shape' && item.id === target.dataset.shapeId)) selectElement('shape', target.dataset.shapeId);
   diagramDrag = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, initial: structuredClone(topology), selection: structuredClone(state.selection), target };
   target.setPointerCapture(event.pointerId); event.preventDefault();
 });
 element('diagram-layer').addEventListener('pointermove', (event) => {
   if (!diagramDrag || diagramDrag.pointerId !== event.pointerId) return;
+  if (diagramDrag.mode === 'resize') {
+    const original = diagramDrag.initial.diagram.shapes.find(({ id }) => id === diagramDrag.shapeId);
+    if (!original) return;
+    const dx = (event.clientX - diagramDrag.startX) / state.zoom; const dy = (event.clientY - diagramDrag.startY) / state.zoom;
+    const direction = diagramDrag.direction;
+    let x = original.x; let y = original.y; let width = original.width; let height = original.height;
+    if (direction.includes('e')) width += dx;
+    if (direction.includes('s')) height += dy;
+    if (direction.includes('w')) { x += dx; width -= dx; }
+    if (direction.includes('n')) { y += dy; height -= dy; }
+    const ratio = original.width / original.height;
+    if (diagramDrag.lockRatio) {
+      const horizontal = Math.abs(dx) >= Math.abs(dy);
+      if (horizontal) height = width / ratio; else width = height * ratio;
+      if (direction.includes('n')) y = original.y + original.height - height;
+      if (direction.includes('w')) x = original.x + original.width - width;
+    }
+    const min = SHAPE_MIN_SIZE;
+    width = Math.min(SHAPE_COORD_LIMIT, Math.max(min, width)); height = Math.min(SHAPE_COORD_LIMIT, Math.max(min, height));
+    x = Math.max(-SHAPE_COORD_LIMIT, Math.min(SHAPE_COORD_LIMIT - width, x));
+    y = Math.max(-SHAPE_COORD_LIMIT, Math.min(SHAPE_COORD_LIMIT - height, y));
+    diagramDrag.preview = { x, y, width, height };
+    diagramDrag.target.style.left = `${x - viewport.minX}px`; diagramDrag.target.style.top = `${y - viewport.minY}px`;
+    diagramDrag.target.style.width = `${width}px`; diagramDrag.target.style.height = `${height}px`;
+    return;
+  }
   const dx = (event.clientX - diagramDrag.startX) / state.zoom; const dy = (event.clientY - diagramDrag.startY) / state.zoom;
   diagramDrag.target.style.transform = `translate(${dx}px, ${dy}px)`;
 });
 element('diagram-layer').addEventListener('pointerup', (event) => {
   if (!diagramDrag || diagramDrag.pointerId !== event.pointerId) return;
   const drag = diagramDrag; diagramDrag = null;
+  if (drag.mode === 'resize') {
+    if (!drag.preview) { renderTopology(); return; }
+    try { topology = updateShape(drag.initial, drag.shapeId, drag.preview); commitTopology('선택한 도형의 크기를 저장했습니다.'); }
+    catch (error) { showToast(error.message); renderTopology(); }
+    return;
+  }
   const dx = (event.clientX - drag.startX) / state.zoom; const dy = (event.clientY - drag.startY) / state.zoom;
   if (Math.hypot(dx, dy) < 3) { drag.target.style.transform = ''; return; }
   topology = moveSelection(drag.initial, drag.selection, dx, dy, { grid: 15 });
   commitTopology('선택한 도형을 이동했습니다.');
 });
+element('diagram-layer').addEventListener('pointercancel', () => { if (diagramDrag) { diagramDrag = null; renderTopology(); } });
 // 선의 굴곡을 손으로 옮긴다. 가운데 손잡이를 끌면 마디가 새로 생기고, 네모 손잡이를 끌면
 // 이미 찍힌 마디가 움직인다. 두 번 누르면 그 마디를 지워 자동 경로로 돌려준다.
 element('link-layer').addEventListener('pointerdown', (event) => {
@@ -2744,6 +3009,45 @@ element('inspector-content').addEventListener('click', (event) => {
 element('inspector-content').addEventListener('submit', (event) => {
   event.preventDefault(); const form = event.target; const data = new FormData(form);
   try {
+    if (form.dataset.resourceForm === 'shape') {
+      const id = form.dataset.resourceId;
+      const shape = topology.diagram?.shapes?.find(({ id: shapeId }) => shapeId === id);
+      if (!shape) throw new Error('도형을 찾을 수 없습니다.');
+      const value = (name, fallback = '') => data.has(name) ? data.get(name) : fallback;
+      const values = {
+        kind: value('kind', shape.kind), text: value('text', shape.text),
+        x: Number(value('x', shape.x)), y: Number(value('y', shape.y)),
+        width: Number(value('width', shape.width)), height: Number(value('height', shape.height)),
+        fill: value('fill', shape.fill) || undefined, stroke: value('stroke', shape.stroke) || undefined,
+        gradientColor: value('gradientColor', shape.gradientColor) || shape.gradientColor, lineStyle: value('lineStyle', shape.lineStyle || 'solid'),
+        strokeWidth: Number(value('strokeWidth', shape.strokeWidth ?? 1)), opacity: Number(value('opacity', shape.opacity ?? 1)),
+        textColor: value('textColor', shape.textColor) || undefined, fontSize: Number(value('fontSize', shape.fontSize ?? 11)),
+        textAlign: value('textAlign', shape.textAlign || 'center'), verticalAlign: value('verticalAlign', shape.verticalAlign || 'middle'), fontWeight: value('fontWeight', shape.fontWeight || 'bold'),
+        gradient: data.has('gradient') ? data.has('gradient') : shape.gradient,
+        rounded: data.has('rounded') ? data.has('rounded') : shape.rounded,
+        sketch: data.has('sketch') ? data.has('sketch') : shape.sketch,
+        glass: data.has('glass') ? data.has('glass') : shape.glass,
+        shadow: data.has('shadow') ? data.has('shadow') : shape.shadow,
+      };
+      if (![values.x, values.y, values.width, values.height, values.strokeWidth, values.opacity, values.fontSize].every(Number.isFinite)) throw new Error('도형 위치와 스타일 값은 숫자여야 합니다.');
+      topology = updateShape(topology, id, values);
+      commitTopology('도형 설정을 저장했습니다.');
+      return;
+    }
+    if (form.dataset.resourceForm === 'group') {
+      topology = updateGroup(topology, form.dataset.resourceId, { name: data.get('name') });
+      commitTopology('그룹 설정을 저장했습니다.');
+      return;
+    }
+    if (form.dataset.resourceForm === 'connector') {
+      topology = updateConnector(topology, form.dataset.resourceId, {
+        label: data.get('label'), kind: data.get('kind'), stroke: data.get('stroke'),
+        strokeWidth: Number(data.get('strokeWidth')), dashed: data.has('dashed'),
+        startArrow: data.get('startArrow'), endArrow: data.get('endArrow'),
+      });
+      commitTopology('연결선 설정을 저장했습니다.');
+      return;
+    }
     if (form.dataset.resourceForm === 'device') {
       const id = form.dataset.resourceId;
       const limits = Object.fromEntries([...data.entries()].filter(([key]) => axisCatalog[key]).map(([axis, raw]) => [axis, raw === '' ? '' : Number(raw) * Number(data.get(`${axis}__unit`) || 1)]));
@@ -2764,7 +3068,98 @@ element('inspector-content').addEventListener('submit', (event) => {
     commitTopology('한계값을 적용했습니다.');
   } catch (error) { formError(form, error.message); }
 });
+function updateSelectedShape(form, patch, message) {
+  try {
+    topology = updateShape(topology, form.dataset.resourceId, patch);
+    commitTopology(message);
+  } catch (error) { formError(form, error.message); }
+}
+
+element('inspector-content').addEventListener('input', (event) => {
+  if (!event.target.matches('input[name="opacity"]')) return;
+  const output = event.target.closest('.shape-style-section')?.querySelector('[data-shape-opacity-output]');
+  if (output) output.textContent = `${Math.round(Number(event.target.value) * 100)}%`;
+});
+element('inspector-content').addEventListener('change', (event) => {
+  const nativeColor = event.target.closest('[data-shape-native-color]');
+  if (nativeColor) {
+    const form = nativeColor.closest('[data-resource-form="shape"]');
+    updateSelectedShape(form, { [nativeColor.dataset.shapeNativeColor]: nativeColor.value }, '도형 색상을 변경했습니다.');
+    return;
+  }
+  const styleField = event.target.closest('[data-shape-style-field]');
+  if (styleField) {
+    const form = styleField.closest('[data-resource-form="shape"]');
+    updateSelectedShape(form, { [styleField.name]: styleField.name === 'strokeWidth' || styleField.name === 'opacity' ? Number(styleField.value) : styleField.value }, '도형 스타일을 변경했습니다.');
+    return;
+  }
+  const effect = event.target.closest('[data-shape-effect]');
+  if (effect) {
+    const form = effect.closest('[data-resource-form="shape"]');
+    updateSelectedShape(form, { [effect.name]: effect.checked }, '도형 효과를 변경했습니다.');
+    return;
+  }
+  const select = event.target.closest('[data-resource-form="shape"] select[name="kind"]');
+  const form = select?.closest('[data-resource-form="shape"]');
+  if (!form) return;
+  try {
+    topology = updateShape(topology, form.dataset.resourceId, { kind: select.value });
+    commitTopology('도형 종류를 변경했습니다.');
+  } catch (error) { formError(form, error.message); }
+});
 element('inspector-content').addEventListener('click', (event) => {
+  const colorToggle = event.target.closest('[data-shape-color-toggle]');
+  if (colorToggle) {
+    const palette = element(colorToggle.getAttribute('aria-controls'));
+    const open = palette.hidden;
+    palette.hidden = !open;
+    colorToggle.setAttribute('aria-expanded', String(open));
+    return;
+  }
+  const color = event.target.closest('[data-shape-color-value]');
+  if (color) {
+    const form = color.closest('[data-resource-form="shape"]');
+    updateSelectedShape(form, { [color.dataset.shapeColorValue]: color.dataset.color }, '도형 색상을 변경했습니다.');
+    return;
+  }
+  const eyedropper = event.target.closest('[data-shape-eyedropper]');
+  if (eyedropper) {
+    const native = eyedropper.parentElement.querySelector('[data-shape-native-color]');
+    if (!window.EyeDropper) { native.click(); return; }
+    new window.EyeDropper().open().then(({ sRGBHex }) => {
+      const form = eyedropper.closest('[data-resource-form="shape"]');
+      updateSelectedShape(form, { [eyedropper.dataset.shapeEyedropper]: sRGBHex }, '스포이드 색상을 적용했습니다.');
+    }).catch(() => {});
+    return;
+  }
+  const copyStyle = event.target.closest('[data-shape-style-copy]');
+  if (copyStyle) {
+    const id = copyStyle.closest('[data-resource-form="shape"]').dataset.resourceId;
+    const shape = topology.diagram?.shapes?.find((item) => item.id === id);
+    if (!shape) return;
+    shapeStyleClipboard = Object.fromEntries(['fill', 'stroke', 'strokeWidth', 'opacity', 'textColor', 'fontSize', 'fontWeight', 'textAlign', 'verticalAlign', 'gradient', 'rounded', 'sketch', 'glass', 'shadow']
+      .filter((key) => shape[key] != null).map((key) => [key, shape[key]]));
+    renderInspector();
+    showToast('도형 스타일을 복사했습니다.');
+    return;
+  }
+  const pasteStyle = event.target.closest('[data-shape-style-paste]');
+  if (pasteStyle && shapeStyleClipboard) {
+    updateSelectedShape(pasteStyle.closest('[data-resource-form="shape"]'), shapeStyleClipboard, '복사한 도형 스타일을 적용했습니다.');
+    return;
+  }
+  const tab = event.target.closest('[data-shape-inspector-tab]');
+  if (tab) {
+    shapeInspectorTab = tab.dataset.shapeInspectorTab;
+    renderInspector();
+    return;
+  }
+  const member = event.target.closest('[data-group-member-id]');
+  if (member) {
+    selectElement(member.dataset.groupMemberType, member.dataset.groupMemberId);
+    renderTopology(); renderInspector();
+    return;
+  }
   const button = event.target.closest('[data-delete-resource]'); if (!button) return;
   const resource = resourceById(state.selectedId);
   const dependentLinks = button.dataset.deleteResource === 'device' ? topology.links.filter((link) => link.source === state.selectedId || link.target === state.selectedId).length : 0;

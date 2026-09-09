@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { addConnector, addShape, updateShape, removeDiagramElements, moveSelection, alignSelection, distributeSelection, copySelection, pasteSelection, groupSelection, ungroupSelection, exportDiagramSvg, importDrawio } from '../public/diagram.js';
+import { addConnector, addShape, updateConnector, updateGroup, updateShape, removeDiagramElements, moveSelection, alignSelection, distributeSelection, copySelection, pasteSelection, groupSelection, ungroupSelection, exportDiagramSvg, importDrawio } from '../public/diagram.js';
 import { calculateScenario, sweepSingleFaults } from '../public/engine.js';
 import { nodeAxes } from '../public/node-view.js';
 import { buildTemplate } from '../public/templates.js';
@@ -19,6 +19,45 @@ test('diagram editing remains separate from infrastructure and validates coordin
   assert.throws(() => updateShape(edited, id, { width: 0 }));
   assert.throws(() => addShape(original, 'rect', { x: Infinity }));
   assert.throws(() => addShape(original, 'rect', { id: 'a' }));
+});
+
+test('shape kind and dimensions can be edited within coordinate bounds', () => {
+  const added = addShape(topology(), 'rect', { id: 'shape-1', x: 40, y: 50, width: 120, height: 80 });
+  const edited = updateShape(added, 'shape-1', { kind: 'ellipse', x: -80, y: 70, width: 240, height: 120 });
+  assert.deepEqual(edited.diagram.shapes[0], {
+    id: 'shape-1', kind: 'ellipse', x: -80, y: 70, width: 240, height: 120, text: '',
+  });
+  assert.throws(() => updateShape(edited, 'shape-1', { width: 0 }), /양수/);
+  assert.throws(() => updateShape(edited, 'shape-1', { height: -1 }), /양수/);
+  assert.throws(() => updateShape(edited, 'shape-1', { width: Infinity }), /유한한/);
+  assert.throws(() => updateShape(edited, 'shape-1', { x: 1e6 + 1 }), /유한한/);
+});
+
+test('shape styles, groups and diagram connectors remain editable', () => {
+  let next = addShape(topology(), 'rect', { id: 'shape-1', fill: '#ABCDEF', gradientColor: '#b8e737', stroke: '#123456', lineStyle: 'dashed', strokeWidth: 2, opacity: 0.75, textColor: '#654321', fontSize: 18, textAlign: 'left', verticalAlign: 'top', fontWeight: 'bold', gradient: true, rounded: true, sketch: true, glass: true, shadow: true });
+  next = updateShape(next, 'shape-1', { kind: 'ellipse', x: 41, y: 52, width: 220, height: 110 });
+  assert.deepEqual(next.diagram.shapes[0], { id: 'shape-1', kind: 'ellipse', text: '', x: 41, y: 52, width: 220, height: 110, fill: '#abcdef', gradientColor: '#b8e737', stroke: '#123456', lineStyle: 'dashed', strokeWidth: 2, opacity: 0.75, textColor: '#654321', fontSize: 18, textAlign: 'left', verticalAlign: 'top', fontWeight: 'bold', gradient: true, rounded: true, sketch: true, glass: true, shadow: true });
+  next = groupSelection(next, [{ type: 'device', id: 'a' }, { type: 'shape', id: 'shape-1' }], '영역');
+  const groupId = next.diagram.groups[0].id;
+  next = updateGroup(next, groupId, { name: '변경된 영역' });
+  assert.equal(next.diagram.groups[0].name, '변경된 영역');
+  next = addConnector(next, { id: 'connector-1', source: 'a', target: 'shape-1', stroke: '#FF0000', strokeWidth: 3, dashed: false, startArrow: 'open', endArrow: 'classic' });
+  next = updateConnector(next, 'connector-1', { kind: 'dependency', label: '의존', dashed: true, endArrow: 'block' });
+  assert.deepEqual(next.diagram.connectors[0], { id: 'connector-1', source: 'a', target: 'shape-1', kind: 'dependency', label: '의존', waypoints: [], stroke: '#ff0000', strokeWidth: 3, dashed: true, startArrow: 'open', endArrow: 'block' });
+  assert.throws(() => updateGroup(next, groupId, { name: '' }), /1에서 80자/);
+});
+
+test('SVG export preserves custom diagram appearance', () => {
+  let next = addShape(topology(), 'ellipse', { id: 'shape-1', text: '주요 영역', fill: '#abcdef', stroke: '#123456', strokeWidth: 3, opacity: 0.6, textColor: '#654321', fontSize: 20, fontWeight: 'bold', gradient: true, sketch: true, glass: true, shadow: true });
+  next = addConnector(next, { id: 'connector-1', source: 'a', target: 'shape-1', label: '의존', stroke: '#ff0000', strokeWidth: 4, dashed: false, endArrow: 'block' });
+  const svg = exportDiagramSvg(next);
+  assert.match(svg, /<ellipse[^>]+fill="url[(]#shape-gradient-shape-1[)]"[^>]+stroke="#123456"/);
+  assert.match(svg, /font-size="20"[^>]+font-weight="bold"/);
+  assert.match(svg, /linearGradient id="shape-gradient-shape-1"/);
+  assert.match(svg, /stroke-dasharray="5 3"/);
+  assert.match(svg, /feDropShadow/);
+  assert.match(svg, /stroke="#ff0000" stroke-width="4"/);
+  assert.match(svg, /marker-end="url\(#diagram-marker-connector-1-end\)"/);
 });
 
 test('annotation connectors stay outside infrastructure routing', () => {

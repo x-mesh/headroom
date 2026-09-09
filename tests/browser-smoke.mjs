@@ -96,13 +96,41 @@ async function verifyCanvasEditing() {
   await page.locator('[data-editor-action="undo"]').click();
   await page.waitForFunction((before) => document.querySelectorAll('.link-group').length === before, nodeCount);
 
-  // 자유 도형도 계산 그래프와 분리된 채 같은 편집 이력에 들어간다.
+  // 팔레트 클릭은 즉시 현재 보이는 캔버스 중앙에 도형 하나를 만들고 선택한다.
   await page.locator('[data-editor-action="shape-rect"]').click();
   assert.equal(await page.locator('.diagram-shape').count(), 1);
+  assert.equal(await page.locator('.diagram-shape.selected').count(), 1);
+  assert.equal(await page.locator('#inspector-code').textContent(), 'DRAW.IO INSPECTOR');
+  assert.equal(await page.locator('[data-shape-inspector-tab="style"]').getAttribute('aria-selected'), 'true');
+  await page.locator('[data-shape-inspector-tab="style"]').click();
+  assert.equal(await page.locator('[data-shape-eyedropper="fill"]').count(), 1, 'fill provides an eyedropper control');
+  assert.equal(await page.locator('[data-shape-native-color="fill"]').count(), 1, 'fill provides the native color picker');
+  await page.locator('[data-shape-color-toggle="fill"]').click();
+  assert.ok(await page.locator('[data-shape-color-value="fill"]').count() >= 18, 'fill provides a default color palette');
+  await page.locator('[data-shape-color-value="fill"][data-color="#fff2cc"]').click();
+  assert.match(await page.locator('.diagram-shape').first().getAttribute('style'), /background:#fff2cc/);
+  await page.locator('[data-shape-color-toggle="stroke"]').click();
+  await page.locator('[data-shape-color-value="stroke"][data-color="#087d70"]').click();
+  assert.match(await page.locator('.diagram-shape').first().getAttribute('style'), /border-color:#087d70/);
+  await page.locator('[data-shape-effect][name="gradient"]').check();
+  assert.match(await page.locator('.diagram-shape').first().getAttribute('style'), /linear-gradient/);
+  await page.locator('.shape-effects > summary').click();
+  await page.locator('[data-shape-effect][name="shadow"]').check();
+  assert.match(await page.locator('.diagram-shape').first().getAttribute('class'), /shadow/);
+  await page.locator('[data-shape-inspector-tab="text"]').click();
+  await page.locator('[data-resource-form="shape"] input[name="text"]').fill('검사 도형');
+  await page.locator('[data-resource-form="shape"] button[type="submit"]').click();
+  assert.equal(await page.locator('.diagram-shape').first().textContent(), '검사 도형');
+  await page.locator('[data-shape-inspector-tab="arrange"]').click();
+  await page.locator('[data-resource-form="shape"] select[name="kind"]').selectOption('ellipse');
+  assert.equal(await page.locator('.diagram-shape').first().getAttribute('data-kind'), 'ellipse');
+  await page.locator('[data-resource-form="shape"] input[name="x"]').fill('45');
+  await page.locator('[data-resource-form="shape"] button[type="submit"]').click();
+  assert.match(await page.locator('.diagram-shape').first().getAttribute('style'), /left:45px/);
   await page.locator('[data-editor-action="undo"]').click();
-  assert.equal(await page.locator('.diagram-shape').count(), 0);
+  assert.doesNotMatch(await page.locator('.diagram-shape').first().getAttribute('style'), /left:45px/);
   await page.locator('[data-editor-action="redo"]').click();
-  assert.equal(await page.locator('.diagram-shape').count(), 1);
+  assert.match(await page.locator('.diagram-shape').first().getAttribute('style'), /left:45px/);
   const svgDownload = page.waitForEvent('download');
   await page.locator('#export-menu-button').click();
   await page.locator('[data-editor-action="export-svg"]').click();
@@ -113,6 +141,7 @@ async function verifyCanvasEditing() {
   assert.match((await pngDownload).suggestedFilename(), /\.png$/);
 
   await page.locator('[data-editor-action="shape-text"]').click();
+  assert.equal(await page.locator('.diagram-shape').count(), 2);
   await page.locator('.diagram-shape').first().click({ modifiers: ['Shift'] });
   await page.locator('[data-editor-action="annotation-connect"]').click();
   assert.equal(await page.locator('.diagram-connector').count(), 1, 'annotation connectors remain visually connected but outside the traffic graph');

@@ -12,10 +12,36 @@ const empty = () => ({ shapes: [], connectors: [], groups: [] });
 const draft = (topology) => { const next = clone(topology); next.diagram = { ...empty(), ...next.diagram }; return next; };
 const allIds = (t) => new Set([...(t.devices || []), ...(t.links || []), ...(t.diagram?.shapes || []), ...(t.diagram?.connectors || []), ...(t.diagram?.groups || [])].map((item) => item.id));
 function fresh(ids, prefix) { let n = 1; while (ids.has(`${prefix}-${n}`)) n++; const id = `${prefix}-${n}`; ids.add(id); return id; }
+const COLOR_PATTERN = /^(?:none|#[0-9a-f]{3}(?:[0-9a-f]{3})?)$/i;
+const ARROW_TYPES = new Set(['none', 'classic', 'open', 'block']);
+function color(value, label) {
+  if (value == null) return value;
+  if (typeof value !== 'string' || !COLOR_PATTERN.test(value)) throw new Error(`${label}은 hex 색상 또는 none이어야 합니다.`);
+  return value.toLowerCase();
+}
+function finiteRange(value, label, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < min || number > max) throw new Error(`${label}은 ${min}에서 ${max} 사이여야 합니다.`);
+  return number;
+}
 function shape(input) {
   if (!['rect', 'ellipse', 'text', 'note'].includes(input.kind)) throw new Error('지원하지 않는 도형입니다.');
   const result = { ...input, text: String(input.text ?? '').slice(0, 10000), x: coordinate(input.x ?? 100), y: coordinate(input.y ?? 100), width: coordinate(input.width ?? 160), height: coordinate(input.height ?? 80) };
   if (result.width <= 0 || result.height <= 0) throw new Error('도형 크기는 양수여야 합니다.');
+  if (result.fill != null) result.fill = color(result.fill, '채우기');
+  if (result.gradientColor != null) result.gradientColor = color(result.gradientColor, '그라데이션');
+  if (result.stroke != null) result.stroke = color(result.stroke, '선');
+  if (result.textColor != null) result.textColor = color(result.textColor, '글자 색상');
+  if (result.strokeWidth != null) result.strokeWidth = finiteRange(result.strokeWidth, '선 굵기', 0, 20);
+  if (result.opacity != null) result.opacity = finiteRange(result.opacity, '투명도', 0, 1);
+  if (result.fontSize != null) result.fontSize = finiteRange(result.fontSize, '글자 크기', 8, 72);
+  for (const effect of ['gradient', 'rounded', 'sketch', 'glass', 'shadow']) {
+    if (result[effect] != null) result[effect] = Boolean(result[effect]);
+  }
+  if (result.textAlign != null && !['left', 'center', 'right'].includes(result.textAlign)) throw new Error('가로 정렬이 잘못되었습니다.');
+  if (result.verticalAlign != null && !['top', 'middle', 'bottom'].includes(result.verticalAlign)) throw new Error('세로 정렬이 잘못되었습니다.');
+  if (result.fontWeight != null && !['normal', 'bold'].includes(result.fontWeight)) throw new Error('글자 굵기가 잘못되었습니다.');
+  if (result.lineStyle != null && !['solid', 'dashed', 'dotted'].includes(result.lineStyle)) throw new Error('선 스타일이 잘못되었습니다.');
   return result;
 }
 export function addShape(topology, kind, props = {}) {
@@ -31,13 +57,40 @@ export function addConnector(topology, input) {
   if (!['annotation', 'dependency'].includes(kind)) throw new Error('지원하지 않는 연결선입니다.');
   if (input.id && (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(input.id) || ids.has(input.id))) throw new Error('연결선 ID가 잘못되었거나 중복됩니다.');
   const id = input.id || fresh(ids, 'connector');
-  next.diagram.connectors.push({ id, source: input.source, target: input.target, kind, label: String(input.label || '').slice(0, 1000), waypoints: (input.waypoints || []).map(({ x, y }) => ({ x: coordinate(x), y: coordinate(y) })) });
+  const connector = { id, source: input.source, target: input.target, kind, label: String(input.label || '').slice(0, 1000), waypoints: (input.waypoints || []).map(({ x, y }) => ({ x: coordinate(x), y: coordinate(y) })) };
+  if (input.stroke != null) connector.stroke = color(input.stroke, '연결선');
+  if (input.strokeWidth != null) connector.strokeWidth = finiteRange(input.strokeWidth, '연결선 굵기', 0.5, 20);
+  if (input.dashed != null) connector.dashed = Boolean(input.dashed);
+  if (input.startArrow != null) { if (!ARROW_TYPES.has(input.startArrow)) throw new Error('시작 화살표가 잘못되었습니다.'); connector.startArrow = input.startArrow; }
+  if (input.endArrow != null) { if (!ARROW_TYPES.has(input.endArrow)) throw new Error('끝 화살표가 잘못되었습니다.'); connector.endArrow = input.endArrow; }
+  next.diagram.connectors.push(connector);
   return next;
+}
+export function updateConnector(topology, id, patch) {
+  const next = draft(topology); const index = next.diagram.connectors.findIndex((item) => item.id === id);
+  if (index < 0) throw new Error('연결선을 찾을 수 없습니다.');
+  const current = next.diagram.connectors[index];
+  const kind = patch.kind ?? current.kind ?? 'annotation';
+  if (!['annotation', 'dependency'].includes(kind)) throw new Error('지원하지 않는 연결선입니다.');
+  const updated = { ...current, ...patch, id, kind, source: current.source, target: current.target, label: String(patch.label ?? current.label ?? '').slice(0, 1000), waypoints: (patch.waypoints ?? current.waypoints ?? []).map(({ x, y }) => ({ x: coordinate(x), y: coordinate(y) })) };
+  if (updated.stroke != null) updated.stroke = color(updated.stroke, '연결선');
+  if (updated.strokeWidth != null) updated.strokeWidth = finiteRange(updated.strokeWidth, '연결선 굵기', 0.5, 20);
+  if (updated.startArrow != null && !ARROW_TYPES.has(updated.startArrow)) throw new Error('시작 화살표가 잘못되었습니다.');
+  if (updated.endArrow != null && !ARROW_TYPES.has(updated.endArrow)) throw new Error('끝 화살표가 잘못되었습니다.');
+  if (updated.dashed != null) updated.dashed = Boolean(updated.dashed);
+  next.diagram.connectors[index] = updated; return next;
 }
 export function updateShape(topology, id, patch) {
   const next = draft(topology); const index = next.diagram.shapes.findIndex((s) => s.id === id);
   if (index < 0) throw new Error('도형을 찾을 수 없습니다.');
   next.diagram.shapes[index] = shape({ ...next.diagram.shapes[index], ...patch, id }); return next;
+}
+export function updateGroup(topology, id, patch) {
+  const next = draft(topology); const index = next.diagram.groups.findIndex((group) => group.id === id);
+  if (index < 0) throw new Error('그룹을 찾을 수 없습니다.');
+  const name = String(patch.name ?? next.diagram.groups[index].name ?? '').trim();
+  if (!name || name.length > 80 || /[<>]/.test(name)) throw new Error('그룹 이름은 1에서 80자여야 합니다.');
+  next.diagram.groups[index] = { ...next.diagram.groups[index], name }; return next;
 }
 function expanded(topology, selection) {
   const selected = new Set(selection.filter((s) => s.type === 'device' || s.type === 'shape').map((s) => s.id));
@@ -302,17 +355,42 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
     const dash = LINK_DASH[status] ? ` stroke-dasharray="${LINK_DASH[status]}"` : '';
     const spot = labelSpots.get(edge.id);
     const label = edgeLabel(link, edge);
-    return `<path d="${linkPath(points, route)}" fill="none" stroke="${stroke}" stroke-width="${LINK_WIDTH[status] ?? 1}" stroke-linejoin="round"${dash}/>`
+    const custom = !link && edge.kind ? { stroke: edge.stroke || INK.line, width: edge.strokeWidth || 1.5, dash: edge.dashed === false ? '' : '5 4' } : null;
+    const customStroke = custom?.stroke || stroke;
+    const customWidth = custom?.width || LINK_WIDTH[status] || 1;
+    const customDash = custom ? (custom.dash ? ` stroke-dasharray="${custom.dash}"` : '') : dash;
+    const marker = (side) => {
+      const arrow = edge[`${side}Arrow`] || 'none';
+      if (arrow === 'none') return { attribute: '', definition: '' };
+      const id = `diagram-marker-${edge.id}-${side}`;
+      const path = arrow === 'open' ? 'M 1 1 L 9 5 L 1 9' : arrow === 'block' ? 'M 0 0 L 10 5 L 0 10 L 2 5 Z' : 'M 0 0 L 10 5 L 0 10 Z';
+      const fill = arrow === 'open' ? 'none' : customStroke;
+      return {
+        attribute: ` marker-${side === 'start' ? 'start' : 'end'}="url(#${id})"`,
+        definition: `<marker id="${id}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="${path}" fill="${fill}" stroke="${customStroke}" stroke-width="1.2"/></marker>`,
+      };
+    };
+    const startMarker = marker('start'); const endMarker = marker('end');
+    return `${startMarker.definition || endMarker.definition ? `<defs>${startMarker.definition}${endMarker.definition}</defs>` : ''}<path d="${linkPath(points, route)}" fill="none" stroke="${customStroke}" stroke-width="${customWidth}" stroke-linejoin="round"${customDash}${startMarker.attribute}${endMarker.attribute}/>`
       + (label && spot ? text(spot.x, spot.y, label, { size: 9, fill: status && status !== 'healthy' ? stroke : INK.muted, anchor: 'middle', halo: true }) : '');
   }).join('');
 
   const elements = nodes.map((n) => {
     if (n.kind === 'node') return nodeMarkup(n.view, n.device);
+    const gradientId = `shape-gradient-${n.id}`;
+    const shadowId = `shape-shadow-${n.id}`;
     const bounds = n.kind === 'ellipse'
       ? `<ellipse cx="${fmt(n.x + n.width / 2)}" cy="${fmt(n.y + n.height / 2)}" rx="${fmt(n.width / 2)}" ry="${fmt(n.height / 2)}"`
-      : `<rect x="${fmt(n.x)}" y="${fmt(n.y)}" width="${fmt(n.width)}" height="${fmt(n.height)}"`;
-    return `${n.kind === 'text' ? '' : `${bounds} fill="${n.kind === 'note' ? '#fff7cc' : INK.surface}" stroke="${INK.line}"/>`}`
-      + `<text x="${fmt(n.x + n.width / 2)}" y="${fmt(n.y + n.height / 2)}" text-anchor="middle" fill="${INK.text}" font-size="14" font-family="sans-serif">${String(n.text || '').split('\n').map((line, i) => `<tspan x="${fmt(n.x + n.width / 2)}" dy="${i ? 18 : 0}">${xml(line)}</tspan>`).join('')}</text>`;
+      : `<rect x="${fmt(n.x)}" y="${fmt(n.y)}" width="${fmt(n.width)}" height="${fmt(n.height)}"${n.rounded ? ' rx="10" ry="10"' : ''}`;
+    const fill = n.fill && n.fill !== 'none' ? n.fill : n.kind === 'note' ? '#fff7cc' : 'none';
+    const stroke = n.stroke && n.stroke !== 'none' ? n.stroke : 'none';
+    const defs = (n.gradient && fill !== 'none' ? `<linearGradient id="${gradientId}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${n.gradientColor || '#ffffff'}"/><stop offset="1" stop-color="${fill}"/></linearGradient>` : '')
+      + (n.shadow ? `<filter id="${shadowId}" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="3" dy="4" stdDeviation="3" flood-color="#13241f" flood-opacity="0.28"/></filter>` : '');
+    const dash = n.sketch || n.lineStyle === 'dashed' ? '5 3' : n.lineStyle === 'dotted' ? '1 3' : '';
+    const style = `fill="${n.gradient && fill !== 'none' ? `url(#${gradientId})` : fill}" stroke="${stroke}" stroke-width="${n.strokeWidth ?? 1}" opacity="${n.opacity ?? 1}"${dash ? ` stroke-dasharray="${dash}"` : ''}${n.shadow ? ` filter="url(#${shadowId})"` : ''}`;
+    const glass = n.glass && n.kind !== 'text' ? `<path d="M ${fmt(n.x + 3)} ${fmt(n.y + 3)} H ${fmt(n.x + n.width - 3)} V ${fmt(n.y + n.height / 2)} H ${fmt(n.x + 3)} Z" fill="#ffffff" opacity="0.28"/>` : '';
+    return `${defs ? `<defs>${defs}</defs>` : ''}${n.kind === 'text' ? '' : `${bounds} ${style}/>${glass}`}`
+      + `<text x="${fmt(n.x + n.width / 2)}" y="${fmt(n.y + n.height / 2)}" text-anchor="middle" fill="${n.textColor || INK.text}" font-size="${n.fontSize || 14}" font-weight="${n.fontWeight || 'normal'}" font-family="sans-serif">${String(n.text || '').split('\n').map((line, i) => `<tspan x="${fmt(n.x + n.width / 2)}" dy="${i ? 18 : 0}">${xml(line)}</tspan>`).join('')}</text>`;
   }).join('');
 
   const stamp = result ? stampMarkup(topology, result, options, left, top, width, height) : text(left + 12, top + 16, '계산 결과 없음 · 도면만 내보냈습니다', { size: 10, fill: INK.muted });

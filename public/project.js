@@ -47,13 +47,13 @@ function validateDiagram(diagram, deviceIds) {
   for (const id of deviceIds) if (ids.has(id)) throw new Error('Diagram and device IDs must be distinct');
   const endpoints = new Set([...deviceIds, ...diagram.shapes.map(({ id }) => id)]);
   for (const shape of diagram.shapes) {
-    if (Object.keys(shape).some((key) => !['id', 'kind', 'type', 'text', 'x', 'y', 'width', 'height', 'fill', 'stroke', 'groupId', 'unmapped'].includes(key))) throw new Error('Unknown diagram shape content');
+    if (Object.keys(shape).some((key) => !['id', 'kind', 'type', 'text', 'x', 'y', 'width', 'height', 'fill', 'gradientColor', 'stroke', 'lineStyle', 'textColor', 'strokeWidth', 'opacity', 'fontSize', 'textAlign', 'verticalAlign', 'fontWeight', 'gradient', 'rounded', 'sketch', 'glass', 'shadow', 'groupId', 'unmapped'].includes(key))) throw new Error('Unknown diagram shape content');
     if (!['rectangle', 'ellipse', 'text', 'note', 'rect'].includes(shape.kind ?? shape.type)) throw new Error('Unknown diagram shape type');
     for (const key of ['x', 'y', 'width', 'height']) if (!Number.isFinite(shape[key]) || (['width', 'height'].includes(key) && shape[key] <= 0)) throw new Error(`Diagram shape requires valid ${key}`);
     if (shape.text != null && (typeof shape.text !== 'string' || shape.text.length > 10000)) throw new Error('Diagram text must be under 10000 characters');
   }
   for (const connector of diagram.connectors) {
-    if (Object.keys(connector).some((key) => !['id', 'source', 'target', 'kind', 'label', 'text', 'points', 'waypoints', 'stroke'].includes(key))) throw new Error('Unknown diagram connector content');
+    if (Object.keys(connector).some((key) => !['id', 'source', 'target', 'kind', 'label', 'text', 'points', 'waypoints', 'stroke', 'strokeWidth', 'dashed', 'startArrow', 'endArrow'].includes(key))) throw new Error('Unknown diagram connector content');
     if (connector.kind != null && !['annotation', 'dependency'].includes(connector.kind)) throw new Error('Unknown diagram connector kind');
     if (!endpoints.has(connector.source) || !endpoints.has(connector.target)) throw new Error('Diagram connector references an unknown endpoint');
     const points = connector.waypoints ?? connector.points;
