@@ -290,7 +290,7 @@ const LINK_DASH = { unknown: '5 4', invalid: '2 3', disabled: '7 7', 'severed-pa
 const LINK_WIDTH = { healthy: 1, unknown: 1.5, warning: 2.5, overloaded: 4, invalid: 2.5, disabled: 2, 'severed-path': 2 };
 
 // 화면의 노드 규격과 같다(styles.css .mesh-node). 캔버스와 그림이 어긋나면 둘 중 하나가 거짓말이다.
-const NODE = { width: 104, symbolH: 42, glyphW: 88, glyphH: 40, railW: 92, rowH: 13, headH: 12, modelH: 11, metaH: 11 };
+const NODE = { width: 120, symbolH: 42, glyphW: 88, glyphH: 40, railW: 104, rowH: 13, headH: 12, modelH: 11, metaH: 11 };
 
 const text = (x, y, value, { size = 9, fill = INK.text, weight = 400, anchor = 'start', halo = false, family = 'ui-monospace, SFMono-Regular, Menlo, monospace' } = {}) =>
   `<text x="${fmt(x)}" y="${fmt(y)}" fill="${fill}" font-family="${family}" font-size="${size}" font-weight="${weight}" text-anchor="${anchor}"`

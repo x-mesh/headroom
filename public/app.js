@@ -292,28 +292,54 @@ function renderBottleneck() {
   renderHeadline(binding);
 }
 
-// 캔버스 제목은 질문이 아니라 답이어야 한다. 병목 자원과 축, 사용률을 크게 말하고
-// 자세한 문장은 캔버스 아래에 그대로 둔다.
+// 캔버스 제목은 질문이 아니라 답이어야 한다. 이 설계가 몇 배까지 버티는지를 문장으로 말하고,
+// 어디가 먼저 막히는지는 바로 아래 한 줄에 붙인다. 예전에는 같은 사실이 상단 판정 바, 요약
+// 스트립, 이 카드, 캔버스 아래 서술까지 네 곳에 적혀 상단이 글씨로 꽉 찼다. 답을 말하는
+// 자리는 캔버스를 보는 눈이 이미 가 있는 여기 하나면 된다.
 function renderHeadline(binding) {
+  const { summary } = current;
   const heading = element('topology-heading');
   const detail = element('headline-detail');
-  if (!binding) {
-    heading.textContent = '한계를 아는 축이 없습니다';
-    heading.dataset.tone = 'unknown';
-    detail.textContent = '장비를 눌러 한계값을 넣으면 어디가 먼저 차는지 계산합니다.';
+  const say = (text, tone, note) => { heading.textContent = text; heading.dataset.tone = tone; detail.textContent = note; };
+
+  if (summary.evaluationStatus === 'invalid') {
+    say('입력 오류가 있어 판정할 수 없습니다', 'danger', '값을 고치면 다시 계산합니다.');
     return;
   }
-  const axisKey = current.summary.bindingAxis;
+  if (summary.evaluationStatus === 'not-ready') {
+    say('아직 판정을 시작할 수 없습니다', 'unknown', '서비스 수요 또는 검증 대상이 없습니다.');
+    return;
+  }
+  if (!binding) {
+    say('한계를 아는 축이 없습니다', 'unknown', '장비를 눌러 한계값을 넣으면 어디가 먼저 차는지 계산합니다.');
+    return;
+  }
+
+  const axisKey = summary.bindingAxis;
   const axis = binding.axes[axisKey];
   const catalog = axisCatalog[axisKey] || { label: axisKey, unit: '' };
   const direction = binding.bindingDirection ? `${binding.bindingDirection === 'forward' ? '정방향 ' : '역방향 '}` : '';
-  heading.textContent = `${resourceName(binding)} · ${direction}${catalog.label} ${formatPercent(axis.utilization)}`;
+  const rung = summary.growthLadder?.rungs?.[0];
+
+  const lead = summary.overloadedCount > 0 ? '지금 부하에서 이미 용량을 넘었습니다'
+    : summary.growthLadder?.indeterminate ? '몇 배까지 버티는지 계산할 수 없습니다'
+      : rung ? `지금 부하의 ${rung.breachScale.toFixed(2)}배까지 버팁니다`
+        : '한계를 아는 축에서는 더 막히는 지점이 없습니다';
+  heading.textContent = lead;
   heading.dataset.tone = axis.status === 'overloaded' ? 'danger' : axis.status === 'warning' ? 'amber' : 'signal-deep';
+
+  // 아래 줄은 캔버스에서 강조된 그 자원을 가리킨다. 다음에 넘는 자원이 따로면 이름을 덧붙인다.
   const suffix = AXIS_UNIT_SUFFIX[catalog.unit] || '';
+  const scale = `${formatCompact(axis.load, catalog.unit)} / ${formatCompact(axis.limit, catalog.unit)}${suffix}`;
+  const rungName = rung && rung.resourceId !== binding.id
+    ? `다음 병목 ${resourceName(resourceById(rung.resourceId) || { id: rung.resourceId })} · ${axisCatalog[rung.axis]?.shortLabel || rung.axis}`
+    : '';
+  // 두 줄로 고정한다. 한 줄로 두면 좁은 카드에서 사용률이 먼저 잘리고, 자동 줄바꿈에 맡기면
+  // "8.6 Gbps / 10 Gbps" 가 줄 사이에서 쪼개진다.
   detail.textContent = [
-    `${formatCompact(axis.load, catalog.unit)} / ${formatCompact(axis.limit, catalog.unit)}${suffix}`,
-    growthNote(),
-  ].filter(Boolean).join(' · ');
+    `${summary.overloadedCount > 0 ? '넘긴 곳' : '가장 빠듯한 곳'} ${resourceName(binding)} · ${direction}${catalog.label}`,
+    [`${scale} · ${formatPercent(axis.utilization)}`, rungName].filter(Boolean).join(' · '),
+  ].join('\n');
 }
 
 // 이 설계가 몇 배까지 견디는지. 엔진이 축마다 한계를 넘는 배율을 이미 계산해 두었으므로
@@ -456,10 +482,9 @@ function renderSummary() {
   const comparison = compareScenarios(baseline, current);
   element('summary-headroom').dataset.baseValue = String(summary.minHeadroom ?? '');
   element('summary-headroom').textContent = formatPercent(summary.minHeadroom);
-  element('summary-binding').textContent = binding ? `${binding.name || binding.id} · ${axisCatalog[summary.bindingAxis]?.shortLabel || summary.bindingAxis}` : '알려진 축 없음';
-  element('summary-overloaded').textContent = String(summary.overloadedCount).padStart(2, '0');
+  element('summary-overloaded').textContent = String(summary.overloadedCount);
   element('summary-warning').textContent = `${summary.warningCount}개 자원 주의`;
-  element('summary-unreachable').textContent = String(summary.unreachableCount).padStart(2, '0');
+  element('summary-unreachable').textContent = String(summary.unreachableCount);
   element('summary-unreachable-load').textContent = `${formatCompact(summary.unreachableLoadBps, 'bps')} 미전달`;
   element('summary-dropped-load').textContent = formatCompact(summary.droppedLoadBps, 'bps');
   const growthRung = summary.growthLadder?.rungs?.[0];
@@ -471,7 +496,7 @@ function renderSummary() {
       : growthRung ? `다음 병목 ${resourceName(resourceById(growthRung.resourceId)) || growthRung.resourceId} · ${axisCatalog[growthRung.axis]?.shortLabel || growthRung.axis}` : '다음 한계 없음';
   element('summary-growth').textContent = growth;
   element('summary-growth-binding').textContent = growthBinding;
-  const survivalText = analysisProgress ? `계산 중 ${analysisProgress.completed}/${analysisProgress.total}` : survival.multiplier == null ? '미확정' : survival.multiplier === 0 ? '생존 불가' : `${survival.multiplier < 0.005 ? survival.multiplier.toPrecision(2) : survival.multiplier.toFixed(2)}×${survival.bounded ? ' 이하' : ''}`;
+  const survivalText = analysisProgress ? `계산 중 ${analysisProgress.completed}/${analysisProgress.total}` : survival.multiplier == null ? '미확정' : survival.multiplier === 0 ? '불가' : `${survival.multiplier < 0.005 ? survival.multiplier.toPrecision(2) : survival.multiplier.toFixed(2)}×${survival.bounded ? ' 이하' : ''}`;
   const failedService = survival.services?.find(({ status }) => status === 'fail');
   const unknownService = !failedService && survival.services?.find(({ status }) => status !== 'pass');
   const failedServiceRatio = failedService && Math.min(failedService.deliveredRatio ?? 1, failedService.admissionRatio ?? 1);
@@ -481,7 +506,8 @@ function renderSummary() {
   const survivalLabel = analysisProgress ? `${analysisProgress.label} · 전수 계산 중` : survival.worstFault
     ? `${survival.status === 'severed' ? '단절' : survival.status === 'capacity-insufficient' ? '현재 부하 미달' : '견딤'} · 생존 ${survivalText} · 최악 ${resourceName(resourceById(survival.worstFault.id)) || survival.worstFault.id}`
     : '생존 배수 · 장애 후보 없음';
-  element('summary-growth-binding').textContent = [serviceLabel, growthBinding, survivalLabel].filter(Boolean).join(' · ');
+  // 다음 병목은 상단 판정 문장이 이미 말하므로 여기서 또 반복하지 않는다. 그쪽이 비면만 대신 적는다.
+  element('summary-growth-binding').textContent = [serviceLabel, survivalLabel].filter(Boolean).join(' · ') || growthBinding;
   const singlePoints = sweep.resources.filter(({ verdict, endpoint }) => verdict === 'severs' && !endpoint);
   const severedDomains = domainSweep.singles.filter(({ verdict }) => verdict === 'severs');
   const invalidDomains = domainSweep.redundancyInvalid || [];
@@ -511,14 +537,14 @@ function renderSummary() {
   }
   // 엔진은 0.8 을 넘으면 warning 으로 판정하고 그 수를 summary.warningCount 에 담는데,
   // 상단 상태가 그 값을 보지 않아 주의 자원이 있어도 'BASELINE STABLE' 이라고 말했다.
-  const runState = summary.evaluationStatus === 'invalid' ? { text: 'MODEL INVALID', tone: 'danger' }
-    : summary.evaluationStatus === 'not-ready' ? { text: 'MODEL NOT READY', tone: 'unknown' }
-    : summary.unreachableCount ? { text: 'TRAFFIC UNREACHABLE', tone: 'danger' }
-    : summary.overloadedCount ? { text: 'CAPACITY EXCEEDED', tone: 'danger' }
-    : summary.warningCount ? { text: `CAPACITY WARNING · ${summary.warningCount}`, tone: 'amber' }
-    : summary.activeFaults ? { text: 'FAILURE CONTAINED', tone: 'amber' }
-    : { text: 'BASELINE STABLE', tone: 'signal' };
-  const evidence = summary.evaluationStatus === 'unknown' ? { text: `EVIDENCE ${summary.unknownCount || 0} UNKNOWN`, tone: 'unknown' } : { text: 'EVIDENCE VERIFIED', tone: 'signal' };
+  const runState = summary.evaluationStatus === 'invalid' ? { text: '모델 입력 오류', tone: 'danger' }
+    : summary.evaluationStatus === 'not-ready' ? { text: '판정 준비 안 됨', tone: 'unknown' }
+    : summary.unreachableCount ? { text: '경로 단절', tone: 'danger' }
+    : summary.overloadedCount ? { text: '용량 초과', tone: 'danger' }
+    : summary.warningCount ? { text: `자원 주의 ${summary.warningCount}개`, tone: 'amber' }
+    : summary.activeFaults ? { text: '장애 견딜', tone: 'amber' }
+    : { text: '기준 상태 안정', tone: 'signal' };
+  const evidence = summary.evaluationStatus === 'unknown' ? { text: `한계 미확인 ${summary.unknownCount || 0}개`, tone: 'unknown' } : { text: '한계 확인됨', tone: 'signal' };
   const capacity = { text: runState.text, tone: runState.tone === 'amber' ? 'warning' : runState.tone };
   for (const [id, value] of [['evidence-state', evidence], ['capacity-state', capacity]]) {
     const chip = element(id); chip.querySelector('span').textContent = value.text; chip.dataset.tone = value.tone;
@@ -968,6 +994,8 @@ const CANVAS_MIN = { width: 940, height: 580 };
 const CANVAS_PAD = 40;
 const CANVAS_MAX = 12000;
 const STAGE_PAD = 300;
+// 맞춤이 설계를 화면 끝에 딱 붙이지 않도록 남기는 여백.
+const FIT_MARGIN = 24;
 const ZOOM_STEPS = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.6, 1.8, 2];
 const ZOOM_RANGE = { min: ZOOM_STEPS[0], max: ZOOM_STEPS.at(-1) };
 // 휠 한 눈금(픽셀 기준 약 100)이 배율을 5%쯤 움직이게 한다. 트랙패드는 이벤트가 훨씬
@@ -981,23 +1009,40 @@ let viewport = { minX: 0, minY: 0, width: CANVAS_MIN.width, height: CANVAS_MIN.h
 // zone 은 슬래시로 계층을 적는다. 'FABRIC / RACK 04' 는 FABRIC 안의 RACK 04 다.
 // 계층을 쓰지 않은 설계는 한 층짜리 그룹이 되고, 그리는 방식은 같다.
 
+// 캔버스와 콘텐츠는 다른 상자다. 캔버스는 최소 크기(CANVAS_MIN)를 깐 그리기 판이고,
+// 콘텐츠는 장비·그룹·도형이 실제로 차지한 범위다. 맞춤은 콘텐츠를 봐야 한다.
 function canvasViewport(devices) {
+  const EMPTY = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
   const shapeBounds = (topology.diagram?.shapes || []).reduce((box, shape) => ({
     minX: Math.min(box.minX, shape.x), minY: Math.min(box.minY, shape.y),
     maxX: Math.max(box.maxX, shape.x + shape.width), maxY: Math.max(box.maxY, shape.y + shape.height),
-  }), { minX: 0, minY: 0, maxX: CANVAS_MIN.width, maxY: CANVAS_MIN.height });
-  const bounds = groupBoxes(devices).reduce((box, group) => ({
+  }), EMPTY);
+  const contentBounds = groupBoxes(devices).reduce((box, group) => ({
     minX: Math.min(box.minX, group.x), minY: Math.min(box.minY, group.y),
     maxX: Math.max(box.maxX, group.x + group.width), maxY: Math.max(box.maxY, group.y + group.height),
   }), devices.reduce((box, { position }) => ({
     minX: Math.min(box.minX, position.x - NODE_REACH.left), minY: Math.min(box.minY, position.y - NODE_REACH.top),
     maxX: Math.max(box.maxX, position.x + NODE_REACH.right), maxY: Math.max(box.maxY, position.y + NODE_REACH.bottom),
   }), shapeBounds));
+  // 빈 설계는 맞출 콘텐츠가 없다. 최소 캔버스를 콘텐츠로 본다.
+  const content = Number.isFinite(contentBounds.minX)
+    ? {
+      x: contentBounds.minX,
+      y: contentBounds.minY,
+      width: Math.max(contentBounds.maxX - contentBounds.minX, 1),
+      height: Math.max(contentBounds.maxY - contentBounds.minY, 1),
+    }
+    : { x: 0, y: 0, width: CANVAS_MIN.width, height: CANVAS_MIN.height };
+  const bounds = {
+    minX: Math.min(content.x, 0), minY: Math.min(content.y, 0),
+    maxX: Math.max(content.x + content.width, CANVAS_MIN.width),
+    maxY: Math.max(content.y + content.height, CANVAS_MIN.height),
+  };
   const minX = bounds.minX < 0 ? bounds.minX - CANVAS_PAD : 0;
   const minY = bounds.minY < 0 ? bounds.minY - CANVAS_PAD : 0;
   const maxX = bounds.maxX > CANVAS_MIN.width ? bounds.maxX + CANVAS_PAD : CANVAS_MIN.width;
   const maxY = bounds.maxY > CANVAS_MIN.height ? bounds.maxY + CANVAS_PAD : CANVAS_MIN.height;
-  return { minX, minY, width: Math.min(maxX - minX, CANVAS_MAX), height: Math.min(maxY - minY, CANVAS_MAX) };
+  return { minX, minY, width: Math.min(maxX - minX, CANVAS_MAX), height: Math.min(maxY - minY, CANVAS_MAX), content };
 }
 
 function applyViewport() {
@@ -1105,32 +1150,44 @@ function stepZoom(direction) {
   setZoom(steps.find((step) => (direction > 0 ? step > state.zoom + 1e-6 : step < state.zoom - 1e-6)) ?? state.zoom);
 }
 
-function centerCanvas() {
-  const scroll = document.querySelector('.topology-scroll');
-  scroll.scrollLeft = STAGE_PAD - Math.max(0, (scroll.clientWidth - viewport.width * state.zoom) / 2);
-  scroll.scrollTop = STAGE_PAD - Math.max(0, (scroll.clientHeight - viewport.height * state.zoom) / 2);
-}
-
 /**
- * 캔버스가 화면보다 크면 centerCanvas 는 가운데가 아니라 왼쪽 위 모서리를 연다 - 남는 여백이
- * 음수라 0 으로 잘리기 때문이다. 그렇다고 전체를 맞추면 배율이 0.6 아래로 내려가 노드 글자가
- * 읽히지 않는다. 큰 설계는 다 보여 주는 것이 아니라 그 설계가 말하는 곳을 보여 줘야 한다.
- * 나머지는 사용자가 밀어서 본다. 화면에 들어가는 설계는 지금처럼 통째로 가운데에 온다.
+ * 큰 설계는 다 보여 주는 것이 아니라 그 설계가 말하는 곳을 보여 줘야 한다. 전체를 맞추면
+ * 배율이 0.6 아래로 내려가 노드 글자가 읽히지 않기 때문이다. 나머지는 사용자가 밀어서 본다.
+ * 화면에 들어가는 설계는 통째로 가운데에 온다. 들어가는지는 캔버스가 아니라 콘텐츠로 따진다.
  */
 function focusCanvas(resourceId) {
   const scroll = document.querySelector('.topology-scroll');
   const device = resourceId && current.devices.find(({ id }) => id === resourceId);
-  const fits = viewport.width * state.zoom <= scroll.clientWidth && viewport.height * state.zoom <= scroll.clientHeight;
-  if (!device || fits) { centerCanvas(); return; }
+  const box = viewport.content;
+  const fits = box.width * state.zoom <= scroll.clientWidth && box.height * state.zoom <= scroll.clientHeight;
+  if (!device || fits) { centerOnContent(); return; }
   scroll.scrollLeft = STAGE_PAD + (device.position.x - viewport.minX) * state.zoom - scroll.clientWidth / 2;
   scroll.scrollTop = STAGE_PAD + (device.position.y - viewport.minY) * state.zoom - scroll.clientHeight / 2;
 }
 
+// 콘텐츠 상자를 화면 가운데로 옮긴다. 캔버스 상자가 아니라 콘텐츠 상자여야, 도형 하나가
+// 멀리 떨어져 캔버스를 늘려 놓아도 설계가 화면 밖으로 밀리지 않는다.
+function centerOnContent() {
+  const scroll = document.querySelector('.topology-scroll');
+  const box = viewport.content;
+  const centerX = STAGE_PAD + (box.x - viewport.minX + box.width / 2) * state.zoom;
+  const centerY = STAGE_PAD + (box.y - viewport.minY + box.height / 2) * state.zoom;
+  scroll.scrollLeft = Math.max(0, centerX - scroll.clientWidth / 2);
+  scroll.scrollTop = Math.max(0, centerY - scroll.clientHeight / 2);
+}
+
+/**
+ * 맞춤은 화면 크기에 설계를 맞추는 것이다. 줄이기만 하는 것이 아니라 늘리기도 한다.
+ * 예전에는 Math.min(1, fit) 로 상한을 100% 에 걸어, 설계가 화면보다 작으면 버튼을 눌러도
+ * 아무 일도 일어나지 않았다. 화면이 텅 비어 맞춤이 가장 필요한 상황에서 무반응이었다.
+ * 기준도 캔버스가 아니라 콘텐츠다. 최소 캔버스(940x580)를 맞추면 필요보다 더 줄어든다.
+ */
 function zoomToFit() {
   const scroll = document.querySelector('.topology-scroll');
-  const fit = Math.min(scroll.clientWidth / viewport.width, scroll.clientHeight / viewport.height);
-  setZoom(Math.min(1, fit));
-  centerCanvas();
+  const box = viewport.content;
+  const fit = Math.min((scroll.clientWidth - FIT_MARGIN * 2) / box.width, (scroll.clientHeight - FIT_MARGIN * 2) / box.height);
+  setZoom(Math.min(ZOOM_RANGE.max, Math.max(ZOOM_RANGE.min, fit)));
+  centerOnContent();
 }
 
 let panState = null;
@@ -4390,6 +4447,6 @@ renderPalette();
 if (!panelSelectionExplicit) state.leftPanel = topology.devices.length || topology.links.length ? 'failure' : 'palette';
 setLeftPanel(state.leftPanel);
 render();
-centerCanvas();
+centerOnContent();
 startTelemetry();
 startTeaser();

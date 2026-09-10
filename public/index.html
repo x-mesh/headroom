@@ -48,10 +48,6 @@
             <input id="scale-input" type="range" min="50" max="180" value="100" step="5">
             <output id="scale-output" for="scale-input">1.00×</output>
           </label>
-          <div class="run-state" aria-live="polite">
-            <span class="status-chip" id="evidence-state"><i aria-hidden="true"></i><span>근거 확인 중</span></span>
-            <span class="status-chip" id="capacity-state"><i aria-hidden="true"></i><span>용량 계산 중</span></span>
-          </div>
         </div>
         <div class="top-actions">
           <button class="text-button" id="guide-button" type="button" aria-label="이 도구를 읽는 법"><span class="action-icon icon-help" aria-hidden="true"></span><span class="action-label">사용 안내</span></button>
@@ -108,7 +104,7 @@
         <div class="summary-group summary-capacity">
           <span class="summary-group-label">용량</span>
           <div class="summary-stats"><span><small>여유</small><strong id="summary-growth">···</strong></span><span><small>headroom</small><strong id="summary-headroom">···</strong></span><span><small>과부하</small><strong id="summary-overloaded">···</strong></span></div>
-          <p><span id="summary-growth-binding">계산 중</span><span id="summary-binding">계산 중</span><span id="summary-warning">계산 중</span></p>
+          <p><span id="summary-growth-binding">계산 중</span><span id="summary-warning">계산 중</span></p>
         </div>
         <div class="summary-group summary-delivery">
           <span class="summary-group-label">전달</span>
@@ -168,9 +164,12 @@
         <section class="topology-panel" aria-labelledby="topology-heading">
           <header class="panel-heading topology-heading">
             <div>
-              <span class="section-code">LIVE TOPOLOGY</span>
               <h1 id="topology-heading">계산 중</h1>
               <p class="headline-detail" id="headline-detail">한계값을 읽는 중입니다.</p>
+              <div class="run-state" aria-live="polite">
+                <span class="status-chip" id="capacity-state"><i aria-hidden="true"></i><span>용량 계산 중</span></span>
+                <span class="status-chip" id="evidence-state"><i aria-hidden="true"></i><span>근거 확인 중</span></span>
+              </div>
             </div>
             <div class="topology-controls">
               <details class="editor-menu"><summary>편집</summary><div class="editor-tools" role="toolbar" aria-label="설계 편집">

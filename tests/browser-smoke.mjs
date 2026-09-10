@@ -305,8 +305,8 @@ async function verify(viewport, screenshot, interact = false) {
   assert.match(restingNote, /가장 빠듯합니다|한계를 넘었습니다/);
   assert.match(restingNote, /LEAF B → API B/, 'a link must read by its endpoints, not its id');
   // 근거와 용량은 서로 덮지 않는다. 미확정 근거가 있어도 실제 용량 상태를 함께 말한다.
-  assert.match(await page.locator('#evidence-state').textContent(), /EVIDENCE [0-9]+ UNKNOWN/);
-  assert.match(await page.locator('#capacity-state').textContent(), /BASELINE|WARNING/);
+  assert.match(await page.locator('#evidence-state').textContent(), /한계 미확인 [0-9]+개/);
+  assert.match(await page.locator('#capacity-state').textContent(), /기준 상태 안정|자원 주의/);
   assert.ok(await page.locator('.summary-strip').evaluate((summary) => summary.compareDocumentPosition(document.querySelector('.editor-deck')) & Node.DOCUMENT_POSITION_FOLLOWING),
     'the judgement summary must appear before the editing toolbar');
   assert.equal(await page.locator('[data-editor-action="verification"]').count(), 1);
@@ -676,7 +676,7 @@ async function verify(viewport, screenshot, interact = false) {
   assert.ok(swapResult.indexOf('생존 배수') < swapResult.indexOf('정상시 배수')
     && swapResult.indexOf('정상시 배수') < swapResult.indexOf('과부하 자원')
     && swapResult.indexOf('과부하 자원') < swapResult.indexOf('전력·랙 U'), '치환 지표 순서가 PRD와 다릅니다');
-  assert.equal(await page.locator('#evidence-state').textContent(), 'EVIDENCE 6 UNKNOWN',
+  assert.equal(await page.locator('#evidence-state').textContent(), '한계 미확인 6개',
     'accepting the candidate axes must not hide unrelated unknown evidence');
   assert.ok(await page.locator('.evidence-state[data-applicability="user-asserted"]').count() > 0, 'accepted preview axes must persist after application');
   await page.locator('[data-swap-variant="current"]').click();
@@ -732,8 +732,8 @@ async function verify(viewport, screenshot, interact = false) {
     await failure.click();
     await page.waitForFunction(() => Number(document.querySelector('#summary-faults')?.textContent) === 1);
     assert.equal(await failure.getAttribute('aria-pressed'), 'true');
-    assert.match(await page.locator('#evidence-state').textContent(), /EVIDENCE (VERIFIED|[0-9]+ UNKNOWN)/);
-    assert.equal(await page.locator('#capacity-state').textContent(), 'CAPACITY EXCEEDED');
+    assert.match(await page.locator('#evidence-state').textContent(), /한계 확인됨|한계 미확인 [0-9]+개/);
+    assert.equal(await page.locator('#capacity-state').textContent(), '용량 초과');
     const faultNote = await page.locator('#bottleneck-note').textContent();
     assert.match(faultNote, /한계를 넘었습니다/);
     assert.match(faultNote, /드롭됩니다/, 'the note must say what the overload costs');
@@ -782,7 +782,7 @@ async function verify(viewport, screenshot, interact = false) {
     assert.match(await page.locator('.evidence-state[data-applicability="applicable"]').first().textContent(), /조건 일치/,
       'the 1518-byte datasheet row must match a 1518-byte workload');
     assert.ok((await page.locator('[data-device-id="fw-b"] .node-axis').evaluateAll((rows) =>
-      rows.map((row) => `${row.querySelector('b').textContent}:${row.dataset.axisState}`))).includes('BPS:healthy'));
+      rows.map((row) => `${row.querySelector('b').textContent}:${row.dataset.axisState}`))).includes('처리량:healthy'));
 
     // 위협 방어 값은 데이터시트가 프레임 크기를 밝히지 않는다. 워크로드를 적어도 판정할 수 없다.
     await page.selectOption('[data-spec-field="profile"]', 'threat');
@@ -796,8 +796,8 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForFunction(() => document.querySelector('.evidence-state[data-applicability="user-asserted"]'));
     const threatAxes = await page.locator('[data-device-id="fw-b"] .node-axis').evaluateAll((rows) =>
       rows.map((row) => `${row.querySelector('b').textContent}:${row.dataset.axisState}`));
-    assert.ok(threatAxes.includes('BPS:overloaded'), 'threat protection drops 20 Gbps to 1 Gbps once the user accepts that number');
-    assert.ok(threatAxes.includes('CPS:unknown'), 'the datasheet says nothing about sessions under inspection, so it stays unknown');
+    assert.ok(threatAxes.includes('처리량:overloaded'), 'threat protection drops 20 Gbps to 1 Gbps once the user accepts that number');
+    assert.ok(threatAxes.includes('신규세션:unknown'), 'the datasheet says nothing about sessions under inspection, so it stays unknown');
     // 데이터시트가 값을 적지 않은 축에는 수락할 대상이 없다. 수락 버튼도 두지 않는다.
     assert.equal(await page.locator('[data-evidence-accept]').count(), 0,
       'an axis with no datasheet number has nothing to accept');
@@ -842,7 +842,7 @@ async function verify(viewport, screenshot, interact = false) {
     const severId = await severs.getAttribute('data-failure-id');
     await severs.click();
     await page.waitForFunction(() => Number(document.querySelector('#summary-faults')?.textContent) === 1);
-    assert.equal(await page.locator('#capacity-state').textContent(), 'TRAFFIC UNREACHABLE',
+    assert.equal(await page.locator('#capacity-state').textContent(), '경로 단절',
       `the forecast promised ${severId} would sever the service, so turning it off must do that`);
     await page.locator(`[data-failure-id="${severId}"]`).click();
     await page.waitForFunction(() => document.querySelector('#summary-fault-label')?.textContent === '단일 장애점');
@@ -893,7 +893,7 @@ async function verify(viewport, screenshot, interact = false) {
     assert.match(preview, /제한 축: 처리량 →/);
 
     await page.locator('.behavior-choice input[value="dsr"]').check();
-    await page.waitForFunction(() => document.querySelector('#summary-binding').textContent.includes('TLS'));
+    await page.waitForFunction(() => document.querySelector('#headline-detail').textContent.includes('TLS'));
     assert.match(await page.locator('[data-device-id="lb"] .node-meta').textContent(), /DSR/,
       'the node must say which mode it runs so the device is findable');
     assert.equal(await page.locator('.behavior-choice input:checked').inputValue(), 'dsr');

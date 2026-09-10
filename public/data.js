@@ -1,13 +1,17 @@
+// 같은 축을 자리마다 다른 이름으로 부르면 화면이 어려워진다. label 은 문장용 정식 이름,
+// shortLabel 은 목록·요약용 축약, nodeLabel 은 노드 카드의 좁은 칸용이며 셋 다 한국어로
+// 통일한다. 예전에는 카드가 BPS·CPS, 인스펙터가 처리량·신규 세션이라 같은 값이 두 이름을
+// 가졌다. 데이터시트에서 그대로 읽어야 하는 단위(bps·pps·cps)는 unit 이 따로 들고 있다.
 export const axisCatalog = {
-  forwarding_bps: { label: '처리량', shortLabel: 'BPS', unit: 'bps', nodeLabel: 'BPS', deliveryRole: 'throughput' },
-  forwarding_pps: { label: '패킷 처리량', shortLabel: 'PPS', unit: 'pps', nodeLabel: 'PPS', deliveryRole: 'throughput' },
-  new_sessions_per_sec: { label: '신규 세션', shortLabel: 'CPS', unit: 'cps', nodeLabel: 'CPS', deliveryRole: 'admission' },
-  concurrent_sessions: { label: '동시 세션', shortLabel: 'SESS', unit: 'sessions', nodeLabel: 'SESS', deliveryRole: 'admission' },
-  vpn_tunnels: { label: '동시 VPN 터널', shortLabel: 'VPN', unit: 'tunnels', nodeLabel: 'VPN', deliveryRole: 'admission' },
-  nic_bps: { label: 'NIC 처리량', shortLabel: 'NIC', unit: 'bps', nodeLabel: 'NIC', deliveryRole: 'throughput' },
-  nic_pps: { label: 'NIC 패킷', shortLabel: 'NIC PPS', unit: 'pps', nodeLabel: 'NPPS', deliveryRole: 'throughput' },
-  tls_full_handshakes_per_sec: { label: 'TLS 신규 핸드셰이크', shortLabel: 'TLS FULL', unit: 'tps', nodeLabel: 'TLSF', deliveryRole: 'admission' },
-  tls_resumed_handshakes_per_sec: { label: 'TLS 재개 핸드셰이크', shortLabel: 'TLS RSMD', unit: 'tps', nodeLabel: 'TLSR', deliveryRole: 'admission' },
+  forwarding_bps: { label: '처리량', shortLabel: '처리량', unit: 'bps', nodeLabel: '처리량', deliveryRole: 'throughput' },
+  forwarding_pps: { label: '패킷 처리량', shortLabel: '패킷', unit: 'pps', nodeLabel: '패킷', deliveryRole: 'throughput' },
+  new_sessions_per_sec: { label: '신규 세션', shortLabel: '신규 세션', unit: 'cps', nodeLabel: '신규세션', deliveryRole: 'admission' },
+  concurrent_sessions: { label: '동시 세션', shortLabel: '동시 세션', unit: 'sessions', nodeLabel: '동시세션', deliveryRole: 'admission' },
+  vpn_tunnels: { label: '동시 VPN 터널', shortLabel: 'VPN 터널', unit: 'tunnels', nodeLabel: 'VPN', deliveryRole: 'admission' },
+  nic_bps: { label: 'NIC 처리량', shortLabel: 'NIC 처리량', unit: 'bps', nodeLabel: 'NIC', deliveryRole: 'throughput' },
+  nic_pps: { label: 'NIC 패킷', shortLabel: 'NIC 패킷', unit: 'pps', nodeLabel: 'NIC패킷', deliveryRole: 'throughput' },
+  tls_full_handshakes_per_sec: { label: 'TLS 신규 핸드셰이크', shortLabel: 'TLS 신규', unit: 'tps', nodeLabel: 'TLS신규', deliveryRole: 'admission' },
+  tls_resumed_handshakes_per_sec: { label: 'TLS 재개 핸드셰이크', shortLabel: 'TLS 재개', unit: 'tps', nodeLabel: 'TLS재개', deliveryRole: 'admission' },
 };
 
 // 응답이 볼류메트릭 부하에서 차지하는 몫. 웹 워크로드는 응답이 대부분이다.

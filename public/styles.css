@@ -40,6 +40,7 @@ button { color: inherit; }
 
 .skip-link { position: fixed; top: 8px; left: 8px; z-index: 100; transform: translateY(-150%); background: var(--signal); color: var(--ground); padding: 10px 14px; }
 .skip-link:focus { transform: translateY(0); }
+/* 행 순서: topbar · summary-strip · baseline-reset(숨길 때 0) · editor-deck · workspace */
 .app-shell { width: 100%; min-width: 0; height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 0 auto 1fr; overflow-x: hidden; }
 .app-shell > *, .comparison-panel { min-width: 0; }
 
@@ -49,9 +50,10 @@ button { color: inherit; }
 .brand strong, .brand span { display: block; }
 .brand strong { font: 600 15px/1 var(--font-data); letter-spacing: .08em; }
 .brand span { margin-top: 4px; color: var(--on-deep-muted); font: 500 8px/1 var(--font-data); letter-spacing: .13em; }
-.topbar-context { min-width: 0; display: grid; grid-template-columns: minmax(150px, auto) minmax(180px, 360px) auto; align-items: center; justify-content: center; gap: 14px; }.topbar-context .scenario-copy { min-width: 0; display: block; }.topbar-context .scenario-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--on-deep); font-size: 11px; }.topbar-context .scenario-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--on-deep-muted); font-size: 9px; }.topbar-context .scale-control { grid-template-columns: auto minmax(100px, 1fr) 44px; gap: 8px; color: var(--on-deep-muted); font-size: 9px; }.topbar-context .scale-control output { color: var(--signal); }
-.run-state { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 5px; color: var(--signal); font: 600 9px/1 var(--font-data); letter-spacing: .04em; }
-.status-chip { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 0 6px; border: 1px solid currentColor; white-space: nowrap; }
+.topbar-context { min-width: 0; display: grid; grid-template-columns: minmax(150px, auto) minmax(180px, 360px); align-items: center; justify-content: center; gap: 14px; }.topbar-context .scenario-copy { min-width: 0; display: block; }.topbar-context .scenario-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--on-deep); font-size: 11px; }.topbar-context .scenario-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--on-deep-muted); font-size: 9px; }.topbar-context .scale-control { grid-template-columns: auto minmax(100px, 1fr) 44px; gap: 8px; color: var(--on-deep-muted); font-size: 9px; }.topbar-context .scale-control output { color: var(--signal); }
+.run-state { min-width: 0; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; color: var(--signal-deep); font: 600 10px/1 var(--font-ui); letter-spacing: 0; }
+.status-chip { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 0 8px; border: 1px solid currentColor; white-space: nowrap; }
+.status-chip[hidden] { display: none; }
 .status-chip i { width: 8px; height: 8px; background: currentColor; border-radius: 50%; }
 .status-chip[data-tone="warning"] { color: var(--amber); }.status-chip[data-tone="danger"] { color: var(--danger); }.status-chip[data-tone="unknown"] { color: var(--muted); }
 .baseline-reset { min-height: 44px; margin: 0 22px 14px; padding: 0 14px; border: 1px solid var(--signal-deep); background: var(--surface-tint); color: var(--signal-deep); cursor: pointer; font: 600 11px/1 var(--font-data); letter-spacing: .04em; }
@@ -348,8 +350,12 @@ button { color: inherit; }
 
 .topology-panel { position: relative; min-width: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; background: var(--surface-tint); }
 .topology-heading { position: absolute; z-index: 14; top: 12px; left: 12px; right: 12px; min-height: 0; align-items: flex-start; padding: 0; border: 0; background: transparent; pointer-events: none; }
-.topology-heading > div:first-child { max-width: min(430px, 42%); padding: 9px 12px; border: 1px solid var(--line); background: color-mix(in srgb, var(--surface-raised) 96%, transparent); box-shadow: 0 8px 22px color-mix(in srgb, var(--panel-deep) 16%, transparent); }
-.topology-heading h1 { max-width: 100%; margin-top: 4px; overflow: hidden; font-size: 17px; text-overflow: ellipsis; white-space: nowrap; }.topology-heading .headline-detail { max-width: 100%; margin-top: 4px; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.topology-heading > div:first-child { max-width: min(460px, 46%); padding: 10px 13px; border: 1px solid var(--line); background: color-mix(in srgb, var(--surface-raised) 96%, transparent); box-shadow: 0 8px 22px color-mix(in srgb, var(--panel-deep) 16%, transparent); }
+/* 제목은 문장이므로 줄바꿈을 허용한다. 아래 한 줄은 병목 사실이라 한 줄로 자른다. */
+.topology-heading h1 { max-width: 100%; margin-top: 0; font-size: 17px; line-height: 1.3; white-space: normal; word-break: keep-all; }.topology-heading .headline-detail { max-width: 100%; margin-top: 5px; font-size: 11px; line-height: 1.45; white-space: pre-line; word-break: keep-all; }
+.topology-heading .run-state { margin-top: 8px; justify-content: flex-start; }
+.topology-heading .status-chip { min-height: 20px; padding: 0 6px; font-size: 9px; }
+.topology-heading .status-chip i { width: 6px; height: 6px; }
 .topology-controls { padding: 6px; border: 1px solid var(--line); background: color-mix(in srgb, var(--surface-raised) 96%, transparent); box-shadow: 0 8px 22px color-mix(in srgb, var(--panel-deep) 16%, transparent); pointer-events: none; }.topology-controls > * { pointer-events: auto; }
 .topology-scroll { grid-row: 1; }.canvas-footer { grid-row: 2; }
 /* 캔버스 제목은 답이다. 상태에 따라 색이 바뀌고, 그 아래 한 줄이 수치와 성장 여력을 말한다. */
@@ -517,7 +523,7 @@ button { color: inherit; }
 .synthetic-marker { fill: var(--muted); font: 700 10px/1 var(--font-data); letter-spacing: .12em; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .binding-pulse { animation: none; } }
 #icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
-.mesh-node { --node-color: var(--cyan); --symbol-h: 42px; --icon-line: currentColor; --icon-fill: var(--canvas); --icon-accent: var(--surface-raised); position: absolute; display: block; width: 104px; padding: 0; border: 0; background: none; color: var(--text); cursor: pointer; text-align: center; transform: translate(-50%, calc(var(--symbol-h) / -2)); transition: filter 180ms cubic-bezier(.16,1,.3,1), opacity 180ms cubic-bezier(.16,1,.3,1); }
+.mesh-node { --node-color: var(--cyan); --symbol-h: 42px; --icon-line: currentColor; --icon-fill: var(--canvas); --icon-accent: var(--surface-raised); position: absolute; display: block; width: 120px; padding: 0; border: 0; background: none; color: var(--text); cursor: pointer; text-align: center; transform: translate(-50%, calc(var(--symbol-h) / -2)); transition: filter 180ms cubic-bezier(.16,1,.3,1), opacity 180ms cubic-bezier(.16,1,.3,1); }
 .mesh-node.warning { --node-color: var(--amber); }.mesh-node.overloaded { --node-color: var(--danger); }.mesh-node.unknown { --node-color: var(--unknown); }.mesh-node.invalid { --node-color: var(--danger); }
 .mesh-node.disabled { --node-color: var(--danger); color: var(--muted); opacity: .82; }
 .mesh-node.disabled .node-glyph { opacity: .28; }
@@ -537,7 +543,7 @@ button { color: inherit; }
 .node-rail { display: block; width: 92px; height: 2px; margin: 0 auto 4px; background: var(--node-color); }
 .mesh-node.overloaded .node-rail { background-image: repeating-linear-gradient(135deg, transparent 0 3px, color-mix(in srgb, var(--surface-raised) 55%, transparent) 3px 6px); }
 .mesh-node.unknown .node-rail, .mesh-node.disabled .node-rail { background: repeating-linear-gradient(90deg, var(--node-color) 0 4px, transparent 4px 8px); }
-.node-labels { display: block; width: max-content; max-width: 104px; margin: 0 auto; padding: 2px 4px 3px; overflow: hidden; background: var(--canvas); }
+.node-labels { display: block; width: max-content; max-width: 120px; margin: 0 auto; padding: 2px 4px 3px; overflow: hidden; background: var(--canvas); }
 /* 연결 핸들. 노드에 마우스를 올리거나 노드를 고르면 나타나고, 끌면 링크가 된다. */
 .node-ports { position: absolute; inset: 0; pointer-events: none; }
 .node-ports i { position: absolute; width: 9px; height: 9px; margin: -5px 0 0 -5px; border: 1px solid var(--surface-raised); background: var(--signal-deep); opacity: 0; transition: opacity 120ms ease-out; pointer-events: auto; cursor: crosshair; }
@@ -569,15 +575,16 @@ button { color: inherit; }
 .synthetic-badge { position: absolute; right: 0; bottom: 0; z-index: 2; padding: 2px 3px; border: 1px solid var(--cyan); background: var(--surface-raised); color: var(--cyan); font: 700 7px/1 var(--font-data); letter-spacing: .08em; }
 .mesh-node.binding-pulse .node-rail { animation: binding-pulse 700ms ease-out 1; }
 @keyframes binding-pulse { 0% { transform: scaleX(1); } 45% { transform: scaleX(1.3); } 100% { transform: scaleX(1); } }
-.node-model { display: block; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 500 8px/1.3 var(--font-data); letter-spacing: .02em; }
+.node-model { display: block; max-width: 112px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 500 8px/1.3 var(--font-data); letter-spacing: .02em; }
 /* 자동으로 묶인 백엔드 풀과, 어떤 수요도 지나지 않는 장비를 노드에서 바로 읽게 한다. */
 .node-pool { display: block; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--signal-deep); font: 600 8px/1.3 var(--font-data); letter-spacing: .02em; }
 .node-pool[data-warn] { color: var(--amber); }
-.node-name { display: block; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 10px/1.1 var(--font-data); letter-spacing: .02em; }
+.node-name { display: block; max-width: 112px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 10px/1.1 var(--font-data); letter-spacing: .02em; }
 .node-axes { display: grid; gap: 4px; margin: 4px 0; }
-.node-axis { --axis-color: var(--cyan); position: relative; display: grid; grid-template-columns: 6px 4ch auto auto; gap: 0 4px; padding-bottom: 3px; align-items: baseline; text-align: left; font: 500 8px/1.2 var(--font-data); }
+/* 라벨 칸은 한글 네 글자(신규세션·동시세션)가 줄바꿈 없이 들어가는 폭이어야 한다. */
+.node-axis { --axis-color: var(--cyan); position: relative; display: grid; grid-template-columns: 6px 4.4em auto auto; gap: 0 4px; padding-bottom: 3px; align-items: baseline; text-align: left; font: 500 8px/1.2 var(--font-data); }
 /* 요약은 부하 값을 떼므로 열이 하나 줄어든다. 백분율이 오른쪽 끝에 붙어 전체와 자리가 맞는다. */
-.node-axis[data-brief] { grid-template-columns: 6px 4ch auto; }
+.node-axis[data-brief] { grid-template-columns: 6px 4.4em auto; }
 .node-axis::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--line-soft); }
 .node-axis[style*="--util"]::before { content: ''; position: absolute; left: 0; bottom: 0; z-index: 1; width: calc(min(var(--util), 1) * 100%); height: 2px; background: var(--axis-color); }
 .node-axis[data-axis-state="overloaded"]::after { background: var(--danger); opacity: .35; }
@@ -585,7 +592,7 @@ button { color: inherit; }
 .node-axis[data-axis-state="overloaded"], .node-axis[data-axis-state="invalid"] { --axis-color: var(--danger); }
 .node-axis[data-axis-state="unknown"], .node-axis[data-axis-state="disabled"] { --axis-color: var(--unknown); }
 .node-axis i { font-style: normal; font-weight: 700; color: var(--axis-color); }
-.node-axis b { font-weight: 500; letter-spacing: .06em; color: var(--muted); }
+.node-axis b { font-weight: 500; letter-spacing: 0; white-space: nowrap; color: var(--muted); }
 .node-axis[data-binding] b { font-weight: 700; color: var(--text); }
 .node-axis em { font-style: normal; text-align: right; font-variant-numeric: tabular-nums; }
 .node-axis s { text-decoration: none; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; color: var(--axis-color); }
@@ -722,7 +729,7 @@ button { color: inherit; }
 
 @media (max-width: 760px) {
   .topbar { grid-template-columns: 1fr auto; padding: 8px 12px; }
-  .topbar-context { grid-column: 1 / -1; grid-row: 2; grid-template-columns: minmax(0, 1fr) minmax(130px, 1fr); gap: 8px; }.topbar-context .run-state { display: none; }.topbar-context .scenario-copy span { display: none; }
+  .topbar-context { grid-column: 1 / -1; grid-row: 2; grid-template-columns: minmax(0, 1fr) minmax(130px, 1fr); gap: 8px; }.topbar-context .scenario-copy span { display: none; }
   #guide-button { width: 44px; padding-inline: 0; justify-content: center; }.action-icon { display: block; }.action-label { display: none; }
   .brand-area { gap: 8px; }.brand { gap: 7px; }.brand-mark { width: 30px; height: 30px; }.brand strong { font-size: 11px; }.new-design-button { min-height: 44px; padding: 0 10px; font-size: 10px; }.new-design-more { min-height: 44px; width: 32px; }
   .top-menu-trigger { width: 44px; min-height: 44px; padding-inline: 0; justify-content: center; }.top-menu-trigger .menu-chevron { display: none; }.top-menu { position: fixed; top: 66px; right: 12px; width: min(310px, calc(100vw - 24px)); }
