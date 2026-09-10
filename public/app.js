@@ -31,6 +31,7 @@ let swapTarget = null;
 let swapComparison = [];
 let absorbsExpanded = false;
 let resourceAbsorbsExpanded = false;
+let worstAxesExpanded = false;
 const failureFilter = { query: '', verdict: 'all' };
 // 단일 장애 스윕은 수백 개 후보를 만들 수 있다. 실제 행 높이를 고정해 창 밖의 버튼을 DOM 에
 // 두지 않고도 스크롤 높이와 키보드 순서를 보존한다.
@@ -300,7 +301,8 @@ function renderHeadline(binding) {
   const { summary } = current;
   const heading = element('topology-heading');
   const detail = element('headline-detail');
-  const say = (text, tone, note) => { heading.textContent = text; heading.dataset.tone = tone; detail.textContent = note; };
+  // 판정을 시작할 수 없는 상황은 병목이 없다. 자원 이름과 사용률 줄 대신 문장 하나만 넣는다.
+  const say = (text, tone, note) => { heading.textContent = text; heading.dataset.tone = tone; detail.replaceChildren(note); };
 
   if (summary.evaluationStatus === 'invalid') {
     say('입력 오류가 있어 판정할 수 없습니다', 'danger', '값을 고치면 다시 계산합니다.');
@@ -334,12 +336,23 @@ function renderHeadline(binding) {
   const rungName = rung && rung.resourceId !== binding.id
     ? `다음 병목 ${resourceName(resourceById(rung.resourceId) || { id: rung.resourceId })} · ${axisCatalog[rung.axis]?.shortLabel || rung.axis}`
     : '';
-  // 두 줄로 고정한다. 한 줄로 두면 좁은 카드에서 사용률이 먼저 잘리고, 자동 줄바꿈에 맡기면
-  // "8.6 Gbps / 10 Gbps" 가 줄 사이에서 쪼개진다.
-  detail.textContent = [
-    `${summary.overloadedCount > 0 ? '넘긴 곳' : '가장 빠듯한 곳'} ${resourceName(binding)} · ${direction}${catalog.label}`,
-    [`${scale} · ${formatPercent(axis.utilization)}`, rungName].filter(Boolean).join(' · '),
-  ].join('\n');
+  // 두 줄을 엘리먼트로 나눠 둔다. 줄바꿈 문자 하나로 붙여 white-space: pre-line 에
+  // 맡기면 두 사실을 다른 크기로 보여줄 방법이 없다. 병목 자원은 한 번 보면 되는
+  // 이름이고, 사용률은 눈이 몇 번이든 다시 돌아오는 숫자다.
+  const where = document.createElement('span');
+  where.className = 'headline-binding';
+  const caption = document.createElement('em');
+  caption.textContent = summary.overloadedCount > 0 ? '넘긴 곳' : '가장 빠듯한 곳';
+  where.append(caption, `${resourceName(binding)} · ${direction}${catalog.label}`);
+
+  const measure = document.createElement('span');
+  measure.className = 'headline-measure';
+  const utilization = document.createElement('b');
+  utilization.textContent = formatPercent(axis.utilization);
+  measure.append(`${scale} · `, utilization);
+  if (rungName) measure.append(` · ${rungName}`);
+
+  detail.replaceChildren(where, measure);
 }
 
 // 이 설계가 몇 배까지 견디는지. 엔진이 축마다 한계를 넘는 배율을 이미 계산해 두었으므로
@@ -554,11 +567,37 @@ function renderSummary() {
   element('summary-headroom').dataset.tone = summary.minHeadroom == null ? 'unknown'
     : summary.minHeadroom <= 0 ? 'danger' : summary.minHeadroom < 0.2 ? 'amber' : 'signal-deep';
   element('scale-output').textContent = `${state.scale.toFixed(2)}×`;
+  // 슬라이더는 50~180 을 가진다. 그 숫자만 읽으면 몇 배인지 알 수 없다.
+  element('scale-input').setAttribute('aria-valuetext', `${state.scale.toFixed(2)}배`);
   const activePathCount = current.demands.reduce((sum, demand) => sum + demand.paths.length, 0);
   element('path-readout').textContent = `${current.demands.length} DEMANDS · ${activePathCount} ACTIVE PATHS`;
 }
 
 // 끄기 전에 결과를 말한다. 하나씩 눌러 보고 되돌리는 수고가 이 도구의 요점이 아니다.
+// 장애 목록은 이미 나쁘 순서로 정렬되지만, 정렬만으로는 어디에서 단절이 끝나고 용량
+// 부족이 시작되는지 보이지 않아 수십 줄을 위에서부터 읽어야 했다. 그 경계를 제목으로 집는다.
+const FAILURE_TIER_LABEL = {
+  severs: '단절 · 서비스가 끊깁니다',
+  overloads: '용량 부족 · 일부만 전달됩니다',
+  absorbs: '견딤 · 남은 경로가 흡수합니다',
+  endpoint: '출발지·목적지 · 자기 트래픽만 끊깁니다',
+  unknown: '한계 미확인 · 결과를 단정할 수 없습니다',
+  none: '판정 없음',
+};
+
+// 같은 판정이 이어지는 구간만 모은다. 다시 정렬하지 않는다.
+export function groupByVerdictRun(items, verdictOf) {
+  const runs = [];
+  for (const item of items) {
+    const verdict = verdictOf(item);
+    const tier = verdict?.verdict === 'severs' && verdict.endpoint ? 'endpoint' : verdict?.verdict || 'none';
+    const last = runs[runs.length - 1];
+    if (last && last.tier === tier) last.items.push(item);
+    else runs.push({ tier, items: [item] });
+  }
+  return runs;
+}
+
 function faultForecast(verdict, { includeBoundary = false } = {}) {
   if (!verdict) return '판정 없음';
   let forecast;
@@ -638,7 +677,7 @@ function renderFailures() {
     { title: '자원 N-1 · 링크', items: order(topology.links), set: state.disabledLinks, type: 'link' },
     { title: '도메인 N-1', items: order(topology.failureDomains || []), set: state.disabledDomains, type: 'domain' },
   ];
-  element('failure-count').textContent = `${state.disabledDevices.size + state.disabledLinks.size + state.disabledDomains.size} ACTIVE`;
+  element('failure-count').textContent = `주입한 장애 ${state.disabledDevices.size + state.disabledLinks.size + state.disabledDomains.size}`;
   if (analysisProgress) {
     element('failure-grade').textContent = `${analysisProgress.label} 계산 중 ${analysisProgress.completed}/${analysisProgress.total} · 완료 전에는 판정을 표시하지 않습니다.`;
     element('failure-grade').dataset.grade = 'unknown';
@@ -693,22 +732,27 @@ function renderFailures() {
           <span class="switch-glyph" aria-hidden="true"></span><span><strong>${escapeText(resourceName(item))}</strong><small class="failure-forecast" data-verdict="${escapeAttribute(verdict?.verdict === 'severs' && verdict.endpoint ? 'endpoint' : verdict?.verdict || 'none')}">${escapeText(forecast)}</small><small>${escapeText(detail)}</small></span><span class="switch-state">${active ? 'DOWN' : 'UP'}</span>
         </button></li>`;
   };
-  const renderFailureRows = (group, items, kind) => {
+  const renderFailureRows = (group, items, kind, tierLabel = '') => {
     if (items.length < FAILURE_VIRTUAL_THRESHOLD) return `<ul class="failure-rows">${items.map((item) => renderFailure(group, item)).join('')}</ul>`;
     const key = `${group.type}-${kind}`;
     failureVirtual.groups.set(key, {
       items,
       render: (item, index) => renderFailure(group, item, { index, key, total: items.length }),
     });
-    return `<div class="failure-virtual-list" data-failure-virtual="${key}" style="height:${items.length * FAILURE_VIRTUAL_ROW_HEIGHT}px" role="list" aria-label="${escapeAttribute(group.title)} ${kind === 'absorbs' ? '견딤' : '우선'} 결과 ${items.length}개"></div>`;
+    return `<div class="failure-virtual-list" data-failure-virtual="${key}" style="height:${items.length * FAILURE_VIRTUAL_ROW_HEIGHT}px" role="list" aria-label="${escapeAttribute(group.title)} ${escapeAttribute(tierLabel || (kind === 'absorbs' ? '견딤' : '우선'))} 결과 ${items.length}개"></div>`;
   };
   const renderGroup = (group) => {
     const matching = group.items.filter((item) => matchesFailureFilter(item, verdicts.get(item.id)));
     const candidates = group.type === 'domain' ? matching : matching.filter((item) => verdicts.get(item.id)?.verdict !== 'absorbs');
     const absorbs = group.type === 'domain' ? [] : matching.filter((item) => verdicts.get(item.id)?.verdict === 'absorbs');
+    const tiers = groupByVerdictRun(candidates, (item) => verdicts.get(item.id));
+    const tierRows = tiers.map(({ tier, items }, index) => {
+      const label = FAILURE_TIER_LABEL[tier] || tier;
+      return `<h4 class="failure-tier" data-tier="${escapeAttribute(tier)}">${escapeText(label)}<span>${items.length}</span></h4>${renderFailureRows(group, items, `tier-${tier}-${index}`, label)}`;
+    }).join('');
     return `<section class="failure-group">
       <h3>${group.title}</h3>
-      ${candidates.length ? renderFailureRows(group, candidates, 'priority') : '<p class="failure-empty">조건에 맞는 항목이 없습니다.</p>'}
+      ${candidates.length ? tierRows : '<p class="failure-empty">조건에 맞는 항목이 없습니다.</p>'}
       ${absorbs.length ? `<button type="button" class="failure-collapse" data-failure-resource-absorbs-toggle aria-expanded="${resourceAbsorbsExpanded}">견딤 ${absorbs.length}개 ${resourceAbsorbsExpanded ? '접기' : '펼치기'}</button><div${resourceAbsorbsExpanded ? '' : ' hidden'}>${renderFailureRows(group, absorbs, 'absorbs')}</div>` : ''}
     </section>`;
   };
@@ -718,9 +762,18 @@ function renderFailures() {
     const label = `${resourceName(target) || item.resourceId} · ${item.direction === 'forward' ? '정방향 · ' : item.direction === 'reverse' ? '역방향 · ' : ''}${axisCatalog[item.axis]?.shortLabel || item.axis}`;
     const value = item.utilization == null ? '미확인' : formatPercent(item.utilization);
     const detail = item.faultId ? `${resourceName(resourceById(item.faultId)) || item.faultId} 장애 후 최악` : '최악 장애 미확인';
-    return `<li><b>${escapeText(label)}</b><span>${escapeText(value)}${item.bounded ? ' 이하' : ''}</span><small>${escapeText(detail)}${item.unknown ? ' · 일부 미확인' : ''}</small></li>`;
+    // 사용률이 이 패널의 답이다. 같은 크기의 텍스트 12줄에서는 171과 73이 구분되지 않아, 막대로 길이를 먼저 읽게 한다.
+    const tier = item.utilization == null ? 'unknown' : item.utilization >= 1 ? 'over' : item.utilization >= 0.8 ? 'warn' : 'ok';
+    const bar = item.utilization == null ? '' : ` style="--worst-bar:${(Math.min(item.utilization, 1) * 100).toFixed(1)}%"`;
+    return `<li data-tier="${tier}"${bar}><b>${escapeText(label)}</b><span>${escapeText(value)}${item.bounded ? `<i>이하</i>` : ''}</span><small>${escapeText(detail)}${item.unknown ? ' · 일부 미확인' : ''}</small></li>`;
   }).join('') : '<li>완료된 단일 장애 스윕이 아직 없습니다.</li>';
-  const worstAxisPanel = `<section class="failure-group failure-worst-axes"><h3>단일 장애 최악 사용률</h3><p class="failure-empty">각 자원·축에서 가장 나쁜 단일 장애와 사용률입니다.</p><ul>${worstAxisRows}</ul></section>`;
+  // 여덟 줄을 한 번에 펼치면 읽을 사람이 없다. 최악 네 개만 남기고 나머지는 접어 둔다.
+  const WORST_AXES_VISIBLE = 4;
+  const worstAxisTail = Math.max(0, worstAxes.length - WORST_AXES_VISIBLE);
+  const worstAxisToggle = worstAxisTail
+    ? `<button type="button" class="failure-collapse" data-failure-worst-toggle aria-expanded="${worstAxesExpanded}">${worstAxesExpanded ? '접기' : `나머지 ${worstAxisTail}개 펼치기`}</button>`
+    : '';
+  const worstAxisPanel = `<section class="failure-group failure-worst-axes"><h3>단일 장애 최악 사용률</h3><p class="failure-empty">각 자원·축에서 가장 나쁜 단일 장애와 사용률입니다.</p><ul${worstAxesExpanded || !worstAxisTail ? '' : ' data-worst-folded'}>${worstAxisRows}</ul>${worstAxisToggle}</section>`;
   const scopeGuide = `<section class="failure-scope-guide" aria-label="장애 분석 범위"><p><b>자원 N-1</b><span>장비 또는 링크 하나의 장애입니다.</span></p><p><b>도메인 N-1</b><span>전원·공간·경로처럼 함께 실패할 수 있는 묶음 하나의 장애입니다.</span></p><p><b>도메인 N-2</b><span>서로 다른 장애 도메인 둘이 동시에 실패하는 경우입니다.</span></p></section>`;
   element('failure-list').innerHTML = `${scopeGuide}${filterControls}${groups.map(renderGroup).join('')}${worstAxisPanel}<section class="failure-group failure-domain-pairs"><h3>도메인 N-2 · 동시 두 도메인</h3>${domainSweep.domainCount ? (() => {
       const matchingPairs = pairs.filter((item) => matchesFailureFilter(item, item));
@@ -1436,7 +1489,7 @@ function renderTopology() {
         : `<span class="node-axis" data-axis-state="disabled"><i>${STATE_TOKEN.disabled}</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>`;
     const annotationState = state.editorMode === 'annotation' ? (annotationSource === device.id ? ' annotation-source' : annotationSource ? ' annotation-target' : '') : '';
     return `<button type="button" class="mesh-node ${status} ${state.selectedId === device.id ? 'selected' : ''} ${selectionHas('device', device.id) ? 'multi-selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}${annotationState}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x - viewport.minX}px;top:${device.position.y - viewport.minY}px" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
-      <span class="node-symbol">${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}${topology.synthetic ? '<span class="synthetic-badge" aria-label="합성값">SYN</span>' : ''}${classView.badge === 'on' ? `<span class="node-class-badge">${escapeText(kindInitial(device.kind))}</span>` : ''}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolFor(device.kind).id}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}${pool || idle ? `<span class="node-pool"${idle ? ' data-warn=""' : ''}>${escapeText(pool || idle)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta">${escapeText(meta)}</span></span>
+      <span class="node-symbol">${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}${topology.synthetic ? '<span class="synthetic-badge" aria-label="합성값">SYN</span>' : ''}${classView.badge === 'on' ? `<span class="node-class-badge">${escapeText(kindInitial(device.kind))}</span>` : ''}<svg class="node-glyph" aria-hidden="true" focusable="false"><use href="#${symbolFor(device.kind).id}"></use></svg></span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}${pool || idle ? `<span class="node-pool"${idle ? ' data-warn=""' : ''}>${escapeText(pool || idle)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta" title="${escapeAttribute(meta)}">${escapeText(meta)}</span></span>
     </button>`;
   }).join('');
 }
@@ -1993,7 +2046,7 @@ function renderComparison() {
   const comparison = compareScenarios(baseline, current);
   const designChanged = JSON.stringify(baselineSnapshot.topology) !== JSON.stringify(topology);
   if (designChanged) {
-    element('comparison-grid').innerHTML = '<section class="comparison-detail"><header><b>설계 변화</b><small>수치 비교 보류</small></header><ul><li><b>기준선 이후 설계가 바뀌었습니다.</b><span>현재 수치와 기준선 수치를 직접 비교하지 않습니다.</span><small>기준선을 다시 확정하세요.</small></li></ul></section>';
+    element('comparison-grid').innerHTML = '<section class="comparison-detail"><header role="group"><b>설계 변화</b><small>수치 비교 보류</small></header><ul><li><b>기준선 이후 설계가 바뀌었습니다.</b><span>현재 수치와 기준선 수치를 직접 비교하지 않습니다.</span><small>기준선을 다시 확정하세요.</small></li></ul></section>';
     return;
   }
   const items = [
@@ -2038,8 +2091,8 @@ function renderComparison() {
   const priorPaths = currentDemand?.severedPaths?.length ? currentDemand.severedPaths : beforeDemand?.paths || [];
   const previous = priorPaths.map((path) => `<li><b>장애 전 ${Math.round((path.share ?? 1) * 100)}%</b><span>${escapeText(pathText(path))}</span></li>`).join('') || '<li>비교할 장애 전 경로가 없습니다.</li>';
   const options = [...demandIds].map((id) => { const demand = current.demands.find((item) => item.id === id) || baseline.demands.find((item) => item.id === id); return `<option value="${escapeAttribute(id)}"${id === comparisonDemandId ? ' selected' : ''}>${escapeText(demand?.name || id)}</option>`; }).join('');
-  const detail = `<section class="comparison-detail"><header><b>자원·축·방향 변화</b><small>${changes.length}개</small></header><ul>${changeRows}</ul></section>`;
-  const paths = comparisonDemandId ? `<section class="comparison-detail comparison-path"><header><label>수요 경로 <select data-comparison-demand>${options}</select></label><small>${escapeText(currentDemand?.status === 'unreachable' ? '현재 경로 없음' : '현재 경로와 방향별 분기 몫입니다.')}</small></header><div><ul>${currentPaths}</ul><ul>${previous}</ul></div></section>` : '';
+  const detail = `<section class="comparison-detail"><header role="group"><b>자원·축·방향 변화</b><small>${changes.length}개</small></header><ul>${changeRows}</ul></section>`;
+  const paths = comparisonDemandId ? `<section class="comparison-detail comparison-path"><header role="group"><label>수요 경로 <select data-comparison-demand>${options}</select></label><small>${escapeText(currentDemand?.status === 'unreachable' ? '현재 경로 없음' : '현재 경로와 방향별 분기 몫입니다.')}</small></header><div><ul>${currentPaths}</ul><ul>${previous}</ul></div></section>` : '';
   element('comparison-grid').innerHTML = items.map(([label, value, detail, tone]) => `<div class="comparison-item ${tone}"><span>${label}</span><strong>${value}</strong><small>${detail}</small></div>`).join('') + detail + paths;
 }
 
@@ -3197,6 +3250,7 @@ element('scale-input').addEventListener('change', (event) => { const value = Num
 element('failure-list').addEventListener('click', (event) => {
   if (event.target.closest('[data-failure-absorbs-toggle]')) { absorbsExpanded = !absorbsExpanded; renderFailures(); return; }
   if (event.target.closest('[data-failure-resource-absorbs-toggle]')) { resourceAbsorbsExpanded = !resourceAbsorbsExpanded; renderFailures(); return; }
+  if (event.target.closest('[data-failure-worst-toggle]')) { worstAxesExpanded = !worstAxesExpanded; renderFailures(); return; }
   const filter = event.target.closest('[data-failure-filter-verdict]');
   if (filter) { failureFilter.verdict = filter.dataset.failureFilterVerdict; renderFailures(); return; }
   const button = event.target.closest('[data-failure-id]');

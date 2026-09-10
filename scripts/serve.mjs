@@ -9,7 +9,7 @@ const root = resolve(fileURLToPath(new URL('../public', import.meta.url)));
 const port = Number(process.env.RACK_MESH_PORT || process.argv[2] || 4173);
 const host = process.env.RACK_MESH_HOST || process.argv[3] || '127.0.0.1';
 const dev = process.env.RACK_MESH_DEV === '1';
-const mime = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml' };
+const mime = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
 const reloadPath = '/__reload';
 const reloadTag = `<script>new EventSource(${JSON.stringify(reloadPath)}).onmessage = () => location.reload();</script>`;
 const clients = new Set();

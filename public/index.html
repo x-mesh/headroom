@@ -45,7 +45,7 @@
           </div>
           <label class="scale-control" for="scale-input">
             <span>부하</span>
-            <input id="scale-input" type="range" min="50" max="180" value="100" step="5">
+            <input id="scale-input" type="range" min="50" max="180" value="100" step="5" aria-label="워크로드 부하 배율" aria-valuetext="1.00배">
             <output id="scale-output" for="scale-input">1.00×</output>
           </label>
         </div>
@@ -125,7 +125,7 @@
         <input class="visually-hidden" id="zabbix-observed-load-file-input" type="file" accept="application/json,.json">
         <input class="visually-hidden" id="drawio-file-input" type="file" accept="application/xml,text/xml,.drawio,.xml">
         <section class="editor-panel" id="editor-panel" aria-labelledby="editor-panel-heading" hidden>
-          <header><div><span class="section-code">EDITOR TASK</span><h2 id="editor-panel-heading">설계 편집</h2></div><button type="button" id="editor-close" aria-label="편집 패널 닫기">닫기</button></header>
+          <header role="group"><div><span class="section-code">EDITOR TASK</span><h2 id="editor-panel-heading">설계 편집</h2></div><button type="button" id="editor-close" aria-label="편집 패널 닫기">닫기</button></header>
           <div class="editor-panel-content" id="editor-panel-content"></div>
         </section>
       </section>
@@ -138,12 +138,12 @@
 
       <section class="main-grid">
         <aside class="failure-panel" id="design-board" aria-labelledby="failure-heading">
-          <header class="panel-heading">
+          <header class="panel-heading" role="group">
             <div>
               <span class="section-code">DESIGN BOARD</span>
               <h2 id="failure-heading">설계 도구</h2>
             </div>
-            <span class="count-badge" id="failure-count">0 ACTIVE</span>
+            <span class="count-badge" id="failure-count">주입한 장애 0</span>
             <button type="button" class="panel-collapse-button panel-collapse-left" id="toggle-left-panel" aria-pressed="false" aria-controls="design-board" aria-label="설계 도구 접기"><span aria-hidden="true"></span></button>
           </header>
           <div class="panel-tabs" role="tablist" aria-label="설계 도구">
@@ -162,7 +162,7 @@
         </aside>
 
         <section class="topology-panel" aria-labelledby="topology-heading">
-          <header class="panel-heading topology-heading">
+          <header class="panel-heading topology-heading" role="group">
             <div>
               <h1 id="topology-heading">계산 중</h1>
               <p class="headline-detail" id="headline-detail">한계값을 읽는 중입니다.</p>
@@ -207,7 +207,7 @@
         </section>
 
         <aside class="inspector-panel" id="inspector-panel" aria-labelledby="inspector-heading">
-          <header class="panel-heading inspector-heading">
+          <header class="panel-heading inspector-heading" role="group">
             <div>
               <span class="section-code" id="inspector-code">AXIS INSPECTOR</span>
               <h2 id="inspector-heading">장비 검사</h2>
@@ -221,7 +221,7 @@
       </section>
     </main>
     <section class="comparison-panel" aria-labelledby="comparison-heading">
-      <header>
+      <header role="group">
         <div>
           <span class="section-code">BASELINE COMPARISON</span>
           <h2 id="comparison-heading">설계 변화</h2>

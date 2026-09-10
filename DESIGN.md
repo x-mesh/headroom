@@ -17,45 +17,56 @@ colors:
   line: "#9eb9ad"
   line-soft: "#c9d9d1"
   text: "#13241f"
-  muted: "#526e64"
+  muted: "#4a635a"
   signal: "#b8e737"
-  signal-deep: "#587d00"
-  amber: "#9a5a00"
+  signal-deep: "#4f7100"
+  amber: "#8b5100"
   danger: "#b83c34"
   unknown: "#697286"
-  cyan: "#087d70"
+  cyan: "#077165"
   action-ink: "#173028"
 typography:
   display:
-    fontFamily: "Avenir Next, Avenir, Segoe UI, sans-serif"
-    fontSize: "clamp(20px, 2vw, 31px)"
+    fontFamily: "Avenir Next, Avenir, Pretendard, Segoe UI, sans-serif"
+    fontSize: "clamp(18px, 1.45vw, 22px)"
     fontWeight: 600
     lineHeight: 1.2
     letterSpacing: "-0.025em"
   title:
-    fontFamily: "Avenir Next, Avenir, Segoe UI, sans-serif"
+    fontFamily: "Avenir Next, Avenir, Pretendard, Segoe UI, sans-serif"
     fontSize: "17px"
     fontWeight: 600
     lineHeight: 1.2
     letterSpacing: "-0.025em"
   body:
-    fontFamily: "Avenir Next, Avenir, Segoe UI, sans-serif"
+    fontFamily: "Avenir Next, Avenir, Pretendard, Segoe UI, sans-serif"
     fontSize: "11px"
     fontWeight: 400
     lineHeight: 1.55
+  answer:
+    fontFamily: "SFMono-Regular, Menlo, Consolas, Pretendard, monospace"
+    fontSize: "13px"
+    fontWeight: 700
+    lineHeight: 1.25
+    letterSpacing: "-0.01em"
+  metric:
+    fontFamily: "SFMono-Regular, Menlo, Consolas, Pretendard, monospace"
+    fontSize: "15px"
+    fontWeight: 700
+    lineHeight: 1.1
   data:
-    fontFamily: "SFMono-Regular, Menlo, Consolas, monospace"
+    fontFamily: "SFMono-Regular, Menlo, Consolas, Pretendard, monospace"
     fontSize: "10px"
     fontWeight: 600
     lineHeight: 1
   micro:
-    fontFamily: "SFMono-Regular, Menlo, Consolas, monospace"
+    fontFamily: "SFMono-Regular, Menlo, Consolas, Pretendard, monospace"
     fontSize: "8px"
     fontWeight: 500
     lineHeight: 1.2
     letterSpacing: "0.08em"
   label:
-    fontFamily: "SFMono-Regular, Menlo, Consolas, monospace"
+    fontFamily: "SFMono-Regular, Menlo, Consolas, Pretendard, monospace"
     fontSize: "9px"
     fontWeight: 600
     lineHeight: 1
@@ -158,12 +169,12 @@ The palette separates a calm daylight workspace from a deep operational frame. S
 ### Primary
 
 - **Signal Lime** (#b8e737): Use for primary actions, focus outlines, the stable run state, and the brand mark.
-- **Deep Signal Green** (#587d00): Use for decisive values, section codes, packet dots, and positive comparison values.
+- **Deep Signal Green** (#4f7100): Use for decisive values, section codes, packet dots, and positive comparison values.
 
 ### Secondary
 
-- **Capacity Cyan** (#087d70): Use for healthy resources, active links, live telemetry, and the first sparkline.
-- **Constraint Amber** (#9a5a00): Use for caution states and the second sparkline.
+- **Capacity Cyan** (#077165): Use for healthy resources, active links, live telemetry, and the first sparkline.
+- **Constraint Amber** (#8b5100): Use for caution states and the second sparkline.
 - **Fault Red** (#b83c34): Use for overloads, failures, negative changes, and the third sparkline.
 - **Unknown Slate** (#697286): Use when a capacity limit is not known.
 
@@ -176,7 +187,7 @@ The palette separates a calm daylight workspace from a deep operational frame. S
 - **Deep Forest Panel** (#16332d): Use for the top bar, toast, and mobile failure tray.
 - **Canvas Sage** (#eaf2ed): Use for the fixed topology canvas and its label masks.
 - **Forest Text** (#13241f): Use for primary text on light surfaces.
-- **Muted Sage Text** (#526e64): Use for notes, labels, and metadata.
+- **Muted Sage Text** (#4a635a): Use for notes, labels, and metadata.
 
 ### Named Rules
 
@@ -186,6 +197,11 @@ The palette separates a calm daylight workspace from a deep operational frame. S
 
 **The Red Means Impact Rule.** Use fault red only for failures, overloads, and negative changes.
 
+**The Tint Is The Floor Rule.** Every semantic text color must clear 4.5:1 on the sage surface tint,
+not only on the pale surface. The tint is where the design board and the comparison panel put their
+notes, so a color chosen against white lands there a step short. The four semantic inks were darkened
+once for this reason; a fifth must be checked against `#dceae2` before it ships.
+
 ## Typography
 
 **Display Font:** Avenir Next with Avenir and Segoe UI fallbacks.
@@ -194,13 +210,28 @@ The palette separates a calm daylight workspace from a deep operational frame. S
 
 **Label/Mono Font:** SFMono-Regular with Menlo and Consolas fallbacks.
 
+**Hangul Font:** Pretendard, self-hosted from `public/fonts/`. Neither Avenir Next nor SFMono covers
+Hangul, so before this the glyphs came from whatever the reader's OS supplied. Both stacks name
+Pretendard after their Latin faces, and the `@font-face` declarations carry a `unicode-range` limited
+to Hangul, so Latin text, digits, and the monospace data voice are untouched.
+
 **Character:** The UI stack keeps Korean copy clear. The monospace stack gives metrics, states, resource names, and section codes an operational rhythm.
+
+### Named Rules
+
+**The Hangul Is Not A Fallback Rule.** A face pinned for Latin says nothing about Hangul. Name the
+Hangul face, ship it, and bind it by `unicode-range`. Apple SD Gothic Neo, the macOS default, sets
+narrower and taller syllable blocks than the Latin beside them, and the reader on another OS sees a
+third thing. Fetch the files with `npm run fonts:vendor`; the notice lives in `vendor/pretendard/`.
 
 ### Hierarchy
 
-- **Display** (600, fluid 20px to 31px, 1.2): Use for the topology question.
+- **Display** (600, fluid 18px to 22px, 1.15): Use for the canvas answer. It only has to outrank the
+  answer tier below it; past that it eats canvas.
 - **Title** (600, 17px, 1.2): Use for panels, the brand, and comparison titles.
 - **Body** (400, 11px, 1.55): Use for notes, source conditions, and scenario context.
+- **Answer** (700, 13px, 1.25): Use for the binding resource named under the canvas heading.
+- **Metric** (700, 15px, 1.1): Use for a utilisation a reader scans down a column, as in the worst-axis list.
 - **Data** (600, 10px, 1): Use for metrics, states, resource data, and compact controls.
 - **Label** (600, 9px, 0.13em): Use uppercase text for section codes and zone labels.
 
@@ -291,6 +322,10 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 
 ### Resource Inspector Editor
 
+- **Result Stays Put:** Pin the identity block and the binding callout to the top of the column.
+  The limit fields sit below the axis meters, so editing a limit and reading its consequence used to
+  be a scroll shuttle in a 300px column.
+
 - **Device:** Edit the name, zone, and independent capacity limits below the device telemetry.
 - **Link:** Edit directional capacity below the link telemetry.
 - **Empty:** If the topology has no devices, explain how to add or import the first device.
@@ -336,6 +371,8 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 ### Canvas Headline
 
 - **Answer, Not Question:** The largest type on the canvas states the answer — the binding resource, its axis and direction, and its utilisation. A standing question in display type while its answer sits in 11px at the fold is the wrong way round.
+- **Three Steps, Not Two Lines:** Split the card into the growth sentence, the binding resource, and the measurement. Give each its own element and its own size. A single string joined by a newline and left to `pre-line` renders both facts at one weight, and then the resource name competes with the number a reader returns to.
+- **Size Against The Detail, Not The Page:** The heading only reads as the conclusion while it outranks the binding line under it. It sat at 17px against a 13px detail and read as a peer; it now runs `clamp(18px, 1.45vw, 22px)`. Growing it further buys nothing and costs canvas.
 - **Tone:** Color the headline by the binding axis state, so overload and caution read before the number does.
 - **Detail Line:** Under it, state the load against the limit and how much growth is left before the first overload.
 - **Growth Limit:** Find that multiplier by bisecting the workload scale with the engine. It is a fact the tool can already compute and had nowhere to say.
@@ -392,6 +429,7 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Forecast:** Put the sweep verdict on each row as a third line: the service severs, only a percentage gets delivered, or the survivors absorb the loss. The reader must know the result before the click.
 - **Bounded Forecast:** When an unknown limit makes "absorbs" an upper bound, say so on the row. Never let an unknown design read as spare capacity.
 - **Order:** Sort rows by how bad the loss is. Put a demand endpoint that severs its own traffic last, because that is not a redundancy problem.
+- **Tier Heading:** Break the sorted rows where the verdict changes and head each run with what that verdict means, plus its count. Sort order alone hides the boundary: a reader cannot see where severed ends and short begins without reading every row. Tint the row background by verdict as a second, quieter cue.
 - **Grade Line:** Head the panel with the counts for severed, short, and spare resources.
 - **Color:** Let the words carry the verdict. Color is secondary.
 
@@ -480,6 +518,18 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Padding:** Give a shallower group more padding, so a parent box always contains its children.
 - **Bounds:** Include the group boxes in the canvas bounds. A box that runs past the canvas edge gets clipped.
 - **Node Meta:** Show the innermost zone on the node, not the whole path. The inspector carries the full one.
+
+### Worst Single-Failure Axis List
+
+- **Bar Before Number:** Draw a bar under each row, filled to the utilisation in that state's color.
+  Twelve rows of same-size monospace put 171% and 73% at one weight, and the eye catches length
+  before it reads digits.
+- **Unknown Keeps The Track:** A row with no known limit draws the track and no fill. An empty bar
+  must never read as spare capacity.
+- **Fold The Tail:** Show the worst four and fold the rest behind a count. A reader who opens this
+  panel wants what breaches, not the full sweep.
+- **Qualifier Is Not The Value:** Set the percentage large and the bounding word under it small.
+  They are one fact and a caveat about that fact, not two equal strings.
 
 ### Axis Meter
 

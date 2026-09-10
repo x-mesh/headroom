@@ -1,3 +1,24 @@
+/* Avenir Next 에 한글이 없어 그동안 한글은 OS 대체 서체로 그려졌다. 판정 화면의 글자가
+   기계마다 달라지지 않도록 한글만 Pretendard 로 고정한다. unicode-range 를 한글로 좁혀
+   라틴과 숫자는 여전히 Avenir Next 가 그리고, 모노 데이터 목소리도 그대로 남는다.
+   파일은 `npm run fonts:vendor` 로 가져온다. 고지는 vendor/pretendard/NOTICE.md. */
+@font-face {
+  font-family: Pretendard;
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/Pretendard-Regular.woff2") format("woff2");
+  unicode-range: U+1100-11FF, U+3130-318F, U+A960-A97F, U+AC00-D7A3, U+D7B0-D7FF;
+}
+@font-face {
+  font-family: Pretendard;
+  font-style: normal;
+  font-weight: 500 700;
+  font-display: swap;
+  src: url("fonts/Pretendard-SemiBold.woff2") format("woff2");
+  unicode-range: U+1100-11FF, U+3130-318F, U+A960-A97F, U+AC00-D7A3, U+D7B0-D7FF;
+}
+
 :root {
   color-scheme: light;
   --ground: #e7f0ea;
@@ -16,15 +37,17 @@
   --line: #9eb9ad;
   --line-soft: #c9d9d1;
   --text: #13241f;
-  --muted: #526e64;
+  /* 아래 넷은 surface-tint(#dceae2) 위에서 작은 글자 4.5:1 을 넘도록 어둡게 잡은 값이다.
+     예전 값(#526e64 / #587d00 / #9a5a00 / #087d70)은 tint 위에서 3.89~4.48:1 이었다. */
+  --muted: #4a635a;
   --signal: #b8e737;
-  --signal-deep: #587d00;
-  --amber: #9a5a00;
+  --signal-deep: #4f7100;
+  --amber: #8b5100;
   --danger: #b83c34;
   --unknown: #697286;
-  --cyan: #087d70;
-  --font-ui: "Avenir Next", Avenir, "Segoe UI", sans-serif;
-  --font-data: "SFMono-Regular", Menlo, Consolas, monospace;
+  --cyan: #077165;
+  --font-ui: "Avenir Next", Avenir, Pretendard, "Segoe UI", sans-serif;
+  --font-data: "SFMono-Regular", Menlo, Consolas, Pretendard, monospace;
 }
 
 * { box-sizing: border-box; }
@@ -38,13 +61,16 @@ button { color: inherit; }
 ::-webkit-scrollbar-thumb { background: var(--line); border: 2px solid var(--surface-tint); }
 :focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
 
-.skip-link { position: fixed; top: 8px; left: 8px; z-index: 100; transform: translateY(-150%); background: var(--signal); color: var(--ground); padding: 10px 14px; }
+/* 연두 배경 위 밝은 글자는 1.2:1 이었다. 포커스로 나타나는 순간 읽히지 않는다. */
+.skip-link { position: fixed; top: 8px; left: 8px; z-index: 100; transform: translateY(-150%); background: var(--signal); color: var(--action-ink); padding: 10px 14px; font-weight: 700; }
 .skip-link:focus { transform: translateY(0); }
 /* 행 순서: topbar · summary-strip · baseline-reset(숨길 때 0) · editor-deck · workspace */
 .app-shell { width: 100%; min-width: 0; height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 0 auto 1fr; overflow-x: hidden; }
 .app-shell > *, .comparison-panel { min-width: 0; }
 
-.topbar { min-height: 52px; padding: 6px 14px; display: grid; grid-template-columns: auto minmax(360px, 1fr) auto; align-items: center; gap: 14px; border-bottom: 1px solid var(--panel-line); background: var(--panel-deep); color: var(--on-deep); }
+/* 내용 높이는 47px 이다. min-height 52px 는 그 위에 빈 마디를 더하기만 했고,
+   여기서 달아난 높이는 전부 토폴로지 보는 대가로 쓴다. 탭 높이는 버튼이 보장한다. */
+.topbar { min-height: 48px; padding: 6px 14px; display: grid; grid-template-columns: auto minmax(360px, 1fr) auto; align-items: center; gap: 14px; border-bottom: 1px solid var(--panel-line); background: var(--panel-deep); color: var(--on-deep); }
 .brand-area { display: flex; align-items: center; gap: 16px; min-width: 0; }.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .brand-mark { width: 30px; height: 30px; stroke: var(--signal); fill: var(--signal); stroke-width: 1.5; }
 .brand strong, .brand span { display: block; }
@@ -59,12 +85,13 @@ button { color: inherit; }
 .baseline-reset { min-height: 44px; margin: 0 22px 14px; padding: 0 14px; border: 1px solid var(--signal-deep); background: var(--surface-tint); color: var(--signal-deep); cursor: pointer; font: 600 11px/1 var(--font-data); letter-spacing: .04em; }
 .status-lamp { width: 8px; height: 8px; background: currentColor; box-shadow: 0 2px 10px currentColor; }
 .top-actions { justify-self: end; display: flex; align-items: center; gap: 8px; }
-.text-button, .solid-button { min-height: 34px; border: 1px solid var(--line); padding: 0 12px; cursor: pointer; font: 600 10px/1 var(--font-data); letter-spacing: .04em; }
+.text-button, .solid-button { min-height: 34px; border: 1px solid var(--line); padding: 0 12px; cursor: pointer; font: 600 11px/1 var(--font-data); letter-spacing: .04em; }
 .text-button { background: transparent; border-color: var(--line); }
 .solid-button { border-color: var(--signal); background: var(--signal); color: var(--action-ink); }
 .text-button:hover, .text-button[aria-expanded="true"] { border-color: var(--signal); color: var(--signal); }
 .solid-button:hover { background: color-mix(in srgb, var(--signal) 72%, var(--surface-raised)); }
-.new-design-button { min-height: 34px; padding: 0 12px; border: 1px solid var(--signal); background: var(--signal); color: var(--action-ink); cursor: pointer; font: 600 10px/1 var(--font-data); letter-spacing: .04em; white-space: nowrap; }.new-design-button:hover { background: color-mix(in srgb, var(--signal) 72%, var(--surface-raised)); }
+/* 이 화면의 주 동작이다. 10px 는 상단바에서 가장 작은 글자 단계여서 역할과 어그러졌다. */
+.new-design-button { min-height: 34px; padding: 0 14px; border: 1px solid var(--signal); background: var(--signal); color: var(--action-ink); cursor: pointer; font: 600 12px/1 var(--font-data); letter-spacing: .02em; white-space: nowrap; }.new-design-button:hover { background: color-mix(in srgb, var(--signal) 72%, var(--surface-raised)); }
 .start-design-wrap { display: inline-flex; align-items: stretch; }.start-design-wrap .new-design-button { border-right: 0; }.new-design-more { width: 30px; min-height: 34px; border: 1px solid var(--signal); background: var(--signal); color: var(--action-ink); cursor: pointer; }.new-design-more:hover, .new-design-more[aria-expanded="true"] { background: color-mix(in srgb, var(--signal) 72%, var(--surface-raised)); }.new-design-more .menu-chevron { display: inline-block; }.start-menu { right: auto; left: 0; }
 .top-menu-wrap { position: relative; }
 .top-menu-trigger { display: inline-flex; align-items: center; gap: 9px; white-space: nowrap; }
@@ -79,9 +106,9 @@ button { color: inherit; }
 .top-menu-heading { margin: 0; padding: 15px 16px 13px; border-bottom: 1px solid var(--panel-line); font: 600 11px/1.2 var(--font-data); letter-spacing: .04em; }
 .top-menu-heading span { display: block; margin-top: 6px; color: var(--on-deep-muted); font: 400 10px/1.4 var(--font-ui); letter-spacing: 0; }
 .top-menu-section { padding: 7px 0; border-bottom: 1px solid var(--panel-line); }.top-menu-section:last-child { border-bottom: 0; }
-.top-menu-section > span { display: block; padding: 5px 16px 4px; color: var(--signal); font: 600 8px/1 var(--font-data); letter-spacing: .1em; }
+.top-menu-section > span { display: block; padding: 6px 16px 4px; color: var(--signal); font: 600 10px/1 var(--font-data); letter-spacing: .08em; }
 .top-menu [role="menuitem"] { width: 100%; min-height: 48px; padding: 8px 16px; display: grid; gap: 4px; border: 0; background: transparent; color: var(--on-deep); text-align: left; cursor: pointer; }
-.top-menu [role="menuitem"]:hover, .top-menu [role="menuitem"]:focus-visible { background: var(--panel-mid); outline: 0; }.top-menu [role="menuitem"] strong { font: 600 10px/1 var(--font-data); }.top-menu [role="menuitem"] small { color: var(--on-deep-muted); font: 400 10px/1.25 var(--font-ui); }
+.top-menu [role="menuitem"]:hover, .top-menu [role="menuitem"]:focus-visible { background: var(--panel-mid); outline: 0; }.top-menu [role="menuitem"] strong { font: 600 12px/1 var(--font-data); }.top-menu [role="menuitem"] small { color: var(--on-deep-muted); font: 400 11px/1.3 var(--font-ui); }
 
 .control-deck { display: none; }
 .scenario-copy { display: flex; align-items: center; gap: 18px; }
@@ -105,7 +132,7 @@ button { color: inherit; }
 .summary-strip { min-height: 62px; display: grid; grid-template-columns: 2fr 1.15fr 1fr; border-bottom: 1px solid var(--line); background: var(--surface); }
 .failure-pair { display: grid; gap: 3px; padding: 8px 0; border-top: 1px solid var(--line-soft); }
 .failure-pair strong { font-size: 11px; }.failure-pair small { color: var(--muted); font-size: 10px; }
-.failure-collapse { width: 100%; min-height: 36px; margin-top: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--text); cursor: pointer; font: 600 10px/1 var(--font-data); text-align: left; padding: 0 11px; }
+.failure-collapse { width: 100%; min-height: 36px; margin-top: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--text); cursor: pointer; font: 600 11px/1 var(--font-data); text-align: left; padding: 0 11px; }
 .domain-suggestions { display: grid; gap: 7px; margin: 0 0 14px; padding: 11px; border-left: 2px solid var(--amber); background: var(--surface-tint); }.domain-suggestions strong { font: 600 10px/1 var(--font-data); }.domain-suggestions p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.4; }.domain-suggestions button { min-height: 32px; border: 1px solid var(--line); background: var(--surface-raised); color: var(--text); cursor: pointer; font: 600 10px/1 var(--font-data); text-align: left; padding: 0 9px; }.swap-scope { margin: 0 0 12px; padding: 8px; border: 1px solid var(--line-soft); }.swap-scope legend { padding: 0 5px; color: var(--muted); font: 600 9px/1 var(--font-data); letter-spacing: .06em; }.swap-scope .segmented button { flex: 1; min-height: 30px; border: 0; border-right: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; font: 600 10px/1 var(--font-data); }.swap-scope .segmented button:last-child { border-right: 0; }.swap-scope .segmented button[aria-pressed="true"] { background: var(--surface-tint); color: var(--signal-deep); box-shadow: inset 0 -2px var(--signal-deep); }.swap-asymmetry { margin: 0; padding: 9px; border-left: 2px solid var(--amber); background: var(--surface); color: var(--text); font-size: 10px; line-height: 1.45; }
 .swap-variants { display: inline-grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 5px; max-width: 100%; margin: 0 0 8px; padding: 2px; border: 1px solid var(--line); background: var(--surface); }.swap-variants > span { color: var(--muted); font: 600 11px/1 var(--font-data); }.swap-variants button { min-width: 0; min-height: 28px; padding: 0 8px; border: 1px solid transparent; background: transparent; color: var(--muted); cursor: pointer; font: 600 10px/1 var(--font-data); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.swap-variants button[aria-pressed="true"] { border-color: var(--signal-deep); background: var(--surface-tint); color: var(--text); }.swap-variants button:hover:not([aria-pressed="true"]) { color: var(--text); background: var(--surface-tint); }.swap-preview { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--line); background: var(--surface-tint); }.swap-preview strong, .swap-preview span { font-size: 11px; }.swap-preview small { color: var(--muted); }.swap-adjustments { border-top: 1px solid var(--line); padding-top: 8px; }.swap-adjustments summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); cursor: pointer; font: 600 10px/1 var(--font-data); list-style: none; }.swap-adjustments summary::-webkit-details-marker { display: none; }.swap-adjustments summary::before { content: '›'; color: var(--text); font-size: 11px; transition: transform 120ms ease-out; }.swap-adjustments[open] summary::before { transform: rotate(90deg); }.swap-adjustments summary span { min-width: 18px; padding: 3px 5px; background: var(--surface); color: var(--text); text-align: center; font: 600 9px/1 var(--font-data); }.swap-adjustments p { margin: 8px 0; color: var(--muted); font-size: 10px; line-height: 1.45; }.swap-condition-list { display: grid; gap: 6px; }
 .summary-strip > div { min-height: 78px; padding: 10px 16px; display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto 20px; align-content: center; gap: 4px 8px; border-right: 1px solid var(--line-soft); background: var(--surface); position: relative; overflow: hidden; }
@@ -255,7 +282,7 @@ button { color: inherit; }
 .panel-heading { min-height: 64px; padding: 12px 16px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line-soft); }
 .panel-collapse-button { position: relative; flex: none; width: 30px; min-height: 30px; padding: 0; border: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; }.panel-collapse-button:hover { border-color: var(--signal-deep); color: var(--signal-deep); }.panel-collapse-button span::before { content: ''; position: absolute; top: 10px; left: 11px; width: 7px; height: 7px; border-top: 1px solid currentColor; border-left: 1px solid currentColor; transform: rotate(-45deg); }.panel-collapse-right span::before { left: 9px; transform: rotate(135deg); }
 .panel-heading h1, .panel-heading h2, .comparison-panel h2 { margin: 8px 0 0; font-weight: 600; letter-spacing: -.025em; }
-.panel-heading h1 { font-size: clamp(20px, 2vw, 31px); }
+.panel-heading h1 { font-size: clamp(18px, 1.45vw, 22px); }
 .panel-heading h2, .comparison-panel h2 { font-size: 17px; }
 .panel-note { margin: 0; padding: 14px 18px; color: var(--muted); border-bottom: 1px solid var(--line-soft); font-size: 11px; line-height: 1.55; }
 .count-badge, .resource-state, .path-readout { color: var(--muted); font: 600 9px/1 var(--font-data); letter-spacing: .06em; }
@@ -332,27 +359,39 @@ button { color: inherit; }
 .failure-empty { margin: 0; padding: 4px 18px 14px; color: var(--muted); font: 500 11px/1.4 var(--font-ui); }
 .failure-switch { width: 100%; min-height: 52px; padding: 9px 18px; display: grid; grid-template-columns: 20px 1fr auto; align-items: center; gap: 10px; border: 0; border-top: 1px solid var(--line-soft); background: transparent; text-align: left; cursor: pointer; }.failure-virtual-window .failure-switch { height: 52px; }
 .failure-switch:hover { background: var(--surface-raised); }
+.failure-tier { margin: 14px 0 0; padding: 8px 18px 6px; display: flex; align-items: baseline; justify-content: space-between; gap: 10px; border-top: 1px solid var(--line); color: var(--muted); font: 600 10px/1.3 var(--font-data); letter-spacing: .04em; }
+.failure-tier:first-of-type { margin-top: 4px; border-top: 0; }
+.failure-tier span { padding: 2px 6px; background: var(--surface-tint); color: var(--text); font: 600 10px/1 var(--font-data); }
+.failure-tier[data-tier="severs"], .failure-tier[data-tier="endpoint"] { color: var(--danger); }
+.failure-tier[data-tier="overloads"] { color: var(--amber); }
+.failure-tier[data-tier="absorbs"] { color: var(--signal-deep); }
+.failure-switch:has([data-verdict="severs"]) { background: color-mix(in srgb, var(--danger) 6%, transparent); }
+.failure-switch:has([data-verdict="overloads"]) { background: color-mix(in srgb, var(--amber) 6%, transparent); }
+.failure-switch:has([data-verdict="severs"]):hover, .failure-switch:has([data-verdict="overloads"]):hover { background: var(--surface-raised); }
 .failure-switch .switch-glyph { width: 15px; height: 15px; border: 1px solid var(--muted); position: relative; }
 .failure-switch.active .switch-glyph { border-color: var(--danger); }
 .failure-switch.active .switch-glyph::after { content: ''; position: absolute; inset: 2px; background: var(--danger); }
-.failure-switch strong { display: block; font: 600 11px/1.2 var(--font-data); }
-.failure-switch small { display: block; color: var(--muted); font-size: 9px; }
+.failure-switch strong { display: block; font: 600 12px/1.2 var(--font-data); }
+.failure-switch small { display: block; color: var(--muted); font-size: 11px; }
 /* 판정은 문구로 읽힌다. 색은 보조일 뿐이라 색만으로 구분하지 않는다. */
-.failure-forecast { margin-top: 3px; font: 600 9px/1.2 var(--font-data); }
+.failure-forecast { margin-top: 3px; font: 700 11px/1.2 var(--font-data); }
 .failure-forecast[data-verdict="severs"] { color: var(--danger); }
 .failure-forecast[data-verdict="overloads"] { color: var(--amber); }
 .failure-forecast[data-verdict="absorbs"] { color: var(--signal-deep); }
 .failure-grade { margin: 0; padding: 2px 18px 12px; color: var(--muted); font: 600 12px/1.4 var(--font-data); letter-spacing: .02em; }
 .failure-grade[data-grade="single-point"] { color: var(--danger); }
 .failure-grade[data-grade="partial"] { color: var(--amber); }
-.failure-switch .switch-state { color: var(--muted); font: 500 9px/1 var(--font-data); }
+.failure-switch .switch-state { color: var(--muted); font: 500 10px/1 var(--font-data); }
 .failure-switch.active .switch-state { color: var(--danger); }
 
 .topology-panel { position: relative; min-width: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; background: var(--surface-tint); }
 .topology-heading { position: absolute; z-index: 14; top: 12px; left: 12px; right: 12px; min-height: 0; align-items: flex-start; padding: 0; border: 0; background: transparent; pointer-events: none; }
 .topology-heading > div:first-child { max-width: min(460px, 46%); padding: 10px 13px; border: 1px solid var(--line); background: color-mix(in srgb, var(--surface-raised) 96%, transparent); box-shadow: 0 8px 22px color-mix(in srgb, var(--panel-deep) 16%, transparent); }
 /* 제목은 문장이므로 줄바꿈을 허용한다. 아래 한 줄은 병목 사실이라 한 줄로 자른다. */
-.topology-heading h1 { max-width: 100%; margin-top: 0; font-size: 17px; line-height: 1.3; white-space: normal; word-break: keep-all; }.topology-heading .headline-detail { max-width: 100%; margin-top: 5px; font-size: 11px; line-height: 1.45; white-space: pre-line; word-break: keep-all; }
+/* 캔버스에서 가장 큰 타이프는 이 답이다. 17px 는 병목 줄과 거의 같은 무게라 누가 결론인지
+   보이지 않았다. 32px 까지 올렸다가 상단이 다시 다리를 잡아서 22px 에서 멈처다. */
+.topology-heading h1 { max-width: 100%; margin-top: 0; line-height: 1.15; letter-spacing: -.02em; white-space: normal; word-break: keep-all; text-wrap: balance; }
+.topology-heading .headline-detail { max-width: 100%; margin-top: 4px; word-break: keep-all; }
 .topology-heading .run-state { margin-top: 8px; justify-content: flex-start; }
 .topology-heading .status-chip { min-height: 20px; padding: 0 6px; font-size: 9px; }
 .topology-heading .status-chip i { width: 6px; height: 6px; }
@@ -362,7 +401,12 @@ button { color: inherit; }
 #topology-heading[data-tone="danger"] { color: var(--danger); }
 #topology-heading[data-tone="amber"] { color: var(--amber); }
 #topology-heading[data-tone="unknown"] { color: var(--unknown); }
-.headline-detail { margin: 5px 0 0; color: var(--muted); font: 500 12px/1.3 var(--font-data); }
+/* 두 사실을 단계로 나눈다. 병목 자원은 이름이므로 한 번 읽힌다. 사용률은 다시 보는 숫자다. */
+.headline-detail { display: grid; gap: 1px; margin: 4px 0 0; color: var(--muted); font: 500 11px/1.4 var(--font-data); }
+.headline-binding { color: var(--text); font: 700 13px/1.25 var(--font-data); letter-spacing: -.01em; }
+.headline-binding em { display: inline; margin-right: 7px; color: var(--muted); font: 500 10px/1 var(--font-data); font-style: normal; letter-spacing: .06em; }
+.headline-measure b { color: var(--amber); font-size: 13px; }
+.topology-heading:has(#topology-heading[data-tone="danger"]) .headline-measure b { color: var(--danger); }
 .topology-live-status { display: grid; justify-items: end; gap: 9px; }
 .topology-controls { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; justify-content: flex-end; }
 .editor-menu { position: relative; }.editor-menu > summary { min-height: 30px; padding: 0 9px; display: flex; align-items: center; border: 1px solid var(--line); background: var(--surface); color: var(--text); cursor: pointer; font: 600 9px/1 var(--font-data); list-style: none; }.editor-menu > summary::-webkit-details-marker { display: none; }.editor-menu[open] .editor-tools { position: absolute; z-index: 30; top: calc(100% + 5px); right: 0; }
@@ -619,7 +663,11 @@ button { color: inherit; }
 .binding-callout { margin: 18px 0; padding: 15px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .binding-callout span { color: var(--muted); font: 500 9px/1 var(--font-data); letter-spacing: .1em; }
 .binding-callout strong { display: flex; justify-content: space-between; margin-top: 9px; color: var(--signal-deep); font: 600 14px/1 var(--font-data); }
-.axis-list { display: grid; gap: 18px; }
+/* 한계값을 고치는 폼은 아래에 있다. 결과를 보려고 다시 올려야 했다. */
+.inspector-panel .resource-identity, .inspector-panel .binding-callout { position: sticky; z-index: 3; background: var(--surface); }
+.inspector-panel .resource-identity { top: 0; }
+.inspector-panel .binding-callout { top: 80px; margin-bottom: 0; box-shadow: 0 8px 14px -14px color-mix(in srgb, var(--panel-deep) 60%, transparent); }
+.axis-list { display: grid; gap: 18px; margin-top: 18px; }
 .axis-row { --axis-color: var(--cyan); }
 .axis-row.warning { --axis-color: var(--amber); }.axis-row.overloaded { --axis-color: var(--danger); }.axis-row.unknown { --axis-color: var(--unknown); }.axis-row.invalid { --axis-color: var(--danger); }
 .axis-title, .axis-values { display: flex; justify-content: space-between; gap: 10px; }
@@ -669,7 +717,7 @@ button { color: inherit; }
 .inspector-editor { margin-top: 22px; padding-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; border-top: 1px solid var(--line); }
 .inspector-editor h3 { grid-column: 1 / -1; margin: 0 0 4px; font-size: 17px; line-height: 1.2; }
 .inspector-editor-hint { grid-column: 1 / -1; margin: -2px 0 4px; color: var(--muted); font-size: 11px; line-height: 1.45; }
-.inspector-editor label { display: grid; gap: 5px; color: var(--muted); font: 600 9px/1 var(--font-data); }
+.inspector-editor label { display: grid; gap: 5px; color: var(--muted); font: 600 11px/1.2 var(--font-data); }
 .inspector-editor input { min-width: 0; height: 36px; padding: 0 8px; border: 1px solid var(--line); background: var(--surface-raised); color: var(--text); font: 500 10px/1 var(--font-data); }
 .inspector-editor-actions { grid-column: 1 / -1; display: flex; gap: 7px; margin-top: 2px; }
 .inspector-editor-actions button { min-height: 36px; padding: 0 10px; border: 1px solid var(--line); background: var(--surface); color: var(--text); cursor: pointer; font: 600 9px/1 var(--font-data); }
@@ -687,7 +735,22 @@ button { color: inherit; }
 .comparison-item span { font-size: 10px; }.comparison-item strong { display: block; margin: 10px 0 7px; font: 600 18px/1 var(--font-data); }.comparison-item small { font: 500 9px/1.3 var(--font-data); }
 .comparison-item.negative strong { color: var(--danger); }.comparison-item.positive strong { color: var(--signal-deep); }
 .comparison-detail { grid-column: 1 / -1; border-top: 1px solid var(--line); background: var(--surface); }.comparison-detail > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line-soft); color: var(--text); font: 600 10px/1 var(--font-data); }.comparison-detail > header small { color: var(--muted); }.comparison-detail ul { max-height: 232px; margin: 0; padding: 0; overflow: auto; list-style: none; }.comparison-detail li { display: grid; grid-template-columns: minmax(160px, 1fr) auto minmax(95px, auto); gap: 12px; align-items: baseline; padding: 9px 16px; border-top: 1px solid var(--line-soft); font: 500 10px/1.3 var(--font-data); }.comparison-detail li:first-child { border-top: 0; }.comparison-detail li b { color: var(--text); }.comparison-detail li span, .comparison-detail li small { color: var(--muted); }.comparison-detail li.negative b { color: var(--danger); }.comparison-path > header label { display: flex; align-items: center; gap: 8px; }.comparison-path select { min-height: 30px; border: 1px solid var(--line); background: var(--surface-raised); color: var(--text); font: 600 10px/1 var(--font-data); }.comparison-path > div { display: grid; grid-template-columns: 1fr 1fr; }.comparison-path > div ul + ul { border-left: 1px solid var(--line-soft); }
-.failure-worst-axes ul { margin: 0; padding: 0; list-style: none; }.failure-worst-axes li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 9px 12px; border-top: 1px solid var(--line-soft); font: 500 10px/1.3 var(--font-data); }.failure-worst-axes li b { color: var(--text); }.failure-worst-axes li span { color: var(--danger); font-weight: 700; }.failure-worst-axes li small { grid-column: 1 / -1; color: var(--muted); }
+.failure-worst-axes ul { margin: 0; padding: 0; list-style: none; }
+.failure-worst-axes ul[data-worst-folded] li:nth-child(n+5) { display: none; }
+.failure-worst-axes li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; padding: 9px 14px 9px 12px; border-top: 1px solid var(--line-soft); font: 500 11px/1.35 var(--font-data); }
+.failure-worst-axes li b { min-width: 0; color: var(--text); overflow-wrap: anywhere; }
+.failure-worst-axes li span { justify-self: end; align-self: start; color: var(--danger); font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.failure-worst-axes li[data-tier="warn"] span { color: var(--amber); }
+.failure-worst-axes li[data-tier="ok"] span { color: var(--signal-deep); }
+.failure-worst-axes li[data-tier="unknown"] span { color: var(--unknown); }
+.failure-worst-axes li span i { display: block; color: var(--muted); font: 600 9px/1.2 var(--font-data); font-style: normal; letter-spacing: .06em; text-align: right; }
+.failure-worst-axes li small { grid-column: 1 / -1; color: var(--muted); font-size: 10px; }
+/* 막대가 숫자보다 먼저 읽힌다. 한계를 모르는 행은 트랙만 남긴다. */
+.failure-worst-axes li::after { content: ""; grid-column: 1 / -1; height: 4px; margin-top: 2px; background: linear-gradient(to right, var(--unknown) var(--worst-bar, 0%), var(--surface-tint) 0); }
+.failure-worst-axes li[data-tier="over"]::after { background: linear-gradient(to right, var(--danger) var(--worst-bar, 0%), var(--surface-tint) 0); }
+.failure-worst-axes li[data-tier="warn"]::after { background: linear-gradient(to right, var(--amber) var(--worst-bar, 0%), var(--surface-tint) 0); }
+.failure-worst-axes li[data-tier="ok"]::after { background: linear-gradient(to right, var(--cyan) var(--worst-bar, 0%), var(--surface-tint) 0); }
+.failure-worst-axes li[data-tier="unknown"]::after { background: var(--surface-tint); }
 /* 오른쪽 버튼 메뉴. 캔버스 위 어디서든 뜨므로 화면 경계에서 접힌다. */
 .context-menu { position: fixed; z-index: 40; min-width: 168px; padding: 4px 0; border: 1px solid var(--line); background: var(--surface-raised); box-shadow: 0 10px 30px color-mix(in srgb, var(--panel-deep) 24%, transparent); }
 .context-title { margin: 0; padding: 8px 14px 6px; border-bottom: 1px solid var(--line-soft); color: var(--muted); font: 600 9px/1.2 var(--font-data); letter-spacing: .08em; }
@@ -749,7 +812,7 @@ button { color: inherit; }
   .main-grid { display: flex; flex-direction: column; min-height: 0; }
   .failure-panel { border-right: 0; order: 2; }.topology-panel { order: 1; }.inspector-panel { display: none; }.inspector-panel.mobile-open { position: fixed; inset: auto 0 0; z-index: 70; display: grid; grid-template-rows: auto minmax(0, 1fr); max-height: min(82vh, 720px); border: 1px solid var(--line); border-bottom: 0; background: var(--surface); box-shadow: 0 -18px 50px color-mix(in srgb, var(--panel-deep) 30%, transparent); }.inspector-panel.mobile-open .inspector-content { overflow: auto; }.inspector-close-mobile { display: block; min-height: 44px; margin-left: auto; padding: 0 12px; border: 1px solid var(--line); background: var(--surface); color: var(--text); }
   .failure-list { grid-template-columns: 1fr 1fr; }.failure-group h3, .failure-virtual-list { grid-column: 1 / -1; }.failure-group { display: contents; }
-  .topology-heading { position: relative; min-height: 108px; align-items: flex-start; padding: 12px 14px; pointer-events: auto; }.topology-heading > div:first-child { max-width: 100%; padding: 0; border: 0; background: transparent; box-shadow: none; }.topology-heading h1 { font-size: 20px; white-space: normal; }.topology-heading .headline-detail { font-size: 11px; white-space: normal; }.topology-controls { padding: 0; border: 0; background: transparent; box-shadow: none; flex-wrap: wrap; }.path-readout { margin-top: 4px; }.topology-live-status { display: none; }.mobile-inspector-open { display: block; min-height: 44px; padding: 0 10px; border: 1px solid var(--signal-deep); background: var(--surface-tint); color: var(--signal-deep); font: 600 10px/1 var(--font-data); }.view-settings > summary { min-height: 44px; padding: 0 10px; font-size: 10px; }.view-settings[open] .layout-control { position: absolute; z-index: 14; top: 100%; left: auto; right: 0; min-width: min(320px, calc(100vw - 28px)); padding: 10px; }.zoom-control button { min-height: 44px; min-width: 44px; }
+  .topology-heading { position: relative; min-height: 108px; align-items: flex-start; padding: 12px 14px; pointer-events: auto; }.topology-heading > div:first-child { max-width: 100%; padding: 0; border: 0; background: transparent; box-shadow: none; }.topology-heading h1 { white-space: normal; }.topology-heading .headline-detail { font-size: 11px; white-space: normal; }.topology-controls { padding: 0; border: 0; background: transparent; box-shadow: none; flex-wrap: wrap; }.path-readout { margin-top: 4px; }.topology-live-status { display: none; }.mobile-inspector-open { display: block; min-height: 44px; padding: 0 10px; border: 1px solid var(--signal-deep); background: var(--surface-tint); color: var(--signal-deep); font: 600 10px/1 var(--font-data); }.view-settings > summary { min-height: 44px; padding: 0 10px; font-size: 10px; }.view-settings[open] .layout-control { position: absolute; z-index: 14; top: 100%; left: auto; right: 0; min-width: min(320px, calc(100vw - 28px)); padding: 10px; }.zoom-control button { min-height: 44px; min-width: 44px; }
   .topology-canvas { margin: 0; }.topology-scroll { max-height: 500px; position: relative; }
   .mobile-pan-cue { position: sticky; top: 0; left: 0; z-index: 8; width: 100vw; min-height: 30px; display: flex; align-items: center; justify-content: center; gap: 18px; color: var(--on-deep); background: linear-gradient(90deg, var(--panel-deep) 0%, var(--panel-mid) 18%, var(--panel-mid) 82%, var(--panel-deep) 100%); border-bottom: 1px solid var(--panel-line); font: 600 9px/1 var(--font-data); letter-spacing: .08em; }
   .inspector-content { display: block; overflow-x: hidden; }.inspector-panel.mobile-open .shape-editor { max-width: 100%; overflow-x: hidden; }.inspector-panel.mobile-open .shape-editor-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }.inspector-panel.mobile-open .shape-editor-grid input, .inspector-panel.mobile-open .shape-editor-grid select { min-width: 0; }.binding-callout { margin: 18px 0; padding: 15px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }.source-note { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line-soft); }

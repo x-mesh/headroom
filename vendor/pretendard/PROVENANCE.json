@@ -1,0 +1,21 @@
+{
+  "upstream": "https://github.com/orioncactus/pretendard",
+  "package": "pretendard@1.3.9",
+  "path": "dist/web/static/woff2",
+  "fetchedAt": "2026-09-10",
+  "files": [
+    {
+      "file": "Pretendard-Regular.woff2",
+      "weight": 400,
+      "bytes": 765892,
+      "sha256": "fad853f7f47c6c8b103171e7193fa095708cdcd70850a71d93aa5379e8a61d63"
+    },
+    {
+      "file": "Pretendard-SemiBold.woff2",
+      "weight": 600,
+      "bytes": 785856,
+      "sha256": "c863f76a7de5c1ddc1ed8b2fa794964530774592c4f31407a84e2a2ae93f17f0"
+    }
+  ],
+  "license": "SIL Open Font License 1.1"
+}
