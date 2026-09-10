@@ -81,13 +81,22 @@ export function buildNamedScenarioServiceVerdicts(topology, baseline, namedScena
   });
 }
 
-function reportResilience(analysis = {}) {
+function reportResilience(topology, analysis = {}) {
   const survival = analysis.survivalMultiplier;
   const domainSweep = analysis.domainSweep;
+  const resourceName = (id) => {
+    const resource = [...(topology.devices || []), ...(topology.links || [])].find((item) => item.id === id);
+    if (resource?.name) return resource.name;
+    if (resource?.source && resource?.target) {
+      const endpoint = (endpointId) => topology.devices?.find(({ id: deviceId }) => deviceId === endpointId)?.name || endpointId;
+      return `${endpoint(resource.source)} → ${endpoint(resource.target)}`;
+    }
+    return id;
+  };
   return {
     survivalMultiplier: survival ? {
       scope: '단일 자원 N-1', status: survival.status, statusLabel: SURVIVAL_STATUS[survival.status] || survival.status,
-      multiplier: survival.multiplier, bounded: Boolean(survival.bounded), worstFault: survival.worstFault ? { ...survival.worstFault } : null,
+      multiplier: survival.multiplier, bounded: Boolean(survival.bounded), worstFault: survival.worstFault ? { ...survival.worstFault, name: resourceName(survival.worstFault.id) } : null,
       evaluated: survival.evaluated, candidates: survival.candidates, endpointCount: survival.endpointIds?.length || 0,
       unresolvedCount: survival.unresolvedCount || 0,
     } : null,
@@ -118,7 +127,7 @@ export function buildReportModel(topology, scenario, baseline, namedScenarios = 
       unreachableDelta: summary.unreachableCount - baseline.summary.unreachableCount, overloadedDelta: summary.overloadedCount - baseline.summary.overloadedCount },
     services: buildServiceVerdicts(topology, scenario, baseline),
     namedScenarios: buildNamedScenarioServiceVerdicts(topology, baseline, namedScenarios),
-    observedLoadValidation: buildObservedLoadValidationReport(topology, options), resilience: reportResilience(analysis), binding, constraints };
+    observedLoadValidation: buildObservedLoadValidationReport(topology, options), resilience: reportResilience(topology, analysis), binding, constraints };
 }
 
 function escape(value) { return String(value).replace(/[&<>\"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char]); }
@@ -142,7 +151,7 @@ function observedValidationHtml(validation) {
 function resilienceMarkdown(resilience) {
   const survival = resilience.survivalMultiplier;
   const domains = resilience.domainSweep;
-  const survivalSection = survival ? '\n## N-1 생존 배수\n\n- 범위: ' + survival.scope + '\n- 결과: ' + survival.statusLabel + (survival.multiplier == null ? '' : ' · ' + survival.multiplier.toFixed(2) + '×' + (survival.bounded ? ' 이하' : '')) + '\n- 최악 장애: ' + (survival.worstFault?.id || '없음') + '\n- 검사: ' + survival.evaluated + '/' + survival.candidates + '개' + (survival.endpointCount ? ' · 끝점 제외 ' + survival.endpointCount + '개' : '') + (survival.unresolvedCount ? ' · 미확인 ' + survival.unresolvedCount + '개' : '') + '\n' : '';
+  const survivalSection = survival ? '\n## N-1 생존 배수\n\n- 범위: ' + survival.scope + '\n- 결과: ' + survival.statusLabel + (survival.multiplier == null ? '' : survival.multiplier === 0 ? ' · 생존 불가' : ' · ' + survival.multiplier.toFixed(2) + '×' + (survival.bounded ? ' 이하' : '')) + '\n- 최악 장애: ' + (survival.worstFault?.name || survival.worstFault?.id || '없음') + '\n- 검사: ' + survival.evaluated + '/' + survival.candidates + '개' + (survival.unresolvedCount ? ' · 미확인 ' + survival.unresolvedCount + '개' : '') + '\n' : '';
   if (!domains) return survivalSection;
   const rows = (items) => items.length ? items.map((item) => '| ' + item.name + ' | ' + item.verdictLabel + (item.bounded ? ' · 한계 미확인' : '') + ' | ' + percent(item.minDeliveredRatio) + ' |').join('\n') + '\n' : '| 없음 | — | — |\n';
   const invalid = domains.redundancyInvalid.length ? '\n- 이중화 무효: ' + domains.redundancyInvalid.map(({ name, reason, deliveryDrop }) => name + (reason === 'delivery-drop' ? ' (전달률 ' + percent(deliveryDrop) + 'p 저하)' : ' (서비스 단절)')).join(', ') + '\n' : '';
@@ -152,7 +161,7 @@ function resilienceMarkdown(resilience) {
 function resilienceHtml(resilience) {
   const survival = resilience.survivalMultiplier;
   const domains = resilience.domainSweep;
-  const survivalSection = survival ? '<h2>N-1 생존 배수</h2><dl><dt>범위</dt><dd>' + escape(survival.scope) + '</dd><dt>결과</dt><dd>' + escape(survival.statusLabel) + (survival.multiplier == null ? '' : ' · ' + escape(survival.multiplier.toFixed(2)) + '×' + (survival.bounded ? ' 이하' : '')) + '</dd><dt>최악 장애</dt><dd>' + escape(survival.worstFault?.id || '없음') + '</dd><dt>검사</dt><dd>' + survival.evaluated + '/' + survival.candidates + '개' + (survival.endpointCount ? ' · 끝점 제외 ' + survival.endpointCount + '개' : '') + (survival.unresolvedCount ? ' · 미확인 ' + survival.unresolvedCount + '개' : '') + '</dd></dl>' : '';
+  const survivalSection = survival ? '<h2>N-1 생존 배수</h2><dl><dt>범위</dt><dd>' + escape(survival.scope) + '</dd><dt>결과</dt><dd>' + escape(survival.statusLabel) + (survival.multiplier == null ? '' : survival.multiplier === 0 ? ' · 생존 불가' : ' · ' + escape(survival.multiplier.toFixed(2)) + '×' + (survival.bounded ? ' 이하' : '')) + '</dd><dt>최악 장애</dt><dd>' + escape(survival.worstFault?.name || survival.worstFault?.id || '없음') + '</dd><dt>검사</dt><dd>' + survival.evaluated + '/' + survival.candidates + '개' + (survival.unresolvedCount ? ' · 미확인 ' + survival.unresolvedCount + '개' : '') + '</dd></dl>' : '';
   if (!domains) return survivalSection;
   const rows = (items) => items.length ? items.map((item) => '<tr><td>' + escape(item.name) + '</td><td>' + escape(item.verdictLabel + (item.bounded ? ' · 한계 미확인' : '')) + '</td><td>' + escape(percent(item.minDeliveredRatio)) + '</td></tr>').join('') : '<tr><td>없음</td><td>—</td><td>—</td></tr>';
   const invalid = domains.redundancyInvalid.length ? '<p>이중화 무효: ' + escape(domains.redundancyInvalid.map(({ name, reason, deliveryDrop }) => name + (reason === 'delivery-drop' ? ' (전달률 ' + percent(deliveryDrop) + 'p 저하)' : ' (서비스 단절)')).join(', ')) + '</p>' : '';

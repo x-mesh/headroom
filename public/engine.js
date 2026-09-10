@@ -1042,7 +1042,8 @@ export function createFailureDomainSweepTask(topology, options = {}) {
           const domain = candidate.domain;
           singles.push({ id: domain.id, name: domain.name, kind: domain.kind ?? 'other', domainIds: [domain.id], resources: domainResources(domain), ...domainVerdict(topology, [domain.id], scale, options.strictPaths) });
         } else {
-          pairs.push({ id: candidate.domainIds.join('+'), name: candidate.domainIds.join(' + '), domainIds: candidate.domainIds, resources: candidate.resources, ...domainVerdict(topology, candidate.domainIds, scale, options.strictPaths) });
+          const domainNames = candidate.domainIds.map((id) => domains.find((domain) => domain.id === id)?.name || id);
+          pairs.push({ id: candidate.domainIds.join('+'), name: domainNames.join(' + '), domainIds: candidate.domainIds, resources: candidate.resources, ...domainVerdict(topology, candidate.domainIds, scale, options.strictPaths) });
         }
       }
       return this.done ? this.result : null;

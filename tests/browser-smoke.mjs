@@ -15,6 +15,13 @@ const { port } = server.address();
 const browser = await chromium.launch();
 const failures = [];
 
+async function clickEditorAction(page, action) {
+  const button = page.locator(`[data-editor-action="${action}"]`);
+  if (!await button.isVisible()) await page.locator('.editor-menu > summary').click();
+  await button.click();
+  await page.locator('.editor-menu').evaluate((menu) => { menu.open = false; });
+}
+
 // 캔버스 편집은 선택·스크롤·설계를 모두 바꾸므로 깨끗한 페이지에서 따로 확인한다.
 async function verifyCanvasEditing() {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } });
@@ -70,7 +77,7 @@ async function verifyCanvasEditing() {
   const linkCount = await page.locator('.link-group').count();
   await page.locator('[data-context-action="delete"]').click();
   await page.waitForFunction((before) => document.querySelectorAll('.link-group').length === before - 1, linkCount);
-  await page.locator('[data-editor-action="undo"]').click();
+  await clickEditorAction(page, 'undo');
   await page.waitForFunction((before) => document.querySelectorAll('.link-group').length === before, linkCount);
 
   const someNode = page.locator('.mesh-node:not(.disabled)').first();
@@ -101,7 +108,7 @@ async function verifyCanvasEditing() {
   await page.mouse.up();
   await page.waitForFunction((before) => document.querySelectorAll('.link-group').length === before + 1, nodeCount);
   assert.equal(await page.locator('.link-draft').count(), 0, 'the rubber band does not outlive the drop');
-  await page.locator('[data-editor-action="undo"]').click();
+  await clickEditorAction(page, 'undo');
   await page.waitForFunction((before) => document.querySelectorAll('.link-group').length === before, nodeCount);
 
   // 팔레트 클릭은 즉시 현재 보이는 캔버스 중앙에 도형 하나를 만들고 선택한다.
@@ -135,9 +142,9 @@ async function verifyCanvasEditing() {
   await page.locator('[data-resource-form="shape"] input[name="x"]').fill('45');
   await page.locator('[data-resource-form="shape"] button[type="submit"]').click();
   assert.match(await page.locator('.diagram-shape').first().getAttribute('style'), /left:45px/);
-  await page.locator('[data-editor-action="undo"]').click();
+  await clickEditorAction(page, 'undo');
   assert.doesNotMatch(await page.locator('.diagram-shape').first().getAttribute('style'), /left:45px/);
-  await page.locator('[data-editor-action="redo"]').click();
+  await clickEditorAction(page, 'redo');
   assert.match(await page.locator('.diagram-shape').first().getAttribute('style'), /left:45px/);
   const svgDownload = page.waitForEvent('download');
   await page.locator('#export-menu-button').click();
@@ -179,7 +186,7 @@ async function verifyCanvasEditing() {
 
   await lockedShape.click();
   await page.locator('.diagram-shape').nth(1).click({ modifiers: ['Shift'] });
-  await page.locator('[data-editor-action="group"]').click();
+  await clickEditorAction(page, 'group');
   const groupFrame = page.locator('[data-diagram-group-id] rect');
   assert.equal(await groupFrame.count(), 1, 'a diagram group has a canvas frame that can be selected again');
   await groupFrame.focus();
@@ -197,7 +204,7 @@ async function verifyCanvasEditing() {
   await page.waitForFunction(() => document.querySelector('.diagram-shape')?.textContent === '설명');
   assert.match(await page.locator('#toast').textContent(), /계산 의미는 장비에 별도로 지정/);
   const devicesBeforeMapping = await page.locator('.mesh-node').count();
-  await page.locator('[data-editor-action="map-device"]').click();
+  await clickEditorAction(page, 'map-device');
   await page.locator('[data-editor-form="device"] button[type="submit"]').click();
   assert.equal(await page.locator('.diagram-shape').count(), 0);
   assert.equal(await page.locator('.mesh-node').count(), devicesBeforeMapping + 1, 'an imported shape can receive infrastructure meaning explicitly');
@@ -215,6 +222,7 @@ async function verifyBackendPool() {
   page.on('pageerror', (error) => failures.push(`pool pageerror: ${error.message}`));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   await page.locator('#new-design-button').click();
+  assert.equal(await page.locator('[data-template="dual-fabric"]').count(), 1, '공유 전원 템플릿을 설계 목록에서 열 수 있어야 합니다');
   await page.locator('[data-template="dual-stack"]').click();
   await page.locator('#tab-palette').click();
   await page.waitForFunction(() => document.querySelector('#panel-palette')?.hidden === false);
@@ -248,6 +256,25 @@ async function verifyBackendPool() {
   await page.close();
 }
 
+async function verifySharedPowerTemplate() {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  await page.addInitScript(() => localStorage.clear());
+  page.on('pageerror', (error) => failures.push(`shared power template pageerror: ${error.message}`));
+  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+  await page.locator('#new-design-button').click();
+  const template = page.locator('[data-template="dual-fabric"]');
+  await template.waitFor();
+  assert.match(await template.textContent(), /PDU-3|공유 전원/, '템플릿 카드가 공유 전원 위험을 설명해야 합니다');
+  await template.click();
+  const lesson = page.locator('#learning-panel');
+  await lesson.locator('[data-lesson-action="fault-domain"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-failure-type="domain"][data-failure-id="pdu-3"]')?.getAttribute('aria-pressed') === 'true');
+  assert.match(await page.locator('#summary-survival').textContent(), /활성 장애\s*1/);
+  await page.locator('#tab-failure').click();
+  assert.match(await page.locator('#failure-grade').textContent(), /이중화 무효 PDU-3 SPINE 공용 전원/);
+  await page.close();
+}
+
 async function verify(viewport, screenshot, interact = false) {
   const page = await browser.newPage({ viewport });
   await page.addInitScript(() => localStorage.clear());
@@ -256,11 +283,27 @@ async function verify(viewport, screenshot, interact = false) {
   page.on('requestfailed', (request) => failures.push(`request: ${request.url()} ${request.failure()?.errorText}`));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   await page.evaluate(() => document.fonts.ready);
+  if (viewport.width > 1180) {
+    const canvasWidth = await page.locator('.topology-panel').evaluate((node) => node.getBoundingClientRect().width);
+    await page.locator('#toggle-left-panel').click();
+    await page.waitForFunction(() => document.querySelector('#design-board').getBoundingClientRect().width < 1);
+    assert.ok(await page.locator('#design-board').evaluate((node) => node.getBoundingClientRect().width < 1), '접힌 도구 패널은 세로 레일을 남기지 않아야 합니다');
+    assert.equal(await page.locator('#toggle-left-panel').isVisible(), true, '도구 펼치기 화살표는 도면 위에 남아야 합니다');
+    assert.equal(await page.locator('#panel-palette').evaluate((node) => node.inert), true, '접힌 도구 내용은 키보드 탐색에서 제외해야 합니다');
+    await page.locator('#toggle-right-panel').click();
+    await page.waitForFunction(() => document.querySelector('#inspector-panel').getBoundingClientRect().width < 1);
+    assert.ok(await page.locator('#inspector-panel').evaluate((node) => node.getBoundingClientRect().width < 1), '접힌 검사 패널은 세로 레일을 남기지 않아야 합니다');
+    assert.equal(await page.locator('#toggle-right-panel').isVisible(), true, '검사 펼치기 화살표는 도면 위에 남아야 합니다');
+    assert.equal(await page.locator('#inspector-content').evaluate((node) => node.inert), true, '접힌 검사 내용은 키보드 탐색에서 제외해야 합니다');
+    await page.locator('#toggle-left-panel').click();
+    await page.locator('#toggle-right-panel').click();
+    await page.waitForFunction((width) => Math.abs(document.querySelector('.topology-panel').getBoundingClientRect().width - width) < 2, canvasWidth);
+  }
   assert.match(await page.locator('#summary-survival').textContent(), /단일 장애점\s*\d+/);
   // 캔버스 아래가 지금 무엇이 막고 있는지 문장으로 말해야 한다.
   const restingNote = await page.locator('#bottleneck-note').textContent();
   assert.match(restingNote, /가장 빠듯합니다|한계를 넘었습니다/);
-  assert.match(restingNote, /LEAF B → API 02/, 'a link must read by its endpoints, not its id');
+  assert.match(restingNote, /LEAF B → API B/, 'a link must read by its endpoints, not its id');
   // 근거와 용량은 서로 덮지 않는다. 미확정 근거가 있어도 실제 용량 상태를 함께 말한다.
   assert.match(await page.locator('#evidence-state').textContent(), /EVIDENCE [0-9]+ UNKNOWN/);
   assert.match(await page.locator('#capacity-state').textContent(), /BASELINE|WARNING/);
@@ -270,7 +313,7 @@ async function verify(viewport, screenshot, interact = false) {
   await page.locator('#analysis-menu-button').click();
   await page.locator('[data-editor-action="verification"]').click();
   const verificationCounts = await page.locator('[data-verification-tab] span').allTextContents();
-  assert.deepEqual(verificationCounts, ['1', '2', '3', '0'], 'the default scenario exposes service, rack domains, and rack budgets');
+  assert.deepEqual(verificationCounts, ['1', '3', '3', '0'], 'the default scenario exposes service, rack domains, and rack budgets');
   await page.locator('[data-verification-tab="scenario"]').click();
   const scenarioForm = page.locator('[data-editor-form="scenario"]');
   await scenarioForm.locator('[name="name"]').fill('기준 시나리오');
@@ -286,7 +329,7 @@ async function verify(viewport, screenshot, interact = false) {
     .some((suggestion) => suggestion.textContent.includes('RACK 04')));
   assert.equal(await page.locator('#summary-headroom').textContent(), headroomBeforeSuggestion, 'a domain suggestion does not change the current calculation');
   await page.locator('[data-domain-suggestion]').filter({ hasText: 'RACK 04' }).click();
-  await page.waitForFunction(() => document.querySelectorAll('[data-delete-model="domain"]').length === 2);
+  await page.waitForFunction(() => document.querySelectorAll('[data-delete-model="domain"]').length === 3);
   assert.match(await page.locator('[data-delete-model="domain"][data-model-id="rack-04"]').locator('xpath=parent::*').textContent(), /공간/);
   assert.equal(await page.locator('#summary-headroom').textContent(), headroomBeforeSuggestion, 'accepting a domain declaration does not change the current calculation');
   await page.locator('#editor-close').click();
@@ -361,14 +404,8 @@ async function verify(viewport, screenshot, interact = false) {
     await resourceAbsorbsToggle.first().dispatchEvent('click');
     assert.equal(await resourceAbsorbsToggle.first().getAttribute('aria-expanded'), 'true', 'absorbing resources expand on demand');
   }
-  // 칸의 선은 그 칸의 숫자를 그려야 한다. 예전에는 활성 장애 칸이 배율을, 과부하 칸이
-  // 헤드룸의 역수를 그렸다. 선이 다른 것을 말하면 읽는 사람은 선을 믿고 잘못 읽는다.
-  const paired = await page.evaluate(() => [...document.querySelectorAll('.summary-metric:has(.metric-sparkline)')].map((cell) => ({
-    figure: cell.querySelector('strong[id^="summary-"]')?.id.replace('summary-', '') ?? '',
-    series: cell.querySelector('.metric-sparkline')?.dataset.series ?? '',
-  })));
-  assert.equal(paired.length, 4);
-  for (const cell of paired) assert.equal(cell.series, cell.figure, `${cell.figure} 칸이 ${cell.series} 를 그립니다`);
+  assert.deepEqual(await page.locator('.summary-group-label').allTextContents(), ['용량', '전달', '복원력'], '상단 판정을 세 그룹으로 합쳐야 합니다');
+  assert.equal(await page.locator('.metric-sparkline').count(), 0, '도면 높이를 차지하던 추이 그래프를 제거해야 합니다');
 
   // 카드가 담는 수치는 세 단으로 줄일 수 있다. 줄이는 것은 보이는 것뿐이고 계산은 그대로다.
   // 다만 어느 단에서도 미확인은 숨기지 않는다 - 접어 두면 아는 값만 남아 다 안다고 읽힌다.
@@ -408,9 +445,9 @@ async function verify(viewport, screenshot, interact = false) {
   // 캔버스에서 다시 집을 별도 표식이 없으므로, 이 선택 전환이 빠지면 해제 경로가 막힌다.
   await page.locator('[data-device-id="fw-a"]').click();
   await page.locator('[data-device-id="fw-b"]').click({ modifiers: ['Shift'] });
-  await page.locator('[data-editor-action="group"]').click();
+  await clickEditorAction(page, 'group');
   assert.equal(await page.locator('[data-editor-action="ungroup"]').isDisabled(), false, 'a newly created group must be ready to ungroup');
-  await page.locator('[data-editor-action="ungroup"]').click();
+  await clickEditorAction(page, 'ungroup');
   assert.equal(await page.locator('[data-editor-action="group"]').isDisabled(), false, 'ungrouping must reselect its members');
 
   // 여럿을 고른 채 하나를 끌면 나머지도 같이 따라와야 한다. 놓는 순간에는 원래도 전부
@@ -502,8 +539,8 @@ async function verify(viewport, screenshot, interact = false) {
   await page.keyboard.press('ArrowLeft');
   await page.waitForFunction((before) => document.querySelector('[data-axis-limit]')?.textContent !== before, limitAfter);
   if (viewport.width <= 760) await page.locator('#inspector-close-mobile').click();
-  await page.locator('[data-editor-action="undo"]').click();
-  await page.locator('[data-editor-action="undo"]').click();
+  await clickEditorAction(page, 'undo');
+  await clickEditorAction(page, 'undo');
   await page.waitForFunction((before) => document.querySelector('[data-axis-limit]')?.textContent === before, limitBefore);
 
   // 안내는 언제든 다시 열 수 있어야 한다. 작업 사본을 복원하면 첫 화면 설명이 함께 오지 않고,
@@ -564,12 +601,12 @@ async function verify(viewport, screenshot, interact = false) {
   assert.match(await page.locator('#learning-panel').textContent(), /독립인 한계를 여럿/, 'the first screen must state what the tool claims');
   assert.equal(await page.locator('#learning-panel output').isHidden(), true, 'the answer must not sit beside the question');
   const lessonAction = page.locator('#learning-panel [data-lesson-action]').first();
-  assert.match(await lessonAction.textContent(), /LEAF A 장애 실험/, '단일 장애점이 템플릿의 고정 실험보다 먼저 제안되어야 합니다');
+  assert.match(await lessonAction.textContent(), /PDU-3 SPINE 공용 전원 장애 실험/, '이중화 무효 도메인이 템플릿의 고정 실험보다 먼저 제안되어야 합니다');
   await lessonAction.click();
   await page.waitForFunction(() => !document.querySelector('#learning-panel output')?.hidden);
   assert.match(await page.locator('#learning-panel output').textContent(), /끄면 서비스 단절/, 'the experiment result must state the forecast shown for the selected failure');
-  assert.equal(await page.locator('[data-failure-type="device"][data-failure-id="leaf-a"]').getAttribute('aria-pressed'), 'true');
-  await page.locator('[data-failure-type="device"][data-failure-id="leaf-a"]').click();
+  assert.equal(await page.locator('[data-failure-type="domain"][data-failure-id="pdu-3"]').getAttribute('aria-pressed'), 'true');
+  await page.locator('[data-failure-type="domain"][data-failure-id="pdu-3"]').click();
   await page.waitForFunction(() => document.querySelector('#summary-fault-label')?.textContent === '단일 장애점');
 
   // 장비를 바꾸는 것은 인스펙터까지 가지 않고 자리에서 하는 일이다.
@@ -648,9 +685,10 @@ async function verify(viewport, screenshot, interact = false) {
   await page.locator('[data-swap-variant="candidate"]').click();
   assert.equal(await page.locator('[data-swap-variant="candidate"]').getAttribute('aria-pressed'), 'true', 'replacement device can be reactivated from the same control');
   assert.equal(await page.locator('[data-device-id="fw-a"] .node-model').textContent(), replacementModel);
+  await page.locator('#editor-close').click();
 
   assert.equal(await page.locator('[data-failure-type="device"], [data-failure-type="link"]').count(), 20, 'every device and link must be failable, not two classes');
-  assert.equal(await page.locator('[data-failure-type="domain"]').count(), 2, 'the default rack failure domains must be injectable');
+  assert.equal(await page.locator('[data-failure-type="domain"]').count(), 3, 'the default rack failure domains must be injectable');
     assert.match(await page.locator('#failure-grade').textContent(), /단일 장애점 \d+개/, 'the panel must grade the design before anything is turned off');
     assert.match(await page.locator('.failure-worst-axes').textContent(), /단일 장애 최악 사용률/);
   const forecasts = await page.locator('[data-failure-type="device"] .failure-forecast, [data-failure-type="link"] .failure-forecast').evaluateAll((nodes) => nodes.map((node) => node.dataset.verdict));
@@ -663,12 +701,12 @@ async function verify(viewport, screenshot, interact = false) {
   const firstFailureName = await firstFailure.getAttribute('aria-label');
   assert.match(firstFailureName, /^[^,]+, 끄면 서비스 단절, .*현재 UP$/, '접근성 이름은 자원명 뒤에 판정과 현재 상태를 읽어야 합니다');
   const failureFilter = page.locator('[data-failure-filter]');
-  assert.match(await failureFilter.locator('[data-failure-filter-count]').textContent(), /전체 23개 중 23개 표시/);
+  assert.match(await failureFilter.locator('[data-failure-filter-count]').textContent(), /전체 26개 중 26개 표시/);
   await failureFilter.locator('[data-failure-filter-verdict="severs"]').dispatchEvent('click');
-  assert.match(await failureFilter.locator('[data-failure-filter-count]').textContent(), /필터 적용 중 · 전체 23개 중 9개 표시/);
+  assert.match(await failureFilter.locator('[data-failure-filter-count]').textContent(), /필터 적용 중 · 전체 26개 중 12개 표시/);
   assert.equal(await page.locator('[data-failure-type="device"] .failure-forecast[data-verdict="overloads"], [data-failure-type="link"] .failure-forecast[data-verdict="overloads"]').count(), 0, 'severity filter hides overload rows');
   await failureFilter.locator('input').fill('leaf a');
-  assert.match(await failureFilter.locator('[data-failure-filter-count]').textContent(), /전체 23개 중 2개 표시/);
+  assert.match(await failureFilter.locator('[data-failure-filter-count]').textContent(), /전체 26개 중 2개 표시/);
   await failureFilter.locator('[data-failure-filter-verdict="all"]').dispatchEvent('click');
   await failureFilter.locator('input').fill('');
   assert.match(await page.locator('#bottleneck-note').textContent(), /단일 장애점이 \d+개/, 'the note must name the design as single-point');
@@ -683,16 +721,16 @@ async function verify(viewport, screenshot, interact = false) {
     assert.equal(await page.locator('.mobile-fault-tray').isVisible(), true);
     assert.match(await page.locator('.mobile-pan-cue').textContent(), /좌우로 탐색/);
     const quickFailure = page.locator('[data-quick-failure]');
-    assert.match(await quickFailure.getAttribute('aria-label'), /단일 장애점 실험: LEAF A/);
+    assert.match(await quickFailure.getAttribute('aria-label'), /이중화 무효 도메인 실험: PDU-3 SPINE 공용 전원/);
     await quickFailure.click();
-    await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
+    await page.waitForFunction(() => Number(document.querySelector('#summary-faults')?.textContent) === 1);
     assert.equal(await quickFailure.getAttribute('aria-pressed'), 'true');
-    assert.match(await page.locator('#failure-change-live').textContent(), /LEAF A 장애를 주입했습니다. 최소 headroom .* 변화/);
+    assert.match(await page.locator('#failure-change-live').textContent(), /PDU-3 SPINE 공용 전원 장애를 주입했습니다. 최소 headroom .* 변화/);
   }
   if (interact) {
     const failure = page.locator('[data-failure-type="device"][data-failure-id="fw-a"]');
     await failure.click();
-    await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
+    await page.waitForFunction(() => Number(document.querySelector('#summary-faults')?.textContent) === 1);
     assert.equal(await failure.getAttribute('aria-pressed'), 'true');
     assert.match(await page.locator('#evidence-state').textContent(), /EVIDENCE (VERIFIED|[0-9]+ UNKNOWN)/);
     assert.equal(await page.locator('#capacity-state').textContent(), 'CAPACITY EXCEEDED');
@@ -705,7 +743,7 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForTimeout(900);
     assert.match(await page.locator('[data-device-id="fw-a"]').innerText(), /OFFLINE[\s\S]*DOWN/, 'a disabled node must stay DOWN across telemetry ticks');
     await page.locator('[data-failure-type="link"][data-failure-id="spine-a-leaf-a"]').click();
-    await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '02');
+    await page.waitForFunction(() => Number(document.querySelector('#summary-faults')?.textContent) === 2);
     await page.waitForTimeout(1800);
     assert.equal(await page.locator('[data-link-id="spine-a-leaf-a"] .link-label').textContent(), 'DOWN',
       'a disabled link must stay DOWN across telemetry ticks, not drift to 0%');
@@ -718,7 +756,7 @@ async function verify(viewport, screenshot, interact = false) {
       .evaluate((node) => getComputedStyle(node, '::before').width);
     assert.equal(cross, '40px', 'a dead device must carry a cross over its symbol, not colour alone');
     await page.locator('[data-failure-type="link"][data-failure-id="spine-a-leaf-a"]').click();
-    await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
+    await page.waitForFunction(() => Number(document.querySelector('#summary-faults')?.textContent) === 1);
     assert.match(await page.locator('#comparison-grid').textContent(), /설계 변화[\s\S]*수치 비교 보류/, '기준선 이후 설계가 바뀌면 숫자 델타를 만들면 안 됩니다');
 
     // 데이터시트 프로필 · 워크로드 조건 · 축 단위 수락 · 사용자 보정
@@ -797,19 +835,19 @@ async function verify(viewport, screenshot, interact = false) {
     await page.selectOption('[data-spec-field="catalog"]', '');
     await page.waitForFunction(() => !document.querySelector('[data-spec-field="profile"]'));
     // 설계 편집은 현재 장애 시나리오와 사용자가 확정한 기준선을 바꾸지 않는다.
-    await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
+    await page.waitForFunction(() => Number(document.querySelector('#summary-faults')?.textContent) === 1);
     await failure.click();
     await page.waitForFunction(() => document.querySelector('#summary-fault-label')?.textContent === '단일 장애점');
     const severs = page.locator('.failure-switch').filter({ has: page.locator('.failure-forecast[data-verdict="severs"]') }).first();
     const severId = await severs.getAttribute('data-failure-id');
     await severs.click();
-    await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
+    await page.waitForFunction(() => Number(document.querySelector('#summary-faults')?.textContent) === 1);
     assert.equal(await page.locator('#capacity-state').textContent(), 'TRAFFIC UNREACHABLE',
       `the forecast promised ${severId} would sever the service, so turning it off must do that`);
     await page.locator(`[data-failure-id="${severId}"]`).click();
     await page.waitForFunction(() => document.querySelector('#summary-fault-label')?.textContent === '단일 장애점');
     await failure.click();
-    await page.waitForFunction(() => document.querySelector('#summary-faults')?.textContent === '01');
+    await page.waitForFunction(() => Number(document.querySelector('#summary-faults')?.textContent) === 1);
     await page.locator('[data-device-id="fw-b"]').click();
     assert.match(await page.locator('#inspector-content').textContent(), /신규 세션/);
     assert.match(await page.locator('#inspector-content').textContent(), /용량 초과/);
@@ -899,14 +937,7 @@ async function verify(viewport, screenshot, interact = false) {
     await page.locator('[data-template="blank"]').click();
     await page.waitForFunction(() => document.querySelector('#scenario-subtitle')?.textContent.startsWith('사용자 설계'));
     assert.equal(await page.locator('#scenario-title').textContent(), '빈 설계', 'the header must name the design that is open');
-    // 한계를 모르면 스파크라인이 선을 그리지 않는다. 0 은 위험, 0% 는 안전으로 읽혀 둘 다 거짓말이다.
-    // 개수를 세는 칸은 다르다 - 자원이 없으면 과부하 0개는 모르는 것이 아니라 사실이다.
-    for (const series of ['headroom']) {
-      assert.equal(await page.locator(`.metric-sparkline[data-series="${series}"]`).getAttribute('data-unknown'), '',
-        `the ${series} sparkline must show unknown instead of inventing a value`);
-      assert.equal(await page.locator(`.metric-sparkline[data-series="${series}"] path`).getAttribute('d'), null,
-        `the ${series} sparkline must not have drawn a line`);
-    }
+    assert.equal(await page.locator('#summary-headroom').textContent(), '미확인', '한계를 모르면 요약도 미확인으로 남아야 합니다');
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 0);
     // 되돌리기가 실제로 되돌려야 한다.
     await page.locator('#toast [data-toast-undo]').click();
@@ -1461,6 +1492,7 @@ async function verifyNumberMotion() {
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}\n${String(error.stack).split("\n").slice(1, 4).join("\n")}`));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+  await page.locator('.view-settings > summary').click();
 
   assert.equal(await page.locator('[data-number-motion="on"]').getAttribute('aria-pressed'), 'true',
     '떨림은 기본이 켜짐이다. 대신 끄는 스위치가 늘 화면에 있어야 한다');
@@ -1658,6 +1690,7 @@ try {
     await verify({ width: 390, height: 844 }, '.impeccable/review/mobile.png');
     await verifyCanvasEditing();
     await verifyBackendPool();
+    await verifySharedPowerTemplate();
     await verifyNumberMotion();
     await verifyTourAnchoring();
     await verifyVirtualFailureList();

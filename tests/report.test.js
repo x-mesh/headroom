@@ -83,3 +83,14 @@ test('keeps resource N-1 survival and domain N-1 and N-2 results separate in eve
     assert.match(output, /도메인 N-2/);
   }
 });
+
+test('keeps synthetic nameplate rack values and display names in the report', () => {
+  const topology = cloneTopology();
+  const scenario = calculateScenario(topology);
+  const report = buildReportModel(topology, scenario, scenario, [], {}, {
+    survivalMultiplier: calculateSurvivalMultiplier(topology), domainSweep: sweepFailureDomains(topology),
+  });
+  assert.deepEqual(scenario.racks.find(({ id }) => id === 'rack-04-budget') && [scenario.racks.find(({ id }) => id === 'rack-04-budget').powerWatts, scenario.racks.find(({ id }) => id === 'rack-04-budget').usedU], [900, 3]);
+  assert.match(renderReportMarkdown(report), /PDU-3 SPINE 공용 전원/);
+  assert.doesNotMatch(renderReportMarkdown(report), /pdu-3/);
+});

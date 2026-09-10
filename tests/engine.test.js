@@ -625,7 +625,10 @@ test('exports the complete single-fault sweep and its single-point list', () => 
     evaluated: domainSweep.evaluated, domainCount: domainSweep.domainCount,
     singles: domainSweep.singles.map(({ id, name, kind, domainIds, resources, verdict, bounded, evaluationStatus, unreachableCount, minDeliveredRatio, worstResourceId, worstAxis, worstUtilization }) => ({ id, name, kind, domainIds, resources, verdict, bounded, evaluationStatus, unreachableCount, minDeliveredRatio, worstResourceId, worstAxis, worstUtilization })),
     pairs: domainSweep.pairs.map(({ id, name, domainIds, resources, verdict, bounded, evaluationStatus, unreachableCount, minDeliveredRatio, worstResourceId, worstAxis, worstUtilization }) => ({ id, name, domainIds, resources, verdict, bounded, evaluationStatus, unreachableCount, minDeliveredRatio, worstResourceId, worstAxis, worstUtilization })),
-    redundancyInvalid: domainSweep.redundancyInvalid.map(({ id, name, kind, memberIds, verdict, bounded, minDeliveredRatio }) => ({ id, name, kind, memberIds, verdict, bounded, minDeliveredRatio })),
+    redundancyInvalid: domainSweep.redundancyInvalid.map(({ id, name, kind, memberIds, verdict, bounded, minDeliveredRatio, individualWorstDeliveredRatio, deliveryDrop, reason }) => ({
+      id, name, kind, memberIds, verdict, bounded, minDeliveredRatio,
+      ...(reason ? { reason, individualWorstDeliveredRatio, deliveryDrop } : {}),
+    })),
   });
 });
 

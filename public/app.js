@@ -16,7 +16,7 @@ import { createHistory } from './history.js';
 import { acceptanceDigest, evidenceApplicability } from './evidence.js';
 
 let topology = cloneTopology();
-const state = { scale: 1, selectedId: 'fw-a', selection: [{ type: 'device', id: 'fw-a' }], disabledDevices: new Set(), disabledLinks: new Set(), disabledDomains: new Set(), namedScenarios: [], editorMode: 'select', connectSource: null, leftPanel: 'palette', zoom: 1, viewMode: 'edit' };
+const state = { scale: 1, selectedId: 'fw-a', selection: [{ type: 'device', id: 'fw-a' }], disabledDevices: new Set(), disabledLinks: new Set(), disabledDomains: new Set(), namedScenarios: [], editorMode: 'select', connectSource: null, leftPanel: 'palette', zoom: 1, viewMode: 'edit', leftPanelCollapsed: false, rightPanelCollapsed: false };
 const FAILURE_DOMAIN_KIND_LABEL = Object.freeze({ power: '전원', space: '공간', path: '경로', firmware: '펌웨어', site: '사이트', other: '기타' });
 let panelSelectionExplicit = false;
 let comparisonDemandId = null;
@@ -207,14 +207,19 @@ function persistWorkingCopy() {
   }
 }
 
-// 받침에 따라 조사를 고른다. 한글이 아니면 받침 없는 쪽으로 읽는다.
-// 종성 ㄹ 은 '으로'가 아니라 '로'를 쓴다. '이/가'에는 그 예외가 없다.
-const PARTICLES = { subject: ['이', '가'], object: ['을', '를'], instrumental: ['으로', '로'] };
+// 한글은 종성으로, 숫자와 영문은 한국어 독음으로 조사를 고른다. 발음이 불명확한 입력은
+// 조사를 생략하는 문장에서 쓴다. 종성 ㄹ 은 '으로'가 아니라 '로'를 쓴다.
+const PARTICLES = { subject: ['이', '가'], object: ['을', '를'], topic: ['은', '는'], comitative: ['과', '와'], instrumental: ['으로', '로'] };
+const DIGIT_HAS_BATCHIM = new Set(['0', '1', '3', '6', '7', '8']);
+const LATIN_HAS_BATCHIM = new Set(['L', 'M', 'N', 'R']);
 function withParticle(word, kind) {
   const [withBatchim, without] = PARTICLES[kind];
-  const last = String(word).codePointAt(String(word).length - 1);
-  const coda = last >= 0xac00 && last <= 0xd7a3 ? (last - 0xac00) % 28 : 0;
-  return `${word}${coda !== 0 && !(coda === 8 && kind === 'instrumental') ? withBatchim : without}`;
+  const value = String(word);
+  const lastChar = value.at(-1) || '';
+  const last = lastChar.codePointAt(0);
+  const coda = last >= 0xac00 && last <= 0xd7a3 ? (last - 0xac00) % 28 : null;
+  const hasBatchim = coda == null ? (DIGIT_HAS_BATCHIM.has(lastChar) || LATIN_HAS_BATCHIM.has(lastChar.toUpperCase())) : coda !== 0;
+  return `${value}${hasBatchim && !(coda === 8 && kind === 'instrumental') ? withBatchim : without}`;
 }
 
 function resourceName(resource) {
@@ -466,7 +471,7 @@ function renderSummary() {
       : growthRung ? `다음 병목 ${resourceName(resourceById(growthRung.resourceId)) || growthRung.resourceId} · ${axisCatalog[growthRung.axis]?.shortLabel || growthRung.axis}` : '다음 한계 없음';
   element('summary-growth').textContent = growth;
   element('summary-growth-binding').textContent = growthBinding;
-  const survivalText = analysisProgress ? `계산 중 ${analysisProgress.completed}/${analysisProgress.total}` : survival.multiplier == null ? '미확정' : `${survival.multiplier.toFixed(2)}×${survival.bounded ? ' 이하' : ''}`;
+  const survivalText = analysisProgress ? `계산 중 ${analysisProgress.completed}/${analysisProgress.total}` : survival.multiplier == null ? '미확정' : survival.multiplier === 0 ? '생존 불가' : `${survival.multiplier < 0.005 ? survival.multiplier.toPrecision(2) : survival.multiplier.toFixed(2)}×${survival.bounded ? ' 이하' : ''}`;
   const failedService = survival.services?.find(({ status }) => status === 'fail');
   const unknownService = !failedService && survival.services?.find(({ status }) => status !== 'pass');
   const failedServiceRatio = failedService && Math.min(failedService.deliveredRatio ?? 1, failedService.admissionRatio ?? 1);
@@ -474,29 +479,35 @@ function renderSummary() {
     ? `${failedService.name} 불통과 · 최악 장애에서 ${formatPercent(failedServiceRatio)} 수용`
     : unknownService ? `${unknownService.name} 통과 보류 · 한계 미확인` : '';
   const survivalLabel = analysisProgress ? `${analysisProgress.label} · 전수 계산 중` : survival.worstFault
-    ? `${survival.status === 'severed' ? '단절' : survival.status === 'capacity-insufficient' ? '현재 부하 미달' : '견딤'} · 생존 ${survivalText} · 최악 ${survival.worstFault.id.toUpperCase()}${survival.endpointIds.length ? ` · 끝점 ${survival.endpointIds.length}개 제외` : ''}`
+    ? `${survival.status === 'severed' ? '단절' : survival.status === 'capacity-insufficient' ? '현재 부하 미달' : '견딤'} · 생존 ${survivalText} · 최악 ${resourceName(resourceById(survival.worstFault.id)) || survival.worstFault.id}`
     : '생존 배수 · 장애 후보 없음';
   element('summary-growth-binding').textContent = [serviceLabel, growthBinding, survivalLabel].filter(Boolean).join(' · ');
   const singlePoints = sweep.resources.filter(({ verdict, endpoint }) => verdict === 'severs' && !endpoint);
+  const severedDomains = domainSweep.singles.filter(({ verdict }) => verdict === 'severs');
+  const invalidDomains = domainSweep.redundancyInvalid || [];
+  const representativeDomain = [...severedDomains].sort((left, right) => {
+    const leftInvalid = invalidDomains.some(({ id }) => id === left.id);
+    const rightInvalid = invalidDomains.some(({ id }) => id === right.id);
+    return Number(rightInvalid) - Number(leftInvalid) || left.minDeliveredRatio - right.minDeliveredRatio || left.id.localeCompare(right.id);
+  })[0];
   const survivalTile = element('summary-survival');
   if (summary.activeFaults) {
     element('summary-fault-label').textContent = '활성 장애';
-    element('summary-faults').textContent = String(summary.activeFaults).padStart(2, '0');
-    element('summary-delta').textContent = `headroom ${formatPercent(comparison.minHeadroomDelta, true)}`;
-    survivalTile.setAttribute('aria-label', `활성 장애 ${summary.activeFaults}개. 장애 목록 열기`);
+    element('summary-faults').textContent = String(summary.activeFaults);
+    element('summary-delta').textContent = `${severedDomains.length ? `도메인 단절 ${severedDomains.length}개 · ` : ''}headroom ${formatPercent(comparison.minHeadroomDelta, true)}`;
+    survivalTile.setAttribute('aria-label', `활성 장애 ${summary.activeFaults}개${severedDomains.length ? `. 도메인 단절 ${severedDomains.length}개` : ''}. 장애 목록 열기`);
   } else if (analysisProgress) {
     element('summary-fault-label').textContent = '생존성';
     element('summary-faults').textContent = '…';
     element('summary-delta').textContent = `${analysisProgress.label} 계산 중`;
     survivalTile.setAttribute('aria-label', `${analysisProgress.label} 계산 중. 장애 목록 열기`);
   } else {
-    const exemplar = singlePoints[0] && resourceById(singlePoints[0].id);
     element('summary-fault-label').textContent = '단일 장애점';
-    element('summary-faults').textContent = String(singlePoints.length).padStart(2, '0');
-    element('summary-delta').textContent = singlePoints.length
-      ? `${resourceName(exemplar) || singlePoints[0].id.toUpperCase()}${singlePoints.length > 1 ? ` 외 ${singlePoints.length - 1}개` : ''}`
-      : '단일 장애점 없음';
-    survivalTile.setAttribute('aria-label', `단일 장애점 ${singlePoints.length}개. 장애 목록 열기`);
+    element('summary-faults').textContent = singlePoints.length && severedDomains.length ? `${singlePoints.length} + 도메인 ${severedDomains.length}` : singlePoints.length ? String(singlePoints.length) : `도메인 ${severedDomains.length}`;
+    element('summary-delta').textContent = representativeDomain
+      ? `${resourceName(representativeDomain)}${invalidDomains.some(({ id }) => id === representativeDomain.id) ? ' · 이중화 무효' : ''}`
+      : singlePoints.length ? `${resourceName(resourceById(singlePoints[0].id)) || singlePoints[0].id}` : '단일 장애점 없음';
+    survivalTile.setAttribute('aria-label', `단일 장애점 ${singlePoints.length}개${severedDomains.length ? `. 도메인 단절 ${severedDomains.length}개` : ''}. 장애 목록 열기`);
   }
   // 엔진은 0.8 을 넘으면 warning 으로 판정하고 그 수를 summary.warningCount 에 담는데,
   // 상단 상태가 그 값을 보지 않아 주의 자원이 있어도 'BASELINE STABLE' 이라고 말했다.
@@ -938,6 +949,19 @@ function setLeftPanel(name, { explicit = false } = {}) {
     element(`panel-${tab.dataset.panelTab}`).hidden = !selected;
   });
   element('failure-count').hidden = name !== 'failure';
+}
+
+function setWorkspacePanelCollapsed(side, collapsed) {
+  const isLeft = side === 'left';
+  state[isLeft ? 'leftPanelCollapsed' : 'rightPanelCollapsed'] = collapsed;
+  const grid = document.querySelector('.main-grid');
+  const panel = element(isLeft ? 'design-board' : 'inspector-panel');
+  const button = element(isLeft ? 'toggle-left-panel' : 'toggle-right-panel');
+  grid.classList.toggle(isLeft ? 'left-panel-collapsed' : 'right-panel-collapsed', collapsed);
+  for (const child of panel.children) if (child.tagName !== 'HEADER') child.toggleAttribute('inert', collapsed);
+  button.setAttribute('aria-pressed', String(collapsed));
+  button.setAttribute('aria-label', collapsed ? (isLeft ? '설계 도구 펼치기' : '장비 검사 펼치기') : (isLeft ? '설계 도구 접기' : '장비 검사 접기'));
+  requestAnimationFrame(queueVirtualFailureRows);
 }
 
 const CANVAS_MIN = { width: 940, height: 580 };
@@ -2128,16 +2152,11 @@ const TOUR_STEPS = [
     text: () => '캔버스 제목은 질문이 아니라 답입니다. 병목 자원과 그 축, 사용률을 말합니다. 바로 아래 줄이 몇 배에서 넘고 그다음은 어디인지 알려 줍니다.',
   },
   {
-    title: '상태 범례',
-    target: '.scenario-legend',
-    text: () => '노드의 축 앞에 붙는 토큰입니다. 정상은 마침표, 주의는 느낌표, 초과는 부등호, 미확인은 물음표, 오류와 꺼짐은 x 입니다. 한계를 모르는 축은 막대를 채우지 않고 백분율도 적지 않습니다 — 미확인은 0%가 아닙니다.',
-  },
-  {
     title: '축 미터로 용량을 정합니다',
     target: '[data-axis-drag]',
     text: ({ spread }) => (spread
-      ? `${withParticle(resourceName(spread.device), 'object')} 골랐습니다. ${axisCatalog[spread.low[0]]?.label || spread.low[0]} ${formatPercent(spread.low[1].utilization)} 인데 ${axisCatalog[spread.high[0]]?.label || spread.high[0]} ${formatPercent(spread.high[1].utilization)} 입니다. 같은 장비인데 축마다 다릅니다. 이 막대는 읽기만 하는 그림이 아니라 좌우로 끌면 그 축의 목표 사용률이 정해지고 거기서 나온 한계값이 저장됩니다. 방향키로도 됩니다.`
-      : '검사기의 축 막대는 좌우로 끌 수 있습니다. 그 축을 몇 %에 두겠다는 목표가 정해지고 거기서 나온 한계값이 저장됩니다.'),
+      ? `${withParticle(resourceName(spread.device), 'object')} 골랐습니다. ${axisCatalog[spread.low[0]]?.label || spread.low[0]} ${formatPercent(spread.low[1].utilization)} 인데 ${axisCatalog[spread.high[0]]?.label || spread.high[0]} ${formatPercent(spread.high[1].utilization)} 입니다. 같은 장비인데 축마다 다릅니다. 이 막대는 읽기만 하는 그림이 아니라 좌우로 끌면 그 축의 목표 사용률이 정해지고 거기서 나온 한계값이 저장됩니다. 한계를 모르는 축은 막대를 채우지 않고 백분율도 적지 않습니다. 방향키로도 됩니다.`
+      : '검사기의 축 막대는 좌우로 끌 수 있습니다. 그 축을 몇 %에 두겠다는 목표가 정해지고 거기서 나온 한계값이 저장됩니다. 한계를 모르는 축은 막대를 채우지 않고 백분율도 적지 않습니다.'),
     run: ({ spread }) => {
       if (!spread) return;
       state.selectedId = spread.device.id;
@@ -2728,7 +2747,7 @@ function domainSuggestions() {
 
 function openVerificationPanel() {
   const services = (topology.services || []).map((item) => `<li><b>${escapeText(item.name)}</b> · demand ${item.demandIds.length}개 · ${(item.requiredDeliveryRatio ?? 1) * 100}% <button type="button" data-delete-model="service" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>정의된 서비스 없음</li>';
-  const domains = (topology.failureDomains || []).map((item) => `<li><b>${escapeText(item.name)}</b> · ${escapeText(FAILURE_DOMAIN_KIND_LABEL[item.kind] || FAILURE_DOMAIN_KIND_LABEL.other)} · 자원 ${(item.deviceIds?.length || 0) + (item.linkIds?.length || 0)}개 <button type="button" data-delete-model="domain" data-model-id="${item.id}">삭제</button></li>`).join('') || '<li>정의된 장애 도메인 없음</li>';
+  const domains = (topology.failureDomains || []).map((item) => `<li><b>${escapeText(item.name)}</b> · ${escapeText(FAILURE_DOMAIN_KIND_LABEL[item.kind] || FAILURE_DOMAIN_KIND_LABEL.other)} · 자원 ${(item.deviceIds?.length || 0) + (item.linkIds?.length || 0)}개 <button type="button" data-delete-model="domain" data-model-id="${item.id}" aria-label="${escapeAttribute(`${item.name} 삭제`)}">삭제</button></li>`).join('') || '<li>정의된 장애 도메인 없음</li>';
   const suggestions = domainSuggestions();
   const suggestionList = suggestions.length
     ? `<aside class="domain-suggestions"><strong>도메인 제안</strong><p>같은 영역의 자원이 아직 도메인에 없습니다. 수락 전에는 계산에 반영하지 않습니다.</p>${suggestions.map((item) => `<button type="button" data-domain-suggestion="${escapeAttribute(item.id)}">${escapeText(item.name)} · ${escapeText(FAILURE_DOMAIN_KIND_LABEL[item.kind])} · 장비 ${item.deviceIds.length}개를 도메인으로 추가</button>`).join('')}</aside>`
@@ -2824,6 +2843,8 @@ async function readFile(input) {
 
 function handleEditorAction(action) {
   closeTopMenus();
+  const editorMenu = document.querySelector('.editor-menu');
+  if (editorMenu) editorMenu.open = false;
   if (action === 'undo' || action === 'redo') { historyStep(action); return; }
   if (action === 'device') openDeviceForm();
   if (action === 'demand') openDemandManager();
@@ -3111,6 +3132,8 @@ function openMobileInspector() { if (mobileLayout.matches) element('inspector-pa
 function closeMobileInspector() { element('inspector-panel').classList.remove('mobile-open'); }
 element('inspector-close-mobile').addEventListener('click', closeMobileInspector);
 element('mobile-inspector-open').addEventListener('click', openMobileInspector);
+element('toggle-left-panel').addEventListener('click', () => setWorkspacePanelCollapsed('left', !state.leftPanelCollapsed));
+element('toggle-right-panel').addEventListener('click', () => setWorkspacePanelCollapsed('right', !state.rightPanelCollapsed));
 
 element('scale-input').addEventListener('input', (event) => { const value = Number(event.target.value) / 100; cancelTeaser(); state.scale = value; event.target.value = String(value * 100); recalculate({ light: true }); });
 element('scale-input').addEventListener('change', (event) => { const value = Number(event.target.value) / 100; cancelTeaser(); state.scale = value; event.target.value = String(value * 100); recalculate(); });
@@ -4230,7 +4253,7 @@ element('learning-panel').addEventListener('click', (event) => {
   if (button.dataset.lessonAction === 'fault-domain') { state.disabledDomains.add(button.dataset.lessonId); setLeftPanel('failure'); recalculate(); }
 });
 // 트랙패드 핀치와 Ctrl+휠은 같은 이벤트로 온다. 포인터 자리를 기준으로 확대한다.
-document.querySelector('.topology-scroll').addEventListener('wheel', (event) => {
+document.querySelector('.topology-panel').addEventListener('wheel', (event) => {
   if (!event.ctrlKey && !event.metaKey) return;
   event.preventDefault();
   const rect = document.querySelector('.topology-scroll').getBoundingClientRect();

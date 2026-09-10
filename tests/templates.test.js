@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cloneTopology } from '../public/data.js';
-import { calculateScenario, sweepSingleFaults } from '../public/engine.js';
+import { calculateScenario, sweepFailureDomains, sweepSingleFaults } from '../public/engine.js';
 import { buildTemplate, templates } from '../public/templates.js';
 import { serializeProject } from '../public/project.js';
 import { cardBox, LINK_ROUTES, linkPath, NODE_REACH, formatNodePercent, placeLinkLabels, routeLink, segmentHitsBox } from '../public/node-view.js';
@@ -24,6 +24,7 @@ function runExperiment(topology, action) {
   if (action.type === 'scale') return calculateScenario(topology, { scale: Number(action.value) });
   if (action.type === 'fault-device') return calculateScenario(topology, { disabledDevices: [action.id] });
   if (action.type === 'fault-link') return calculateScenario(topology, { disabledLinks: [action.id] });
+  if (action.type === 'fault-domain') return calculateScenario(topology, { disabledDomains: [action.id] });
   throw new Error(`알 수 없는 실험 동작: ${action.type}`);
 }
 
@@ -47,6 +48,7 @@ test('an experiment points at something that exists and can be run', () => {
     assert.ok(experiment.prompt && experiment.observe, `${id} 실험에 질문 또는 관찰이 없습니다.`);
     if (action.type === 'fault-device') assert.ok(topology.devices.some(({ id: deviceId }) => deviceId === action.id), `${id}: ${action.id} 장비가 없습니다.`);
     if (action.type === 'fault-link') assert.ok(topology.links.some(({ id: linkId }) => linkId === action.id), `${id}: ${action.id} 링크가 없습니다.`);
+    if (action.type === 'fault-domain') assert.ok(topology.failureDomains?.some(({ id: domainId }) => domainId === action.id), `${id}: ${action.id} 도메인이 없습니다.`);
     // 슬라이더 범위 밖의 배율은 버튼이 눌려도 화면과 어긋난다.
     if (action.type === 'scale') assert.ok(Number(action.value) >= 0.5 && Number(action.value) <= 1.8, `${id}: 배율 ${action.value} 는 슬라이더 범위 밖입니다.`);
   }
@@ -82,17 +84,29 @@ test('the demo everyone lands on teaches the claim the tool is built on', () => 
 
 test('the default dual fabric exposes rack and rack failure domains', () => {
   const topology = buildTemplate('dual-fabric');
-  assert.deepEqual(topology.failureDomains?.map(({ id, deviceIds }) => [id, deviceIds]), [['rack-04', ['leaf-a', 'api-a']], ['rack-07', ['leaf-b', 'api-b']]]);
+  assert.deepEqual(topology.failureDomains?.map(({ id, deviceIds }) => [id, deviceIds]), [['rack-04', ['leaf-a', 'api-a']], ['rack-07', ['leaf-b', 'api-b']], ['pdu-3', ['spine-a', 'spine-b']]]);
   assert.ok(calculateScenario(topology).racks.every(({ status }) => status === 'pass'));
   assert.equal(calculateScenario(topology, { disabledDomains: ['rack-04'] }).summary.unreachableCount, 1);
   assert.equal(calculateScenario(topology, { disabledDomains: ['rack-07'] }).summary.unreachableCount, 1);
+  assert.equal(calculateScenario(topology, { disabledDomains: ['pdu-3'] }).summary.unreachableCount, 2);
+  const domains = sweepFailureDomains(topology);
+  assert.equal(domains.singles.filter(({ verdict }) => verdict === 'severs').length, 3);
+  assert.equal(domains.pairs.filter(({ verdict }) => verdict === 'severs').length, 3);
+  assert.deepEqual(domains.redundancyInvalid.map(({ id }) => id), ['pdu-3']);
 });
 
 test('the initial demo itself exposes service, rack domains, and rack budgets', () => {
   const topology = cloneTopology();
   assert.deepEqual(topology.services?.map(({ name, requiredDeliveryRatio }) => [name, requiredDeliveryRatio]), [['Public API', 0.99]]);
-  assert.deepEqual(topology.failureDomains?.map(({ id }) => id), ['rack-04', 'rack-07']);
-  assert.ok(calculateScenario(topology).racks.every(({ status }) => status === 'pass'));
+  assert.deepEqual(topology.failureDomains?.map(({ id }) => id), ['rack-04', 'rack-07', 'pdu-3']);
+  assert.deepEqual(topology.devices.filter(({ id }) => ['api-a', 'api-b'].includes(id)).map(({ id, name }) => [id, name]), [['api-a', 'API A'], ['api-b', 'API B']]);
+  const domains = sweepFailureDomains(topology);
+  assert.equal(domains.singles.filter(({ verdict }) => verdict === 'severs').length, 3);
+  assert.equal(domains.pairs.filter(({ verdict }) => verdict === 'severs').length, 3);
+  assert.deepEqual(domains.redundancyInvalid.map(({ id }) => id), ['pdu-3']);
+  const scenario = calculateScenario(topology);
+  assert.ok(scenario.racks.every(({ status }) => status === 'pass'));
+  assert.deepEqual(scenario.racks.find(({ id }) => id === 'rack-04-budget') && [scenario.racks.find(({ id }) => id === 'rack-04-budget').powerWatts, scenario.racks.find(({ id }) => id === 'rack-04-budget').usedU], [900, 3]);
 });
 
 // ── 새 설계가 넘지 못할 선 ────────────────────────────────────────────────

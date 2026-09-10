@@ -706,6 +706,7 @@ function rackPower() {
 // 스물넷 중 스물이 단일 장애점이다. 그래서 무엇을 가르치는지로 묶는다. 순서가 곧 섹션 순서다.
 export const templateGroups = Object.freeze([
   { id: 'basics', label: '기본 구성' },
+  { id: 'resilience', label: '공유 장애와 복원력' },
   { id: 'balance', label: '부하 분산과 백엔드 풀' },
   { id: 'security', label: '보안 경로' },
   { id: 'capacity', label: '용량은 다른 곳에서 찬다' },
@@ -717,30 +718,28 @@ export const templateGroups = Object.freeze([
 export const templates = [
   {
     id: 'dual-fabric', name: '이중 팹릭 API 클러스터',
-    group: 'basics',
+    group: 'resilience',
     // 등급은 이 파일 안의 리터럴에서 나오는 설계의 성질이지, 열 때마다 알아내야 하는 값이 아니다.
     // experiment.observe 의 퍼센트와 같은 규율로 tests/templates.test.js 가 계산과 대조한다.
     grade: { verdict: 'single-point', severs: 6 },
-    summary: 'ECMP 2경로와 99% Public API 수용 기준, 공유 랙 장애 도메인을 둔 구성입니다.',
-    teaches: '대역폭은 넉넉해도 방화벽 신규 세션이 먼저 찹니다. RACK 04 또는 RACK 07의 공유 장애는 Public API 전달률을 절반으로 낮춥니다.',
-    tags: ['ECMP', '방화벽', '세션', '이중화'],
+    summary: 'SPINE A/B가 PDU-3 공용 전원을 공유하는 ECMP API 구성입니다.',
+    teaches: 'SPINE은 두 대여도 PDU-3 하나가 멈추면 함께 꺼집니다. 이중화 무효가 된 공용 전원 장애를 바로 주입해 확인하세요.',
+    tags: ['ECMP', '공유 전원', 'PDU-3', '장애 도메인', '이중화 무효'],
     experiment: {
-      prompt: '방화벽 한 대가 멈추면 남은 쪽은 어느 축에서 먼저 무너질까요?',
-      action: { type: 'fault-device', id: 'fw-a', label: 'FW A 장애 실험' },
-      observe: 'FW B의 대역폭은 72%로 여유가 있는데 신규 세션이 171%가 됩니다. 넘치는 축은 대역폭이 아닙니다.',
+      prompt: 'PDU-3 공용 전원이 멈추면 SPINE A/B 이중화가 유지될까요?',
+      action: { type: 'fault-domain', id: 'pdu-3', label: 'PDU-3 공용 전원 장애 실험' },
+      observe: 'SPINE A와 SPINE B가 함께 꺼져 Public API가 단절됩니다. 장비 두 대가 있어도 공용 전원 하나가 이중화를 무효로 만듭니다.',
     },
     build: () => {
       const topology = cloneTopology();
-      for (const device of topology.devices) if (['leaf-a', 'leaf-b', 'api-a', 'api-b'].includes(device.id)) {
-        device.metadata = { powerBasis: 'typical', typicalDrawWatts: device.id.startsWith('api-') ? 420 : 180, uHeight: device.id.startsWith('api-') ? 2 : 1 };
-      }
       topology.services = [{ id: 'public-api-service', name: 'Public API', demandIds: ['public-api'], requiredDeliveryRatio: 0.99 }];
       topology.failureDomains = [
-        { id: 'rack-04', name: 'RACK 04', deviceIds: ['leaf-a', 'api-a'] },
-        { id: 'rack-07', name: 'RACK 07', deviceIds: ['leaf-b', 'api-b'] },
+        { id: 'rack-04', name: 'RACK 04', kind: 'space', deviceIds: ['leaf-a', 'api-a'] },
+        { id: 'rack-07', name: 'RACK 07', kind: 'space', deviceIds: ['leaf-b', 'api-b'] },
+        { id: 'pdu-3', name: 'PDU-3 SPINE 공용 전원', kind: 'power', deviceIds: ['spine-a', 'spine-b'] },
       ];
       topology.racks = [
-        { id: 'rack-04-budget', name: 'RACK 04', deviceIds: ['leaf-a', 'api-a'], powerBasis: 'typical', powerBudgetWatts: 1400, capacityU: 42 },
+        { id: 'rack-04-budget', name: 'RACK 04', deviceIds: ['leaf-a', 'api-a'], powerBasis: 'nameplate', powerBudgetWatts: 1400, capacityU: 42 },
         { id: 'rack-07-budget', name: 'RACK 07', deviceIds: ['leaf-b', 'api-b'], powerBasis: 'typical', powerBudgetWatts: 1400, capacityU: 42 },
       ];
       return topology;

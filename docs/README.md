@@ -8,6 +8,8 @@ Rack Mesh 설계 문서 모음. 기준 PRD는 이 폴더의 `infra-simulator-prd
 
 이어서 `prd-v0.6.md`를 읽어 제품 우선순위와 Phase 1 잔여 요구사항을 확인한다. 기능은 다음 순서로 구현한다. 먼저 `survival-multiplier-prd.md`를 읽어 N-1의 출력 지표를 고정한다. 다음 `domain-sweep-prd.md`로 장애 범위를 도메인과 N-2로 넓힌다. 이어서 `device-substitution-prd.md`로 병목 이동을 비교하고, `measured-import-prd.md`로 실측 근거를 넣는다. 마지막으로 `fault-sweep-surfacing-prd.md`와 `display-layer-improvement-prd.md`로 계산 결과의 첫 화면과 표시 규칙을 정한다.
 
+`display-layer-improvement-prd.md`를 읽었으면 `verdict-delivery-prd.md`를 이어서 읽는다. 표시 계층 PRD의 P0 세 항목이 해결된 이후를 다루며, 그 문서 6.1과 6.4의 결정 두 개를 개정한다. 6.1의 도메인 구성을 그대로 구현하기 전에 반드시 확인한다.
+
 ## 문서 목록
 
 | 문서 | 성격 | 다루는 것 |
@@ -21,6 +23,7 @@ Rack Mesh 설계 문서 모음. 기준 PRD는 이 폴더의 `infra-simulator-prd
 | `device-substitution-prd.md` | 기능 PRD | 장비 치환 시뮬레이션. 진단에서 처방으로 |
 | `measured-import-prd.md` | 기능 PRD | 실측 한계값과 실측 부하의 파일 임포트 |
 | `fault-sweep-surfacing-prd.md` | IA PRD | 장애 스윕 결과의 노출 위치와 첫 화면 경험 |
+| `verdict-delivery-prd.md` | 개선 PRD | 계산된 판정이 첫 화면까지 도달하는 경로. 기본 시나리오 검증 객체, 요약의 도메인 흡수, 표시명·식별자 정합, 문구 위생 |
 
 ## 결정 소유권
 
@@ -31,11 +34,16 @@ Rack Mesh 설계 문서 모음. 기준 PRD는 이 폴더의 `infra-simulator-prd
 - **요약 타일 구성과 상단 정보 서열:** `display-layer-improvement-prd.md` 6.3절과 6.4절이 먼저 결정하고, `fault-sweep-surfacing-prd.md`가 스윕 결과의 자리만 추가로 정한다.
 - **스윕 계산 범위(자원 단위, 도메인 단위, N-2):** `domain-sweep-prd.md`.
 - **스윕 결과의 화면 배치:** `fault-sweep-surfacing-prd.md`.
+- **기본 시나리오에 들어가는 검증 객체(서비스, 장애 도메인, 랙)의 구성:** `verdict-delivery-prd.md` 4.1과 5절. `display-layer-improvement-prd.md` 6.1이 처음 정했으나 그 처방이 목표한 교훈을 가르치지 못해 교체했다.
+- **자원·링크·도메인의 화면 표시명과 내부 식별자의 분리:** `verdict-delivery-prd.md` 7절.
+- **수치 문구 표기(단위 접미사, 자릿수, 조사, 부제 밀도):** `verdict-delivery-prd.md` 8절.
 - **근거 출처(`source.type`)의 의미와 진폭 매핑:** `display-layer-improvement-prd.md` 4절이 정의하고, `measured-import-prd.md`가 `user_measured`를 채우는 경로를 제공한다.
 
 ## 지금 상태
 
-기준 PRD는 v0.5 초안이고, 방향·Phase 1 개정은 v0.6 초안이다. 표시 계층 개선 PRD와 기능·IA PRD는 v0.1 초안이다. PRD의 초안 상태는 제품 판단의 상태이며, 각 기능이 코드에 없는 상태를 뜻하지 않는다.
+기준 PRD는 v0.5 초안이고, 방향·Phase 1 개정은 v0.6 초안이다. 표시 계층 개선 PRD와 기능·IA PRD, 판정 전달 PRD는 v0.1 초안이다. PRD의 초안 상태는 제품 판단의 상태이며, 각 기능이 코드에 없는 상태를 뜻하지 않는다.
+
+2026-09-10 실행 검토 기준으로 표시 계층 개선 PRD의 P0 세 항목(손실 표기 분리, 백분율·부하 산술 일치, 상태 칩 공존)은 해결됐고 여유 배수 타일도 들어갔다. 같은 문서 6.1(기본 시나리오 검증 객체)과 6.3(판정이 편집보다 위)은 미해결이다. 6.1은 `verdict-delivery-prd.md`가 처방을 교체해 이어받았다.
 
 다음 경로는 구현되어 있다. 단일 장애 생존 배수, 도메인 단위 N-1·N-2 스윕, 장비 치환의 병목·배수·랙 비교, 한계 실측과 관측 부하 파일 임포트, 장애 목록의 심각도 정렬·필터·가상 목록, 저장 시나리오의 서비스별 판정표, SVG·PNG 익명 내보내기다. 700개 단일 장애 후보 측정은 `tests/performance-sweep.mjs`가 담당한다.
 

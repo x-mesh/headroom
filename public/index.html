@@ -38,9 +38,20 @@
             </div>
           </div>
         </div>
-        <div class="run-state" aria-live="polite">
-          <span class="status-chip" id="evidence-state"><i aria-hidden="true"></i><span>근거 확인 중</span></span>
-          <span class="status-chip" id="capacity-state"><i aria-hidden="true"></i><span>용량 계산 중</span></span>
+        <div class="topbar-context">
+          <div class="scenario-copy">
+            <strong id="scenario-title">계산 중</strong>
+            <span id="scenario-subtitle">계산 중</span>
+          </div>
+          <label class="scale-control" for="scale-input">
+            <span>부하</span>
+            <input id="scale-input" type="range" min="50" max="180" value="100" step="5">
+            <output id="scale-output" for="scale-input">1.00×</output>
+          </label>
+          <div class="run-state" aria-live="polite">
+            <span class="status-chip" id="evidence-state"><i aria-hidden="true"></i><span>근거 확인 중</span></span>
+            <span class="status-chip" id="capacity-state"><i aria-hidden="true"></i><span>용량 계산 중</span></span>
+          </div>
         </div>
         <div class="top-actions">
           <button class="text-button" id="guide-button" type="button" aria-label="이 도구를 읽는 법"><span class="action-icon icon-help" aria-hidden="true"></span><span class="action-label">사용 안내</span></button>
@@ -93,51 +104,24 @@
         </div>
       </header>
 
-      <section class="control-deck" aria-label="시나리오 제어">
-        <div class="scenario-copy">
-          <span class="section-code">SCENARIO / 01</span>
-          <div>
-            <strong id="scenario-title">계산 중</strong>
-            <span id="scenario-subtitle">계산 중</span>
-          </div>
-        </div>
-        <label class="scale-control" for="scale-input">
-          <span>워크로드 배율</span>
-          <input id="scale-input" type="range" min="50" max="180" value="100" step="5">
-          <output id="scale-output" for="scale-input">1.00×</output>
-        </label>
-        <div class="scenario-legend" aria-label="용량 상태 범례">
-          <span data-state="healthy"><i>●</i> 정상</span>
-          <span data-state="warning"><i>▲</i> 주의</span>
-          <span data-state="overloaded"><i>■</i> 용량 초과</span>
-          <span data-state="unknown"><i>?</i> 한계 미확인</span>
-          <span data-state="disabled"><i>×</i> 비활성</span>
-        </div>
-      </section>
-
       <section class="summary-strip" aria-label="시나리오 요약">
-        <div class="summary-metric summary-metric-growth summary-metric-primary"><span>여유 배수</span><strong id="summary-growth">···</strong><small id="summary-growth-binding">다음 병목 계산 중 · 생존 배수 계산 중</small></div>
-        <div class="summary-metric"><span>최소 headroom</span><strong id="summary-headroom">···</strong><small id="summary-binding">계산 중</small><svg class="metric-sparkline" data-series="headroom" viewBox="0 0 120 28" aria-label="최근 headroom 재계산 추이"><path></path><circle r="2.5"></circle></svg></div>
-        <div class="summary-metric"><span>과부하 자원</span><strong id="summary-overloaded">···</strong><small id="summary-warning">계산 중</small><svg class="metric-sparkline" data-series="overloaded" viewBox="0 0 120 28" aria-label="최근 최대 사용률 추이"><path></path><circle r="2.5"></circle></svg></div>
-        <div class="summary-metric"><span>무경로 미전달</span><strong id="summary-unreachable">···</strong><small id="summary-unreachable-load">계산 중</small><svg class="metric-sparkline" data-series="unreachable" viewBox="0 0 120 28" aria-label="최근 전달률 추이"><path></path><circle r="2.5"></circle></svg></div>
-        <div class="summary-metric"><span>용량 드롭</span><strong id="summary-dropped-load">···</strong><small>병목에서 버린 전달량</small></div>
-        <button class="summary-metric summary-metric-survival" id="summary-survival" type="button" data-summary-failure><span id="summary-fault-label">생존성</span><strong id="summary-faults">···</strong><small id="summary-delta">기준선 계산 중</small><svg class="metric-sparkline" data-series="faults" viewBox="0 0 120 28" aria-label="최근 전체 트래픽 추이"><path></path><circle r="2.5"></circle></svg></button>
+        <div class="summary-group summary-capacity">
+          <span class="summary-group-label">용량</span>
+          <div class="summary-stats"><span><small>여유</small><strong id="summary-growth">···</strong></span><span><small>headroom</small><strong id="summary-headroom">···</strong></span><span><small>과부하</small><strong id="summary-overloaded">···</strong></span></div>
+          <p><span id="summary-growth-binding">계산 중</span><span id="summary-binding">계산 중</span><span id="summary-warning">계산 중</span></p>
+        </div>
+        <div class="summary-group summary-delivery">
+          <span class="summary-group-label">전달</span>
+          <div class="summary-stats"><span><small>무경로</small><strong id="summary-unreachable">···</strong></span><span><small>용량 드롭</small><strong id="summary-dropped-load">···</strong></span></div>
+          <p id="summary-unreachable-load">계산 중</p>
+        </div>
+        <button class="summary-group summary-resilience" id="summary-survival" type="button" data-summary-failure>
+          <span class="summary-group-label">복원력</span><span class="summary-fault-row"><small id="summary-fault-label">생존성</small><strong id="summary-faults">···</strong></span><p id="summary-delta">기준선 계산 중</p>
+        </button>
       </section>
       <button class="baseline-reset" id="baseline-reset" type="button" hidden>기준 상태로 돌아가기</button>
 
-      <section class="editor-deck" aria-label="설계 편집 도구">
-        <div class="editor-tools" role="toolbar" aria-label="설계 편집">
-          <button type="button" data-editor-action="undo" disabled aria-label="실행 취소">실행 취소</button>
-          <button type="button" data-editor-action="redo" disabled aria-label="다시 실행">다시 실행</button>
-          <span class="tool-separator" aria-hidden="true"></span>
-          <button type="button" data-editor-action="group">그룹</button>
-          <button type="button" data-editor-action="ungroup">그룹 해제</button>
-          <button type="button" data-editor-action="align-left">왼쪽 정렬</button>
-          <button type="button" data-editor-action="distribute-x">가로 분배</button>
-          <button type="button" data-editor-action="map-device">장비로 지정</button>
-        </div>
-        <span class="visually-hidden" id="editor-selection-hint" aria-live="polite"></span>
-        <div class="editor-mode" id="editor-mode" aria-live="polite"><span></span>SELECT MODE</div>
+      <section class="editor-deck" aria-label="설계 편집 작업">
         <input class="visually-hidden" id="project-file-input" type="file" accept="application/json,.json">
         <input class="visually-hidden" id="device-file-input" type="file" accept="application/json,.json">
         <input class="visually-hidden" id="measured-limits-file-input" type="file" accept="application/json,.json">
@@ -157,13 +141,14 @@
       </section>
 
       <section class="main-grid">
-        <aside class="failure-panel" aria-labelledby="failure-heading">
+        <aside class="failure-panel" id="design-board" aria-labelledby="failure-heading">
           <header class="panel-heading">
             <div>
               <span class="section-code">DESIGN BOARD</span>
               <h2 id="failure-heading">설계 도구</h2>
             </div>
             <span class="count-badge" id="failure-count">0 ACTIVE</span>
+            <button type="button" class="panel-collapse-button panel-collapse-left" id="toggle-left-panel" aria-pressed="false" aria-controls="design-board" aria-label="설계 도구 접기"><span aria-hidden="true"></span></button>
           </header>
           <div class="panel-tabs" role="tablist" aria-label="설계 도구">
             <button type="button" role="tab" id="tab-palette" data-panel-tab="palette" aria-controls="panel-palette" aria-selected="true">컴포넌트</button>
@@ -188,6 +173,11 @@
               <p class="headline-detail" id="headline-detail">한계값을 읽는 중입니다.</p>
             </div>
             <div class="topology-controls">
+              <details class="editor-menu"><summary>편집</summary><div class="editor-tools" role="toolbar" aria-label="설계 편집">
+                <button type="button" data-editor-action="undo" disabled>실행 취소</button><button type="button" data-editor-action="redo" disabled>다시 실행</button>
+                <button type="button" data-editor-action="group">그룹</button><button type="button" data-editor-action="ungroup">그룹 해제</button><button type="button" data-editor-action="align-left">왼쪽 정렬</button><button type="button" data-editor-action="distribute-x">가로 분배</button><button type="button" data-editor-action="map-device">장비로 지정</button>
+                <span class="visually-hidden" id="editor-selection-hint" aria-live="polite"></span><div class="editor-mode" id="editor-mode" aria-live="polite"><span></span>SELECT MODE</div>
+              </div></details>
               <div class="zoom-control" role="group" aria-label="캔버스 확대 배율">
                 <button type="button" data-zoom="out" aria-label="축소">−</button>
                 <button type="button" data-zoom="reset" id="zoom-level" aria-label="확대 배율. 누르면 100%로 되돌립니다">100%</button>
@@ -196,7 +186,7 @@
               </div>
               <div class="topology-live-status"><span><i></i> DETERMINISTIC MODEL</span><div class="path-readout" id="path-readout">2 DEMANDS · 4 ACTIVE PATHS</div></div>
               <button type="button" class="mobile-inspector-open" id="mobile-inspector-open">선택 장비 검사</button>
-              <details class="view-settings" open><summary>보기 설정</summary><div class="layout-control" id="class-control" aria-label="클래스 배지 표시"></div></details>
+              <details class="view-settings"><summary>보기</summary><div class="layout-control" id="class-control" aria-label="클래스 배지 표시"></div></details>
             </div>
           </header>
           <div class="topology-scroll">
@@ -224,6 +214,7 @@
               <h2 id="inspector-heading">장비 검사</h2>
             </div>
             <span class="resource-state" id="resource-state">계산 중</span>
+            <button type="button" class="panel-collapse-button panel-collapse-right" id="toggle-right-panel" aria-pressed="false" aria-controls="inspector-panel" aria-label="장비 검사 접기"><span aria-hidden="true"></span></button>
             <button type="button" class="inspector-close-mobile" id="inspector-close-mobile" aria-label="장비 검사 닫기">닫기</button>
           </header>
           <div id="inspector-content" class="inspector-content"></div>
