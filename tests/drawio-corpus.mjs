@@ -7,8 +7,12 @@ import { parseProject, serializeProject } from '../public/project.js';
 const directory = process.env.DRAWIO_CORPUS_DIR;
 if (!directory) { console.log(JSON.stringify({ status: 'skipped', reason: 'DRAWIO_CORPUS_DIR is required' })); process.exit(0); }
 const files = (await readdir(directory)).filter((name) => /\.drawio$/i.test(name));
-const spaces = Object.fromEntries(['IN', 'IV', 'TECH'].map((space) => [space, files.filter((name) => name.startsWith(`${space}-`)).length]));
-if (files.length !== 30 || Object.values(spaces).some((count) => count !== 10)) { console.log(JSON.stringify({ status: 'failed', files: files.length, spaces })); process.exit(1); }
+const expectedCounts = process.env.DRAWIO_EXPECTED_COUNTS ?? (process.env.DRAWIO_EXPECTED_FILES ? '' : 'IN=10,IV=10,TECH=10');
+const expectedSpaces = Object.fromEntries(expectedCounts.split(',').filter(Boolean).map((item) => { const [space, count] = item.split('='); return [space, Number(count)]; }));
+const expectedPages = Number(process.env.DRAWIO_EXPECTED_PAGES || (process.env.DRAWIO_EXPECTED_FILES ? 0 : 38));
+const spaces = Object.fromEntries(Object.keys(expectedSpaces).map((space) => [space, files.filter((name) => name.startsWith(`${space}-`)).length]));
+const expectedFiles = Number(process.env.DRAWIO_EXPECTED_FILES || Object.values(expectedSpaces).reduce((sum, count) => sum + count, 0));
+if (files.length !== expectedFiles || Object.entries(expectedSpaces).some(([space, count]) => spaces[space] !== count)) { console.log(JSON.stringify({ status: 'failed', files: files.length, spaces })); process.exit(1); }
 const aggregate = { files: 0, pages: 0, elements: 0, warnings: 0, previews: 0, dryRuns: 0, roundTrips: 0, acceptedRoundTrips: 0, acceptedDevices: 0, acceptedLinks: 0, acceptedZones: 0 };
 for (const file of files.sort()) {
   const document = await parseDrawioDocument(await readFile(join(directory, file), 'utf8'));
@@ -31,6 +35,7 @@ for (const file of files.sort()) {
   }
 }
 const digest = createHash('sha256').update(JSON.stringify(aggregate)).digest('hex');
-const passed = aggregate.files === 30 && aggregate.pages === 38 && aggregate.roundTrips === 38 && aggregate.acceptedRoundTrips === 38;
+const pagesMatch = expectedPages === 0 || aggregate.pages === expectedPages;
+const passed = aggregate.files === expectedFiles && pagesMatch && aggregate.roundTrips === aggregate.pages && aggregate.acceptedRoundTrips === aggregate.pages;
 console.log(JSON.stringify({ status: passed ? 'passed' : 'failed', ...aggregate, digest }));
 process.exit(passed ? 0 : 1);

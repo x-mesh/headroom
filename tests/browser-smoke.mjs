@@ -207,20 +207,50 @@ async function verifyCanvasEditing() {
   await groupFrame.click({ modifiers: ['Alt'], position: { x: 1, y: 1 } });
   await page.locator('[data-diagram-lock]').uncheck();
 
-  const drawio = '<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="2" value="설명" vertex="1" parent="1"><mxGeometry x="20" y="30" width="120" height="60" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>';
+  const pageModel = (id, label, x) => `<diagram id="${id}" name="${label}"><mxGraphModel><root><mxCell id="0-${id}"/><mxCell id="1-${id}" parent="0-${id}"/><mxCell id="2-${id}" value="${label}" vertex="1" parent="1-${id}"><mxGeometry x="${x}" y="30" width="120" height="60" as="geometry"/></mxCell></root></mxGraphModel></diagram>`;
+  const drawio = `<mxfile>${pageModel('one', '첫 페이지', 20)}${pageModel('two', '눈으로 확인', 220)}</mxfile>`;
   const historyBeforeDrawio = await page.evaluate(() => window.history.length);
   const shapesBeforeDrawio = await page.locator('.diagram-shape').count();
-  await page.locator('#drawio-file-input').setInputFiles({ name: 'sample.drawio', mimeType: 'application/xml', buffer: Buffer.from(drawio) });
+  await page.evaluate((source) => {
+    const transfer = new DataTransfer(); transfer.items.add(new File([source], 'sample.drawio', { type: 'application/vnd.jgraph.mxfile' }));
+    document.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    window.__drawioSmokeTransfer = transfer;
+  }, drawio);
+  assert.equal(await page.locator('#drawio-drop-overlay').isVisible(), true, 'drawio 파일이 들어오면 놓을 위치를 화면 전체에 표시한다');
+  await page.evaluate(() => document.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: window.__drawioSmokeTransfer })));
   await page.waitForFunction(() => document.querySelector('#editor-panel-heading')?.textContent.includes('미리보기'));
+  assert.equal(await page.locator('#drawio-drop-overlay').isHidden(), true);
   assert.equal(await page.locator('.diagram-shape').count(), shapesBeforeDrawio, '미리보기를 열어도 현재 캔버스는 바꾸지 않는다');
+  assert.equal(await page.locator('.drawio-page-svg').count(), 1, '드롭한 drawio를 적용 전에 구성도로 보여준다');
+  assert.match(await page.locator('.drawio-page-svg').textContent(), /첫 페이지/);
+  await page.locator('[data-drawio-page]').selectOption({ index: 1 });
+  await page.waitForFunction(() => document.querySelector('.drawio-page-svg')?.textContent.includes('눈으로 확인'));
   await page.locator('[data-drawio-decision]').selectOption('device');
   await page.waitForSelector('[data-drawio-kind]');
   await page.locator('[data-drawio-kind]').selectOption('router');
   await page.locator('[data-drawio-apply]').click();
-  await page.waitForFunction(() => [...document.querySelectorAll('.mesh-node')].some((node) => node.textContent.includes('설명')));
+  await page.waitForFunction(() => [...document.querySelectorAll('.mesh-node')].some((node) => node.textContent.includes('눈으로 확인')));
+  assert.equal(await page.locator('.diagram-shape').count(), 0, '새 구성도로 적용하면 이전 설계 도형을 남기지 않는다');
   assert.equal(await page.evaluate(() => window.history.length), historyBeforeDrawio, 'SPA 가져오기는 페이지를 다시 열지 않는다');
   const devicesBeforeMapping = await page.locator('.mesh-node').count();
   assert.ok(devicesBeforeMapping > 0, '명시한 장비 후보만 토폴로지 장비가 된다');
+
+  const orderedDrawio = `<mxfile><diagram id="ordered" name="순서"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="a" value="앞" style="shape=ellipse;fillColor=#abcdef" vertex="1" parent="1"><mxGeometry x="20" y="20" width="40" height="40" as="geometry"/></mxCell><mxCell id="vm" value="가상 서버" style="shape=mxgraph.networks.virtual_server" vertex="1" parent="1"><mxGeometry x="120" y="20" width="80" height="60" as="geometry"/></mxCell><mxCell id="edge" style="strokeColor=#123456" edge="1" source="a" target="vm" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>`;
+  await page.evaluate((source) => {
+    const transfer = new DataTransfer(); transfer.items.add(new File([source], 'ordered.drawio', { type: 'application/vnd.jgraph.mxfile' }));
+    document.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+  }, orderedDrawio);
+  await page.waitForFunction(() => document.querySelector('#editor-panel-heading')?.textContent.includes('미리보기'));
+  await page.locator('[data-drawio-decision]').nth(1).selectOption('device');
+  await page.locator('[data-drawio-kind]').selectOption('server');
+  await page.locator('[data-drawio-append]').click();
+  await page.waitForFunction(() => document.querySelector('.drawio-import-layer')?.innerHTML.includes('#abcdef'));
+  const sourceOrder = await page.locator('#drawio-import-layer > [data-drawio-z-index]').evaluateAll((items) =>
+    items.map((item) => [Number(item.dataset.drawioZIndex), item.dataset.drawioRole]));
+  assert.deepEqual(sourceOrder.slice(-3).map(([zIndex, role]) => [zIndex - sourceOrder.at(-3)[0], role]),
+    [[0, 'shape'], [1, 'device'], [2, 'connector']], '가져온 레이어는 새 페이지 안의 도형·장비·연결선 순서를 보존한다');
+  assert.equal(sourceOrder.at(-3)[0] > sourceOrder.at(-4)[0], true, '나중에 적용한 페이지는 기존 가져오기 뒤에 쌓인다');
+  assert.equal(await page.locator('.mesh-node.drawio-source-hit').count() > 0, true, 'semantic 장비에는 시각 요소를 중복하지 않는 선택 대상이 남는다');
   // 토스트는 화면 하단에 고정이라 아래쪽 노드를 덮는다. 다음 클릭 전에 걷히기를 기다린다.
   await page.waitForFunction(() => !document.querySelector('#toast')?.classList.contains('visible'), null, { timeout: 8000 });
   await page.close();
