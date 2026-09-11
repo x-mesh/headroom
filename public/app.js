@@ -12,7 +12,7 @@ import { vendorLogoFor } from './logos.js';
 import { buildTemplate, templateGroups, templates } from './templates.js';
 import { buildSpec, catalogEntry, catalogFor, catalogProfile } from './devices/catalog.js';
 import { addConnector, addShape, alignSelection, copySelection, distributeSelection, exportDiagramSvg, groupSelection, importDrawio, moveSelection, pasteSelection, removeDiagramElements, ungroupSelection, updateConnector, updateGroup, updateShape } from './diagram.js';
-import { applyDrawioImport, createDrawioPreview, parseDrawioDocument } from './drawio-import.js';
+import { applyDrawioImport, createDrawioEdgeRenderContext, createDrawioPreview, parseDrawioDocument, renderDrawioEdgeSvg, renderDrawioPageSvg, renderDrawioVisualSvg } from './drawio-import.js';
 import { createHistory } from './history.js';
 import { acceptanceDigest, evidenceApplicability } from './evidence.js';
 import { addMappedPlacement, addStandalonePlacement, createRack, firstFreeStartU, materializeRack, nearestFreeStartU, placementHeight, placementView, rackPlacements, rackSummary, removePlacement, removeRack, updatePlacement } from './rack.js';
@@ -34,6 +34,7 @@ let swapTarget = null;
 let swapComparison = [];
 let absorbsExpanded = false;
 let drawioPreview = null;
+let drawioDragDepth = 0;
 let resourceAbsorbsExpanded = false;
 let worstAxesExpanded = false;
 const failureFilter = { query: '', verdict: 'all' };
@@ -1408,13 +1409,16 @@ function canvasViewport(devices) {
     minX: Math.min(box.minX, shape.x), minY: Math.min(box.minY, shape.y),
     maxX: Math.max(box.maxX, shape.x + shape.width), maxY: Math.max(box.maxY, shape.y + shape.height),
   }), EMPTY);
+  const deviceBounds = devices.reduce((box, { position, drawioVisual }) => ({
+    minX: Math.min(box.minX, position.x - (drawioVisual?.width ?? (NODE_REACH.left + NODE_REACH.right)) / 2),
+    minY: Math.min(box.minY, position.y - (drawioVisual?.height ?? (NODE_REACH.top + NODE_REACH.bottom)) / 2),
+    maxX: Math.max(box.maxX, position.x + (drawioVisual?.width ?? (NODE_REACH.left + NODE_REACH.right)) / 2),
+    maxY: Math.max(box.maxY, position.y + (drawioVisual?.height ?? (NODE_REACH.top + NODE_REACH.bottom)) / 2),
+  }), shapeBounds);
   const contentBounds = groupBoxes(devices).reduce((box, group) => ({
     minX: Math.min(box.minX, group.x), minY: Math.min(box.minY, group.y),
     maxX: Math.max(box.maxX, group.x + group.width), maxY: Math.max(box.maxY, group.y + group.height),
-  }), devices.reduce((box, { position }) => ({
-    minX: Math.min(box.minX, position.x - NODE_REACH.left), minY: Math.min(box.minY, position.y - NODE_REACH.top),
-    maxX: Math.max(box.maxX, position.x + NODE_REACH.right), maxY: Math.max(box.maxY, position.y + NODE_REACH.bottom),
-  }), shapeBounds));
+  }), deviceBounds);
   // 빈 설계는 맞출 콘텐츠가 없다. 최소 캔버스를 콘텐츠로 본다.
   const content = Number.isFinite(contentBounds.minX)
     ? {
@@ -1445,6 +1449,7 @@ function applyViewport() {
   stage.style.setProperty('--viewport-y', `${viewport.minY}px`);
   // viewBox 가 원점을 담당하므로 링크는 좌표를 변환하지 않고 그대로 쓴다.
   element('link-layer').setAttribute('viewBox', `${viewport.minX} ${viewport.minY} ${viewport.width} ${viewport.height}`);
+  element('drawio-import-layer').setAttribute('viewBox', `${viewport.minX} ${viewport.minY} ${viewport.width} ${viewport.height}`);
   element('diagram-group-layer').setAttribute('viewBox', `${viewport.minX} ${viewport.minY} ${viewport.width} ${viewport.height}`);
 }
 
@@ -1630,6 +1635,7 @@ function pathLength(geometry) {
 }
 
 function renderTopology() {
+  const hasDrawioImport = Boolean(topology.diagram?.drawioImport);
   applyViewport();
   if (topologyView.mode === 'spatial') syncSpatialScene();
   const devices = new Map(current.devices.map((item) => [item.id, item]));
@@ -1667,7 +1673,27 @@ function renderTopology() {
     const shape = topology.diagram?.shapes?.find((item) => item.id === id);
     return shape ? { x: shape.x + shape.width / 2, y: shape.y + shape.height / 2 } : null;
   })();
-  const diagramConnectors = (topology.diagram?.connectors || []).map((connector) => {
+  const endpointShape = (id) => {
+    const device = devices.get(id);
+    if (device?.drawioVisual) {
+      const visual = device.drawioVisual;
+      return { geometry: { x: device.position.x - visual.width / 2, y: device.position.y - visual.height / 2, width: visual.width, height: visual.height } };
+    }
+    if (device?.position) return { geometry: { x: device.position.x - 64, y: device.position.y - 40, width: 128, height: 80 } };
+    const shape = topology.diagram?.shapes?.find((item) => item.id === id);
+    return shape ? { geometry: shape } : null;
+  };
+  const importedEdge = (connector) => ({ ...connector, geometry: connector.drawioGeometry || connector.geometry || { waypoints: connector.waypoints || [] }, paint: { stroke: connector.stroke, strokeWidth: connector.strokeWidth, ...(connector.paint || {}) } });
+  const importedEdges = [
+    ...(topology.diagram?.connectors || []).filter((connector) => Number.isInteger(connector.zIndex)),
+    ...topology.links.filter((link) => Number.isInteger(link.drawioVisual?.zIndex)).map((link) => ({ ...link, ...link.drawioVisual, waypoints: link.drawioVisual.waypoints || [] })),
+  ].map(importedEdge);
+  const importedEdgeContext = createDrawioEdgeRenderContext(importedEdges.map((edge) => ({ edge, sourceShape: endpointShape(edge.source), targetShape: endpointShape(edge.target) })));
+  const importedConnectorMarkup = (connector) => {
+    const edge = importedEdge(connector);
+    return renderDrawioEdgeSvg(edge, endpointShape(edge.source), endpointShape(edge.target), `applied-${edge.id}`, importedEdgeContext);
+  };
+  const diagramConnectors = (topology.diagram?.connectors || []).filter((connector) => !(hasDrawioImport && Number.isInteger(connector.zIndex))).map((connector) => {
     const source = endpointPoint(connector.source); const target = endpointPoint(connector.target);
     if (!source || !target) return '';
     const points = [source, ...(connector.waypoints || []), target].map(({ x, y }) => `${x},${y}`).join(' ');
@@ -1744,6 +1770,10 @@ function renderTopology() {
   };
 
   element('link-layer').innerHTML = groupMarkup + (topology.synthetic ? '<text class="synthetic-marker" x="18" y="30">SYNTHETIC TOPOLOGY</text>' : '') + current.links.map((link) => {
+    if (hasDrawioImport && link.drawioVisual) {
+      const geometry = escapeAttribute(linkPath(routes.get(link.id), routeView.mode));
+      return `<g class="link-group" data-link-id="${escapeAttribute(link.id)}"><path class="link-hit" d="${geometry}" tabindex="0" role="button" aria-label="${escapeAttribute(`${resourceName(link)} 링크 검사`)}"></path></g>`;
+    }
     const onSeveredPath = !link.severed && severedPathLinks.has(link.id);
     const status = detailView.level === 'off' && !onSeveredPath && !link.severed ? 'healthy' : linkStatus(link);
     const spot = labelSpots.get(link.id);
@@ -1777,9 +1807,9 @@ function renderTopology() {
       ${spot ? `<text class="link-label"${link.severed ? '' : ` data-live-util="${utilization ?? ''}" data-live-seed="${link.id}" data-live-source-type="${escapeAttribute(link.sourceInfo?.type || 'datasheet')}"`} x="${spot.x}" y="${spot.y}" text-anchor="middle">${link.severed ? 'DOWN' : formatPercent(utilization)}</text>` : ''}
       ${selectionHas('link', link.id) ? bendHandles(link) : ''}
     </g>`;
-  }).join('') + diagramConnectors + groupLabels;
+  }).join('') + diagramConnectors + (hasDrawioImport ? '' : groupLabels);
   fitGroupTags();
-  element('diagram-group-layer').innerHTML = diagramGroupMarkup;
+  element('diagram-group-layer').innerHTML = hasDrawioImport ? '' : diagramGroupMarkup;
   for (const frame of element('diagram-group-layer').querySelectorAll('[data-diagram-group-id] :is(rect, text)')) {
     frame.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -1796,9 +1826,11 @@ function renderTopology() {
     const stroke = shape.stroke && shape.stroke !== 'none' ? shape.stroke : 'transparent';
     const background = shape.gradient && fill !== 'transparent' ? `linear-gradient(180deg, ${shape.gradientColor || '#ffffff'}, ${fill})` : fill;
     const effects = [shape.rounded ? ' rounded' : '', shape.sketch ? ' sketch' : '', shape.glass ? ' glass' : '', shape.shadow ? ' shadow' : '', shape.lineStyle === 'dashed' ? ' dashed' : '', shape.lineStyle === 'dotted' ? ' dotted' : ''].join('');
-    const style = `left:${shape.x - viewport.minX}px;top:${shape.y - viewport.minY}px;width:${shape.width}px;height:${shape.height}px;background:${background};border-color:${stroke};border-width:${shape.strokeWidth ?? 1}px;border-radius:${shape.rounded && shape.kind !== 'ellipse' ? '10px' : ''};opacity:${shape.opacity ?? 1};color:${shape.textColor || 'var(--text)'};font-size:${shape.fontSize || 11}px;font-weight:${shape.fontWeight || 500};text-align:${shape.textAlign || 'center'};align-items:${shape.verticalAlign === 'top' ? 'start' : shape.verticalAlign === 'bottom' ? 'end' : 'center'};justify-items:${shape.textAlign === 'left' ? 'start' : shape.textAlign === 'right' ? 'end' : 'center'};`;
+    const style = `left:${shape.x - viewport.minX}px;top:${shape.y - viewport.minY}px;width:${shape.width}px;height:${shape.height}px;z-index:${shape.zIndex ?? 0};background:${background};border-color:${stroke};border-width:${shape.strokeWidth ?? 1}px;border-radius:${shape.rounded && shape.kind !== 'ellipse' ? '10px' : ''};opacity:${shape.opacity ?? 1};color:${shape.textColor || 'var(--text)'};font-size:${shape.fontSize || 11}px;font-weight:${shape.fontWeight || 500};text-align:${shape.textAlign || 'center'};align-items:${shape.verticalAlign === 'top' ? 'start' : shape.verticalAlign === 'bottom' ? 'end' : 'center'};justify-items:${shape.textAlign === 'left' ? 'start' : shape.textAlign === 'right' ? 'end' : 'center'};`;
     const annotationState = state.editorMode === 'annotation' ? (annotationSource === shape.id ? ' annotation-source' : annotationSource ? ' annotation-target' : '') : '';
-    return `<button type="button" class="diagram-shape${selected ? ' selected' : ''}${shape.locked ? ' locked' : ''}${annotationState}${effects}" data-shape-id="${escapeAttribute(shape.id)}" data-kind="${escapeAttribute(shape.kind)}" aria-label="${escapeAttribute(`${shape.text || shape.id}${shape.locked ? ' · 잠김' : ''}`)}" style="${escapeAttribute(style)}"><span class="diagram-shape-label">${escapeText(shape.text || '')}</span>${shape.locked ? '<span class="diagram-lock-mark" aria-hidden="true">🔒</span>' : ''}${handles}</button>`;
+    const visual = shape.drawioShape ? `<svg class="diagram-drawio-visual" viewBox="${shape.x} ${shape.y} ${shape.width} ${shape.height}" aria-hidden="true">${renderDrawioVisualSvg({ geometry: shape, text: shape.text, labelRuns: shape.labelRuns, paint: shape.paint, drawioShape: shape.drawioShape, drawioOptions: shape.drawioOptions, imageAssetId: shape.imageAssetId }, topology.diagram.drawioAssets || [])}</svg>` : `<span class="diagram-shape-label">${escapeText(shape.text || '')}</span>`;
+    const sourceHit = hasDrawioImport && Number.isInteger(shape.zIndex);
+    return `<button type="button" class="diagram-shape${shape.drawioShape ? ' drawio-visual' : ''}${sourceHit ? ' drawio-source-hit' : ''}${selected ? ' selected' : ''}${shape.locked ? ' locked' : ''}${annotationState}${effects}" data-shape-id="${escapeAttribute(shape.id)}" data-kind="${escapeAttribute(shape.kind)}" aria-label="${escapeAttribute(`${shape.text || shape.id}${shape.locked ? ' · 잠김' : ''}`)}" style="${escapeAttribute(style)}">${sourceHit ? '' : visual}${shape.locked ? '<span class="diagram-lock-mark" aria-hidden="true">🔒</span>' : ''}${handles}</button>`;
   }).join('');
 
   const pools = backendPoolIndex(current.demands);
@@ -1829,10 +1861,20 @@ function renderTopology() {
         ? rows.map(([key, axis]) => nodeAxisRow(device, key, axis, brief)).join('')
         : `<span class="node-axis" data-axis-state="disabled"><i>${STATE_TOKEN.disabled}</i><b>OFFLINE</b><em>\u2014</em><s>DOWN</s></span>`;
     const annotationState = state.editorMode === 'annotation' ? (annotationSource === device.id ? ' annotation-source' : annotationSource ? ' annotation-target' : '') : '';
-    return `<button type="button" class="mesh-node ${status} ${state.selectedId === device.id ? 'selected' : ''} ${selectionHas('device', device.id) ? 'multi-selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}${annotationState}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x - viewport.minX}px;top:${device.position.y - viewport.minY}px" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
-      <span class="node-symbol">${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}${topology.synthetic ? '<span class="synthetic-badge" aria-label="합성값">SYN</span>' : ''}${classView.badge === 'on' ? `<span class="node-class-badge">${escapeText(kindInitial(device.kind))}</span>` : ''}${deviceSymbol(device)}</span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}${pool || idle ? `<span class="node-pool"${idle ? ' data-warn=""' : ''}>${escapeText(pool || idle)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta" title="${escapeAttribute(meta)}">${escapeText(meta)}</span></span>
+    const sourceHit = hasDrawioImport && device.drawioVisual;
+    const importedVisual = device.drawioVisual ? `<svg class="node-drawio-visual" viewBox="0 0 ${device.drawioVisual.width} ${device.drawioVisual.height}" aria-hidden="true">${renderDrawioVisualSvg({ geometry: { x: 0, y: 0, width: device.drawioVisual.width, height: device.drawioVisual.height }, text: device.drawioVisual.text || '', labelRuns: device.drawioVisual.labelRuns, paint: device.drawioVisual.paint, drawioShape: device.drawioVisual.drawioShape, drawioOptions: device.drawioVisual.drawioOptions, imageAssetId: device.drawioVisual.imageAssetId }, topology.diagram?.drawioAssets || [])}</svg>` : deviceSymbol(device);
+    const sourceStyle = sourceHit ? `width:${device.drawioVisual.width}px;--symbol-h:${device.drawioVisual.height}px;` : '';
+    return `<button type="button" class="mesh-node ${device.drawioVisual ? 'drawio-device ' : ''}${sourceHit ? 'drawio-source-hit ' : ''}${status} ${state.selectedId === device.id ? 'selected' : ''} ${selectionHas('device', device.id) ? 'multi-selected' : ''} ${state.connectSource === device.id ? 'connect-source' : ''}${annotationState}" data-device-id="${escapeAttribute(device.id)}" style="left:${device.position.x - viewport.minX}px;top:${device.position.y - viewport.minY}px;z-index:${device.drawioVisual?.zIndex ?? 0};${sourceStyle}" aria-pressed="${state.selectedId === device.id}" aria-label="${escapeAttribute(nodeAccessibleName(device))}">
+      <span class="node-symbol">${sourceHit ? '' : `${device.active ? '<span class="node-ports" aria-hidden="true">' + ['top', 'right', 'bottom', 'left'].map((side) => `<i data-port="${side}"></i>`).join('') + '</span>' : ''}${vendorBadge(device)}${topology.synthetic ? '<span class="synthetic-badge" aria-label="합성값">SYN</span>' : ''}${classView.badge === 'on' ? `<span class="node-class-badge">${escapeText(kindInitial(device.kind))}</span>` : ''}${importedVisual}`}</span><span class="node-rail"></span><span class="node-labels"><span class="node-name">${escapeText(device.name)}</span>${device.model ? `<span class="node-model">${escapeText(device.model)}</span>` : ''}${pool || idle ? `<span class="node-pool"${idle ? ' data-warn=""' : ''}>${escapeText(pool || idle)}</span>` : ''}<span class="node-axes">${axes}</span><span class="node-meta" title="${escapeAttribute(meta)}">${escapeText(meta)}</span></span>
     </button>`;
   }).join('');
+  const importedElements = [
+    ...(topology.diagram?.shapes || []).filter((shape) => Number.isInteger(shape.zIndex) && shape.drawioShape).map((shape) => ({ zIndex: shape.zIndex, role: 'shape', markup: renderDrawioVisualSvg({ geometry: shape, text: shape.text, labelRuns: shape.labelRuns, paint: shape.paint, drawioShape: shape.drawioShape, drawioOptions: shape.drawioOptions, imageAssetId: shape.imageAssetId }, topology.diagram?.drawioAssets || []) })),
+    ...topology.devices.filter((device) => Number.isInteger(device.drawioVisual?.zIndex)).map((device) => { const visual = device.drawioVisual; return { zIndex: visual.zIndex, role: 'device', markup: renderDrawioVisualSvg({ geometry: { x: device.position.x - visual.width / 2, y: device.position.y - visual.height / 2, width: visual.width, height: visual.height }, text: visual.text || '', labelRuns: visual.labelRuns, paint: visual.paint, drawioShape: visual.drawioShape, drawioOptions: visual.drawioOptions, imageAssetId: visual.imageAssetId }, topology.diagram.drawioAssets || []) }; }),
+    ...(topology.diagram?.connectors || []).filter((connector) => Number.isInteger(connector.zIndex)).map((connector) => ({ zIndex: connector.zIndex, role: 'connector', markup: importedConnectorMarkup(connector) })),
+    ...topology.links.filter((link) => Number.isInteger(link.drawioVisual?.zIndex)).map((link) => ({ zIndex: link.drawioVisual.zIndex, role: 'link', markup: importedConnectorMarkup({ ...link, ...link.drawioVisual, waypoints: link.drawioVisual.waypoints || [] }) })),
+  ].sort((a, b) => a.zIndex - b.zIndex).map(({ zIndex, role, markup }) => `<g data-drawio-z-index="${zIndex}" data-drawio-role="${role}">${markup}</g>`).join('');
+  element('drawio-import-layer').innerHTML = hasDrawioImport ? importedElements : '';
 }
 
 function renderInspector() {
@@ -2536,11 +2578,13 @@ function renderDrawioPreview() {
   const candidates = preview.candidates.map((candidate) => `<li><div><strong>${escapeText(candidate.text || '이름 없음')}</strong><small>${escapeText(candidate.suggestion.ruleId)} · ${escapeText(candidate.suggestion.confidence)}</small></div>${drawioDecisionOptions(candidate)}</li>`).join('');
   const warningCounts = Object.entries(preview.warnings.reduce((counts, item) => ({ ...counts, [item.code]: (counts[item.code] || 0) + 1 }), {}));
   const warningSummary = warningCounts.length ? warningCounts.map(([code, count]) => `${code} ${count}`).join(' · ') : '없음';
-  openEditorPanel('drawio 가져오기 미리보기', `<p class="editor-hint">적용 전에는 현재 설계와 계산 결과를 바꾸지 않습니다. 의미를 지정하지 않은 요소는 편집 가능한 주석 도면으로 가져옵니다.</p><label class="drawio-page-choice">페이지 <select data-drawio-page>${pages}</select></label><p class="drawio-warning">경고 ${preview.warnings.length}개 · ${escapeText(warningSummary)}</p><div class="form-actions"><button type="button" data-drawio-accept-high>높은 신뢰도 수락</button><button type="button" data-drawio-cancel>취소</button><button type="button" data-drawio-apply>페이지 적용</button></div><ul class="drawio-preview-list">${candidates}</ul>`);
+  const fileLabel = drawioPreview.fileName ? escapeText(drawioPreview.fileName) : 'drawio 파일';
+  openEditorPanel('drawio 가져오기 미리보기', `<p class="editor-hint">${fileLabel}을 안전한 구성도로 먼저 보여줍니다. 적용 전에는 현재 설계와 계산 결과를 바꾸지 않습니다.</p><div class="drawio-preview-actions"><label class="drawio-page-choice">페이지 <select data-drawio-page>${pages}</select></label><p class="drawio-warning">경고 ${preview.warnings.length}개 · ${escapeText(warningSummary)}</p><div class="form-actions"><button type="button" data-drawio-accept-high>높은 신뢰도 수락</button><button type="button" data-drawio-cancel>취소</button><button type="button" data-drawio-append>현재 설계에 추가</button><button type="button" data-drawio-apply>새 구성도로 적용</button></div></div><div class="drawio-preview-layout"><section class="drawio-visual-preview" aria-label="drawio 원본 구성도 미리보기"><header><strong>원본 구성도</strong><span>위치 · 색 · 텍스트 · 연결 관계</span></header><div class="drawio-preview-canvas">${renderDrawioPageSvg(preview.page, preview.assets)}</div></section><section class="drawio-semantic-preview" aria-label="drawio 의미 후보"><header><strong>분석 의미 지정</strong><span>선택하지 않으면 주석으로 적용</span></header><ul class="drawio-preview-list">${candidates}</ul></section></div>`);
 }
 
-function openDrawioPreview(document) {
-  drawioPreview = { document, pageId: document.pages[0].id, decisions: {} };
+function openDrawioPreview(document, { fileName = '' } = {}) {
+  drawioPreview = { document, pageId: document.pages[0].id, decisions: {}, fileName };
+  if (state.workspace !== 'topology') setWorkspace('topology');
   renderDrawioPreview();
 }
 
@@ -3318,6 +3362,14 @@ async function readFile(input, { limit = 2_000_000, label = 'JSON' } = {}) {
   if (!file) return null;
   if (file.size > limit) throw new Error(`${label} 파일은 ${Math.round(limit / 1024 / 1024)} MB 이하여야 합니다.`);
   const text = await file.text(); input.value = ''; return text;
+}
+
+const DRAWIO_MIME_TYPES = new Set(['application/xml', 'text/xml', 'text/plain', 'application/vnd.jgraph.mxfile']);
+function isDrawioFile(file) { return /\.(?:drawio|xml)$/i.test(file?.name || '') || DRAWIO_MIME_TYPES.has(file?.type || ''); }
+async function importDrawioFile(file) {
+  if (!file || !isDrawioFile(file)) throw new Error('drawio 또는 XML 파일 하나를 놓아 주세요.');
+  if (file.size > 4 * 1024 * 1024) throw new Error('drawio 파일은 4 MB 이하여야 합니다.');
+  openDrawioPreview(await parseDrawioDocument(await file.text()), { fileName: file.name || '' });
 }
 
 function handleEditorAction(action) {
@@ -4295,14 +4347,24 @@ element('editor-panel-content').addEventListener('click', (event) => {
     }
     renderDrawioPreview(); return;
   }
-  if (event.target.closest('[data-drawio-apply]') && drawioPreview) {
+  const drawioApply = event.target.closest('[data-drawio-apply], [data-drawio-append]');
+  if (drawioApply && drawioPreview) {
     try {
       const preview = createDrawioPreview(drawioPreview.document, drawioPreview.pageId, drawioPreview.decisions);
-      const imported = applyDrawioImport(topology, preview, drawioPreview.decisions);
-      topology = imported.topology;
-      state.selection = topology.devices.slice(-imported.applied.devices).map(({ id }) => ({ type: 'device', id }));
+      const append = drawioApply.hasAttribute('data-drawio-append');
+      const imported = applyDrawioImport(append ? topology : buildTemplate('blank'), preview, drawioPreview.decisions);
+      const message = `drawio 페이지를 ${append ? '현재 설계에 추가' : '새 구성도로 적용'}했습니다. 장비 ${imported.applied.devices}개 · 계산 링크 ${imported.applied.links}개 · 경고 ${imported.warnings.length}개`;
       drawioPreview = null; closeEditorPanel();
-      commitTopology(`drawio 페이지를 적용했습니다. 장비 ${imported.applied.devices}개 · 계산 링크 ${imported.applied.links}개 · 경고 ${imported.warnings.length}개`);
+      if (append) {
+        topology = imported.topology; state.selection = topology.devices.slice(-imported.applied.devices).map(({ id }) => ({ type: 'device', id })); commitTopology(message);
+      } else {
+        const previous = structuredClone(topology); const previousBaseline = structuredClone(baselineSnapshot);
+        const restore = { scale: state.scale, devices: [...state.disabledDevices], links: [...state.disabledLinks], domains: [...state.disabledDomains], namedScenarios: structuredClone(state.namedScenarios), selectedId: state.selectedId };
+        loadTopology(imported.topology, message, () => {
+          topology = previous; state.scale = restore.scale; state.selectedId = restore.selectedId; state.disabledDevices = new Set(restore.devices); state.disabledLinks = new Set(restore.links); state.disabledDomains = new Set(restore.domains); state.namedScenarios = restore.namedScenarios;
+          baselineSnapshot = previousBaseline; baseline = calculateScenario(previousBaseline.topology, previousBaseline.scenario); element('scale-input').value = String(restore.scale * 100); documentHistory.reset(topology); recalculate(); showToast('이전 설계로 되돌렸습니다.'); focusCanvas(current.summary.bindingResourceId);
+        });
+      }
     } catch (error) { showToast(`drawio 적용 실패: ${error.message}`); }
     return;
   }
@@ -4701,9 +4763,24 @@ element('zabbix-observed-load-file-input').addEventListener('change', async (eve
 });
 element('drawio-file-input').addEventListener('change', async (event) => {
   try {
-    const text = await readFile(event.target, { limit: 4 * 1024 * 1024, label: 'drawio' }); if (!text) return;
-    openDrawioPreview(await parseDrawioDocument(text));
+    const file = event.target.files?.[0]; event.target.value = ''; if (!file) return;
+    await importDrawioFile(file);
   } catch (error) { showToast(`drawio 가져오기 실패: ${error.message}`); }
+});
+const drawioDropOverlay = element('drawio-drop-overlay');
+const hasFileTransfer = (event) => [...(event.dataTransfer?.types || [])].includes('Files');
+function hideDrawioDropOverlay() { drawioDragDepth = 0; drawioDropOverlay.hidden = true; document.body.classList.remove('drawio-drag-active'); }
+document.addEventListener('dragenter', (event) => {
+  if (!hasFileTransfer(event)) return;
+  event.preventDefault(); drawioDragDepth += 1; drawioDropOverlay.hidden = false; document.body.classList.add('drawio-drag-active');
+});
+document.addEventListener('dragover', (event) => { if (hasFileTransfer(event)) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } });
+document.addEventListener('dragleave', (event) => { if (hasFileTransfer(event) && --drawioDragDepth <= 0) hideDrawioDropOverlay(); });
+document.addEventListener('drop', async (event) => {
+  if (!hasFileTransfer(event)) return;
+  event.preventDefault(); const files = [...(event.dataTransfer?.files || [])]; hideDrawioDropOverlay();
+  if (files.length !== 1) { showToast('drawio 파일을 한 번에 하나만 놓아 주세요.'); return; }
+  try { await importDrawioFile(files[0]); } catch (error) { showToast(`drawio 가져오기 실패: ${error.message}`); }
 });
 const topologyScroll = document.querySelector('.topology-scroll');
 // drawio 와 같은 손놀림으로 맞춘다. 빈 곳을 왼쪽으로 끌면 고르고, 오른쪽이나 가운데로 끌면

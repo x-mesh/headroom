@@ -1,5 +1,6 @@
 import { axisCatalog } from './data.js';
 import { cardBox, formatNodePercent, groupBoxes, linkPath, nodeView, placeLinkLabels, routeLink } from './node-view.js';
+import { createDrawioEdgeRenderContext, renderDrawioEdgeSvg, renderDrawioVisualSvg } from './drawio-import.js';
 const clone = (value) => structuredClone(value);
 const coordinate = (value) => {
   const n = Number(value);
@@ -312,11 +313,14 @@ function symbolMarkup(symbol, cx, top) {
   return `<g transform="translate(${fmt(x)} ${fmt(y)}) scale(${fmt(scale)}) translate(${fmt(-minX)} ${fmt(-minY)})">${body}</g>`;
 }
 
-function nodeMarkup(view, device) {
+function nodeMarkup(view, device, assets = []) {
   const cx = coordinate(device.position.x);
   const top = coordinate(device.position.y) - NODE.symbolH / 2;
   const left = cx - NODE.width / 2;
-  const parts = [symbolMarkup(view.symbol, cx, top)];
+  const visual = device.drawioVisual;
+  const parts = [visual
+    ? renderDrawioVisualSvg({ geometry: { x: cx - visual.width / 2, y: top + (NODE.symbolH - visual.height) / 2, width: visual.width, height: visual.height }, text: '', labelRuns: visual.labelRuns, paint: visual.paint, drawioShape: visual.drawioShape, drawioOptions: visual.drawioOptions, imageAssetId: visual.imageAssetId }, assets)
+    : symbolMarkup(view.symbol, cx, top)];
   if (view.synthetic) parts.push(text(left + NODE.width - 1, top + 8, 'SYN', { size: 7, weight: 700, fill: INK.cyan, anchor: 'end' }));
   // 죽은 장비에는 심볼 위로 가위표를 긋는다. 색만으로는 죽은 것과 위험한 것이 같아 보인다.
   if (view.status === 'disabled') {
@@ -381,8 +385,10 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
   const severed = new Set((result?.demands || []).flatMap(({ severedPaths }) => (severedPaths || []).flatMap(({ links }) => links)));
 
   // 결과가 있으면 노드는 화면과 같은 규격을 차지한다. 없으면 예전처럼 이름표 상자다.
-  const nodes = [...(next.devices || []).map((d) => (views.has(d.id)
-    ? { id: d.id, kind: 'node', device: d, view: views.get(d.id), x: d.position.x - NODE.width / 2, y: d.position.y - NODE.symbolH / 2, width: NODE.width, height: NODE.symbolH + NODE.headH + NODE.modelH + views.get(d.id).axes.length * NODE.rowH + NODE.metaH + 6 }
+  const nodes = [...(next.devices || []).map((d) => (d.drawioVisual && detailLevel === 'off'
+    ? { id: d.id, kind: 'drawio-device', device: d, text: '', x: d.position.x - d.drawioVisual.width / 2, y: d.position.y - d.drawioVisual.height / 2, width: d.drawioVisual.width, height: d.drawioVisual.height, zIndex: d.drawioVisual.zIndex }
+    : views.has(d.id)
+      ? { id: d.id, kind: 'node', device: d, view: views.get(d.id), x: d.position.x - NODE.width / 2, y: d.position.y - NODE.symbolH / 2, width: NODE.width, height: NODE.symbolH + NODE.headH + NODE.modelH + views.get(d.id).axes.length * NODE.rowH + NODE.metaH + 6 }
     : { id: d.id, kind: 'rect', text: d.name || d.id, x: d.position.x - 64, y: d.position.y - 40, width: 128, height: 80 })), ...next.diagram.shapes];
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const anchorPoint = (node, anchor) => (node.kind === 'node'
@@ -395,12 +401,17 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
   const routes = [...(next.links || []), ...next.diagram.connectors].flatMap((edge) => {
     const a = byId.get(edge.source); const b = byId.get(edge.target);
     if (!a || !b) return [];
+    if (edge.drawioVisual || edge.drawioGeometry) return [{ edge, points: [anchorPoint(a), anchorPoint(b)], sourceNode: a, targetNode: b }];
     const from = anchorPoint(a, edge.sourceAnchor);
     const to = anchorPoint(b, edge.targetAnchor);
     const pinned = (edge.waypoints || []).map((p) => ({ x: coordinate(p.x), y: coordinate(p.y) }));
     const obstacles = [...cards].filter(([id]) => id !== edge.source && id !== edge.target).map(([, box]) => box);
     return [{ edge, points: routeLink(from, to, obstacles, route, pinned) }];
   });
+  const importedEdgeContext = createDrawioEdgeRenderContext(routes.filter(({ edge }) => edge.drawioVisual || edge.drawioGeometry).map(({ edge }) => {
+    const visual = edge.drawioVisual || edge; const source = byId.get(edge.source); const target = byId.get(edge.target);
+    return { edge: { ...edge, ...visual, geometry: visual.geometry || edge.drawioGeometry || { waypoints: edge.waypoints || [] }, paint: { stroke: edge.stroke, strokeWidth: edge.strokeWidth, ...(edge.paint || {}), ...(visual.paint || {}) } }, sourceShape: source ? { geometry: { x: source.x, y: source.y, width: source.width, height: source.height } } : null, targetShape: target ? { geometry: { x: target.x, y: target.y, width: target.width, height: target.height } } : null };
+  }));
 
   const groups = result ? groupBoxes(result.devices.filter(({ position }) => position)) : [];
   const extent = [...nodes.flatMap((n) => [{ x: coordinate(n.x), y: coordinate(n.y) }, { x: coordinate(n.x + n.width), y: coordinate(n.y + n.height) }]),
@@ -433,7 +444,14 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
     };
   }), nodes.filter(({ kind }) => kind === 'node').map(({ device }) => device.position));
 
-  const edges = routes.map(({ edge, points }) => {
+  const edgeMarkup = ({ edge, points }) => {
+    if (edge.drawioVisual || edge.drawioGeometry) {
+      const visual = edge.drawioVisual || edge;
+      const source = byId.get(edge.source); const target = byId.get(edge.target);
+      const sourceShape = source ? { geometry: { x: source.x, y: source.y, width: source.width, height: source.height } } : null;
+      const targetShape = target ? { geometry: { x: target.x, y: target.y, width: target.width, height: target.height } } : null;
+      return renderDrawioEdgeSvg({ ...edge, ...visual, geometry: visual.geometry || edge.drawioGeometry || { waypoints: edge.waypoints || [] }, paint: { stroke: edge.stroke, strokeWidth: edge.strokeWidth, ...(edge.paint || {}), ...(visual.paint || {}) } }, sourceShape, targetShape, `export-${edge.id}`, importedEdgeContext);
+    }
     const link = linkStatus.get(edge.id);
     // 화면과 같은 판정을 쓴다(public/app.js renderTopology). 끊긴 링크는 DOWN 이고, 살아 있지만
     // 이 트래픽이 지날 수 없는 링크는 따로 표시한다. 죽은 링크에 0% 를 적으면 한가한 것으로 읽힌다.
@@ -443,7 +461,10 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
     const dash = LINK_DASH[status] ? ` stroke-dasharray="${LINK_DASH[status]}"` : '';
     const spot = labelSpots.get(edge.id);
     const label = edgeLabel(link, edge);
-    const custom = !link && edge.kind ? { stroke: edge.stroke || INK.line, width: edge.strokeWidth || 1.5, dash: edge.dashed === false ? '' : '5 4' } : null;
+    const imported = edge.drawioVisual;
+    const custom = imported
+      ? { stroke: imported.paint?.stroke || INK.line, width: imported.paint?.strokeWidth || 1.5, dash: imported.drawioOptions?.dashed || imported.paint?.lineStyle === 'dashed' ? '7 5' : '' }
+      : !link && edge.kind ? { stroke: edge.stroke || INK.line, width: edge.strokeWidth || 1.5, dash: edge.dashed === false ? '' : '5 4' } : null;
     const customStroke = custom?.stroke || stroke;
     const customWidth = custom?.width || LINK_WIDTH[status] || 1;
     const customDash = custom ? (custom.dash ? ` stroke-dasharray="${custom.dash}"` : '') : dash;
@@ -461,10 +482,13 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
     const startMarker = marker('start'); const endMarker = marker('end');
     return `${startMarker.definition || endMarker.definition ? `<defs>${startMarker.definition}${endMarker.definition}</defs>` : ''}<path d="${linkPath(points, route)}" fill="none" stroke="${customStroke}" stroke-width="${customWidth}" stroke-linejoin="round"${customDash}${startMarker.attribute}${endMarker.attribute}/>`
       + (label && spot ? text(spot.x, spot.y, label, { size: 9, fill: status && status !== 'healthy' ? stroke : INK.muted, anchor: 'middle', halo: true }) : '');
-  }).join('');
+  };
+  const edges = routes.map(edgeMarkup).join('');
 
-  const elements = nodes.map((n) => {
-    if (n.kind === 'node') return nodeMarkup(n.view, n.device);
+  const elementMarkup = (n) => {
+    if (n.kind === 'node') return nodeMarkup(n.view, n.device, next.diagram.drawioAssets || []);
+    if (n.kind === 'drawio-device') { const visual = n.device.drawioVisual; return renderDrawioVisualSvg({ geometry: { x: n.x, y: n.y, width: visual.width, height: visual.height }, text: '', labelRuns: visual.labelRuns, paint: visual.paint, drawioShape: visual.drawioShape, drawioOptions: visual.drawioOptions, imageAssetId: visual.imageAssetId }, next.diagram.drawioAssets || []); }
+    if (n.drawioShape) return renderDrawioVisualSvg({ geometry: { x: n.x, y: n.y, width: n.width, height: n.height }, text: n.text, labelRuns: n.labelRuns, paint: n.paint, drawioShape: n.drawioShape, drawioOptions: n.drawioOptions, imageAssetId: n.imageAssetId }, next.diagram.drawioAssets || []);
     const gradientId = `shape-gradient-${n.id}`;
     const shadowId = `shape-shadow-${n.id}`;
     const bounds = n.kind === 'ellipse'
@@ -479,13 +503,20 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
     const glass = n.glass && n.kind !== 'text' ? `<path d="M ${fmt(n.x + 3)} ${fmt(n.y + 3)} H ${fmt(n.x + n.width - 3)} V ${fmt(n.y + n.height / 2)} H ${fmt(n.x + 3)} Z" fill="#ffffff" opacity="0.28"/>` : '';
     return `${defs ? `<defs>${defs}</defs>` : ''}${n.kind === 'text' ? '' : `${bounds} ${style}/>${glass}`}`
       + `<text x="${fmt(n.x + n.width / 2)}" y="${fmt(n.y + n.height / 2)}" text-anchor="middle" fill="${n.textColor || INK.text}" font-size="${n.fontSize || 14}" font-weight="${n.fontWeight || 'normal'}" font-family="sans-serif">${String(n.text || '').split('\n').map((line, i) => `<tspan x="${fmt(n.x + n.width / 2)}" dy="${i ? 18 : 0}">${xml(line)}</tspan>`).join('')}</text>`;
-  }).join('');
+  };
+  const elements = nodes.map(elementMarkup).join('');
+  const importedOrder = next.diagram.drawioImport && detailLevel === 'off'
+    ? [
+      ...nodes.filter((node) => Number.isInteger(node.zIndex)).map((node) => ({ zIndex: node.zIndex, markup: elementMarkup(node) })),
+      ...routes.filter(({ edge }) => Number.isInteger(edge.zIndex) || Number.isInteger(edge.drawioVisual?.zIndex)).map((routeItem) => ({ zIndex: routeItem.edge.drawioVisual?.zIndex ?? routeItem.edge.zIndex, markup: edgeMarkup(routeItem) })),
+    ].sort((a, b) => a.zIndex - b.zIndex).map(({ markup }) => markup).join('')
+    : null;
 
   const stamp = detailLevel === 'off' ? '' : result ? stampMarkup(topology, result, options, left, top, width, height) : text(left + 12, top + 16, '계산 결과 없음 · 도면만 내보냈습니다', { size: 10, fill: INK.muted });
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${fmt(left)} ${fmt(top)} ${fmt(width)} ${fmt(height)}" width="${fmt(width)}" height="${fmt(height)}">`
     + `<rect x="${fmt(left)}" y="${fmt(top)}" width="${fmt(width)}" height="${fmt(height)}" fill="${INK.canvas}"/>`
-    + groupMarkup + edges + groupLabels + elements + stamp + '</svg>';
+    + groupMarkup + (importedOrder ?? `${edges}${groupLabels}${elements}`) + stamp + '</svg>';
 }
 
 // 이 그림이 어느 배율·장애·엔진에서 나왔고 무엇이 미확인인지. 이것이 없으면 그림은 근거가 아니다.

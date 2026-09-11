@@ -2,6 +2,7 @@ import { calculateScenario } from './engine.js';
 import { validateEvidenceRecords } from './evidence.js';
 import { OBSERVED_LOAD_AGGREGATES } from './measured-import.js';
 import { failureDomainKinds } from './data.js';
+import { canonicalDrawioSvgAsset } from './drawio-import.js';
 
 export const PROJECT_SCHEMA_VERSION = 3;
 const SUPPORTED_SCHEMAS = new Set([1, 2, 3]);
@@ -48,6 +49,24 @@ function safeContent(value, label = 'Document', depth = 0) {
     safeContent(item, label, depth + 1);
   }
 }
+function validateLabelRuns(value, label) {
+  if (value == null) return;
+  if (!Array.isArray(value) || value.length > 8) throw new Error(`${label} label runs are invalid`);
+  const allowed = new Set(['text', 'color', 'fontSize', 'fontFamily', 'fontWeight', 'fontStyle', 'textDecoration', 'textAlign']);
+  for (const line of value) {
+    if (!Array.isArray(line) || line.length > 32) throw new Error(`${label} label runs are invalid`);
+    for (const run of line) {
+      if (!plainObject(run) || Object.keys(run).some((key) => !allowed.has(key)) || typeof run.text !== 'string' || run.text.length > 240 || /[<>]/.test(run.text)) throw new Error(`${label} label run is invalid`);
+      if (run.color != null && !/^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i.test(run.color)) throw new Error(`${label} label color is invalid`);
+      if (run.fontSize != null && (!Number.isInteger(run.fontSize) || run.fontSize < 8 || run.fontSize > 72)) throw new Error(`${label} label size is invalid`);
+      if (run.fontFamily != null && !['Helvetica', 'Arial', 'Verdana', 'Times New Roman', 'Courier New'].includes(run.fontFamily)) throw new Error(`${label} label family is invalid`);
+      if (run.fontWeight != null && run.fontWeight !== '700') throw new Error(`${label} label weight is invalid`);
+      if (run.fontStyle != null && run.fontStyle !== 'italic') throw new Error(`${label} label style is invalid`);
+      if (run.textDecoration != null && run.textDecoration !== 'underline') throw new Error(`${label} label decoration is invalid`);
+      if (run.textAlign != null && !['left', 'center', 'right'].includes(run.textAlign)) throw new Error(`${label} label alignment is invalid`);
+    }
+  }
+}
 function uniqueIds(items, label) {
   const ids = new Set();
   for (const item of items) { validId(item.id, label); if (ids.has(item.id)) throw new Error(`${label} contains duplicate ID ${item.id}`); ids.add(item.id); }
@@ -55,32 +74,60 @@ function uniqueIds(items, label) {
 }
 function validateDiagram(diagram, deviceIds) {
   if (!plainObject(diagram)) throw new Error('Diagram must be an object');
-  if (Object.keys(diagram).some((key) => !['shapes', 'connectors', 'groups', 'drawioImport'].includes(key))) throw new Error('Unknown diagram content');
+  if (Object.keys(diagram).some((key) => !['shapes', 'connectors', 'groups', 'drawioImport', 'drawioAssets'].includes(key))) throw new Error('Unknown diagram content');
   for (const key of ['shapes', 'connectors', 'groups']) if (!Array.isArray(diagram[key])) throw new Error(`Diagram requires ${key}`);
   safeContent(diagram, 'Diagram');
   if (diagram.drawioImport != null) {
-    if (!plainObject(diagram.drawioImport) || Object.keys(diagram.drawioImport).some((key) => !['pageId', 'warningCodes', 'decisions'].includes(key))) throw new Error('Drawio import metadata is invalid');
+    if (!plainObject(diagram.drawioImport) || Object.keys(diagram.drawioImport).some((key) => !['pageId', 'warningCodes', 'decisions', 'outcomes'].includes(key))) throw new Error('Drawio import metadata is invalid');
     boundedText(diagram.drawioImport.pageId, 'Drawio import page');
     if (!Array.isArray(diagram.drawioImport.warningCodes) || diagram.drawioImport.warningCodes.some((item) => typeof item !== 'string')) throw new Error('Drawio import warnings are invalid');
     if (!plainObject(diagram.drawioImport.decisions) || Object.values(diagram.drawioImport.decisions).some((item) => item !== 'annotation' && item !== 'device' && item !== 'zone' && item !== 'exclude' && (!plainObject(item) || !['device', 'zone'].includes(item.type)))) throw new Error('Drawio import decisions are invalid');
+    if (diagram.drawioImport.outcomes != null && (!plainObject(diagram.drawioImport.outcomes) || Object.values(diagram.drawioImport.outcomes).some((item) => !['rendered-exact', 'rendered-composer', 'rendered-fallback', 'rendered-partial', 'inert-placeholder', 'explicit-exclude'].includes(item)))) throw new Error('Drawio import outcomes are invalid');
+  }
+  const drawioAssetIds = new Set();
+  if (diagram.drawioAssets != null) {
+    if (!Array.isArray(diagram.drawioAssets)) throw new Error('Drawio assets must be an array');
+    for (const asset of diagram.drawioAssets) {
+      if (!plainObject(asset) || Object.keys(asset).some((key) => !['id', 'mime', 'width', 'height', 'digest', 'base64'].includes(key))) throw new Error('Drawio asset has unknown fields');
+      validId(asset.id, 'Drawio asset'); if (drawioAssetIds.has(asset.id)) throw new Error('Drawio asset IDs must be unique'); drawioAssetIds.add(asset.id);
+      if (!['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'].includes(asset.mime) || !Number.isInteger(asset.width) || !Number.isInteger(asset.height) || asset.width < 1 || asset.height < 1 || asset.width > 8192 || asset.height > 8192 || asset.width * asset.height > 16 * 1024 * 1024 || typeof asset.digest !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(asset.digest) || typeof asset.base64 !== 'string' || asset.base64.length > 3 * 1024 * 1024 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(asset.base64)) throw new Error('Drawio asset is invalid');
+      if (asset.mime === 'image/svg+xml') {
+        let decoded; try { decoded = new TextDecoder().decode(Uint8Array.from(atob(asset.base64), (char) => char.charCodeAt(0))); } catch { throw new Error('Drawio SVG asset is invalid'); }
+        if (canonicalDrawioSvgAsset(decoded) == null) throw new Error('Drawio SVG asset is unsafe');
+      }
+    }
   }
   const ids = uniqueIds([...diagram.shapes, ...diagram.connectors, ...diagram.groups], 'Diagram');
   for (const id of deviceIds) if (ids.has(id)) throw new Error('Diagram and device IDs must be distinct');
   const endpoints = new Set([...deviceIds, ...diagram.shapes.map(({ id }) => id)]);
   for (const shape of diagram.shapes) {
-    if (Object.keys(shape).some((key) => !['id', 'kind', 'type', 'text', 'x', 'y', 'width', 'height', 'fill', 'gradientColor', 'stroke', 'lineStyle', 'textColor', 'strokeWidth', 'opacity', 'fontSize', 'textAlign', 'verticalAlign', 'fontWeight', 'gradient', 'rounded', 'sketch', 'glass', 'shadow', 'groupId', 'unmapped', 'locked'].includes(key))) throw new Error('Unknown diagram shape content');
+    if (Object.keys(shape).some((key) => !['id', 'kind', 'type', 'text', 'x', 'y', 'width', 'height', 'fill', 'gradientColor', 'stroke', 'lineStyle', 'textColor', 'strokeWidth', 'opacity', 'fontSize', 'textAlign', 'verticalAlign', 'fontWeight', 'gradient', 'rounded', 'sketch', 'glass', 'shadow', 'groupId', 'unmapped', 'locked', 'drawioShape', 'drawioOptions', 'drawioToken', 'paint', 'imageAssetId', 'labelRuns', 'zIndex'].includes(key))) throw new Error('Unknown diagram shape content');
+    validateLabelRuns(shape.labelRuns, 'Diagram shape');
     if (!['rectangle', 'ellipse', 'text', 'note', 'rect'].includes(shape.kind ?? shape.type)) throw new Error('Unknown diagram shape type');
     for (const key of ['x', 'y', 'width', 'height']) if (!Number.isFinite(shape[key]) || (['width', 'height'].includes(key) && shape[key] <= 0)) throw new Error(`Diagram shape requires valid ${key}`);
     if (shape.text != null && (typeof shape.text !== 'string' || shape.text.length > 10000)) throw new Error('Diagram text must be under 10000 characters');
     if (shape.locked != null && typeof shape.locked !== 'boolean') throw new Error('Diagram shape lock must be boolean');
+    if (shape.zIndex != null && (!Number.isInteger(shape.zIndex) || shape.zIndex < 0 || shape.zIndex > 100000)) throw new Error('Diagram shape order is invalid');
+    if (shape.drawioShape != null && (typeof shape.drawioShape !== 'string' || !/^(?:rect|ellipse|text|image|cube|cylinder3|hexagon|container|aws-frame|vendor-fallback|generic-fallback|network:[a-z-]+|stencil:[a-z0-9._-]+|port:[a-z0-9._-]+|composer:[a-z-]+)$/.test(shape.drawioShape))) throw new Error('Drawio shape is invalid');
+    if (shape.drawioToken != null && (typeof shape.drawioToken !== 'string' || !/^[a-z0-9._ -]{1,120}$/.test(shape.drawioToken))) throw new Error('Drawio shape token is invalid');
+    if (shape.drawioOptions != null && (!plainObject(shape.drawioOptions) || Object.keys(shape.drawioOptions).some((key) => !['dashed', 'startArrow', 'endArrow', 'startFill', 'endFill', 'startSize', 'endSize', 'flipH', 'flipV', 'fixedAspect', 'rotation', 'resIcon', 'prIcon', 'grIcon', 'grIconSize', 'grStroke', 'dx', 'dy', 'notch', 'entryX', 'entryY', 'exitX', 'exitY', 'entryDx', 'entryDy', 'exitDx', 'exitDy', 'entryPerimeter', 'exitPerimeter', 'targetPerimeterSpacing', 'routeMode', 'elbow', 'jettySize', 'jumpStyle', 'jumpSize', 'dashPattern', 'fontFamily', 'textDirection', 'labelBackgroundColor', 'gradientDirection', 'verticalLabelPosition', 'spacingLeft', 'spacingRight', 'spacingTop', 'spacingBottom', 'autosize'].includes(key)))) throw new Error('Drawio shape options are invalid');
+    if (shape.drawioOptions?.resIcon != null && (typeof shape.drawioOptions.resIcon !== 'string' || !/^[a-z0-9._-]{1,120}$/i.test(shape.drawioOptions.resIcon))) throw new Error('Drawio resource icon is invalid');
+    if (shape.drawioOptions?.prIcon != null && (typeof shape.drawioOptions.prIcon !== 'string' || !/^[a-z0-9._-]{1,120}$/i.test(shape.drawioOptions.prIcon))) throw new Error('Drawio product icon is invalid');
+    if (shape.drawioOptions?.grIcon != null && (typeof shape.drawioOptions.grIcon !== 'string' || !/^[a-z0-9._-]{1,120}$/i.test(shape.drawioOptions.grIcon))) throw new Error('Drawio group icon is invalid');
+    for (const key of ['dx', 'dy', 'notch', 'entryX', 'entryY', 'exitX', 'exitY', 'entryDx', 'entryDy', 'exitDx', 'exitDy', 'targetPerimeterSpacing', 'startSize', 'endSize', 'jettySize', 'jumpSize']) if (shape.drawioOptions?.[key] != null && (!Number.isFinite(shape.drawioOptions[key]) || ((key.endsWith('X') || key.endsWith('Y')) && !key.endsWith('Dx') && !key.endsWith('Dy') && (shape.drawioOptions[key] < 0 || shape.drawioOptions[key] > 1)) || (['startSize', 'endSize', 'jumpSize'].includes(key) && (shape.drawioOptions[key] < 1 || shape.drawioOptions[key] > 100)))) throw new Error('Drawio port option is invalid');
+    if (shape.paint != null && (!plainObject(shape.paint) || Object.keys(shape.paint).some((key) => !['fill', 'gradientColor', 'stroke', 'textColor', 'rounded', 'shadow', 'lineStyle', 'fontWeight', 'textAlign', 'verticalAlign', 'strokeWidth', 'fontSize', 'opacity'].includes(key)))) throw new Error('Drawio paint is invalid');
+    if (shape.imageAssetId != null && !drawioAssetIds.has(shape.imageAssetId)) throw new Error('Drawio shape references an unknown asset');
   }
   for (const connector of diagram.connectors) {
-    if (Object.keys(connector).some((key) => !['id', 'source', 'target', 'kind', 'label', 'text', 'points', 'waypoints', 'stroke', 'strokeWidth', 'dashed', 'startArrow', 'endArrow', 'locked'].includes(key))) throw new Error('Unknown diagram connector content');
+    if (Object.keys(connector).some((key) => !['id', 'source', 'target', 'kind', 'label', 'text', 'points', 'waypoints', 'stroke', 'strokeWidth', 'dashed', 'startArrow', 'endArrow', 'locked', 'drawioOptions', 'drawioGeometry', 'zIndex'].includes(key))) throw new Error('Unknown diagram connector content');
     if (connector.kind != null && !['annotation', 'dependency'].includes(connector.kind)) throw new Error('Unknown diagram connector kind');
     if (!endpoints.has(connector.source) || !endpoints.has(connector.target)) throw new Error('Diagram connector references an unknown endpoint');
     const points = connector.waypoints ?? connector.points;
     if (points != null && (!Array.isArray(points) || points.some((p) => !Number.isFinite(p.x) || !Number.isFinite(p.y)))) throw new Error('Diagram connector points must be coordinates');
     if (connector.locked != null && typeof connector.locked !== 'boolean') throw new Error('Diagram connector lock must be boolean');
+    if (connector.zIndex != null && (!Number.isInteger(connector.zIndex) || connector.zIndex < 0 || connector.zIndex > 100000)) throw new Error('Diagram connector order is invalid');
+    if (connector.drawioGeometry != null && (!plainObject(connector.drawioGeometry) || Object.keys(connector.drawioGeometry).some((key) => !['sourcePoint', 'targetPoint', 'offset', 'waypoints'].includes(key)))) throw new Error('Diagram connector geometry is invalid');
+    for (const point of [connector.drawioGeometry?.sourcePoint, connector.drawioGeometry?.targetPoint, connector.drawioGeometry?.offset, ...(connector.drawioGeometry?.waypoints || [])].filter(Boolean)) if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) throw new Error('Diagram connector geometry point is invalid');
   }
   const groupIds = new Set(diagram.groups.map(({ id }) => id));
   for (const group of diagram.groups) {
@@ -90,6 +137,22 @@ function validateDiagram(diagram, deviceIds) {
     if (group.locked != null && typeof group.locked !== 'boolean') throw new Error('Diagram group lock must be boolean');
   }
   for (const shape of diagram.shapes) if (shape.groupId != null && !groupIds.has(shape.groupId)) throw new Error('Diagram shape references an unknown group');
+}
+
+function validateDrawioVisual(visual) {
+  if (!plainObject(visual) || Object.keys(visual).some((key) => !['width', 'height', 'drawioShape', 'drawioOptions', 'drawioToken', 'paint', 'imageAssetId', 'text', 'labelRuns', 'zIndex'].includes(key))) throw new Error('Device drawio visual is invalid');
+  if (!Number.isFinite(visual.width) || !Number.isFinite(visual.height) || visual.width <= 0 || visual.height <= 0 || visual.width > 1e6 || visual.height > 1e6) throw new Error('Device drawio visual bounds are invalid');
+  if (typeof visual.drawioShape !== 'string' || !/^(?:rect|ellipse|text|image|cube|cylinder3|hexagon|container|aws-frame|vendor-fallback|generic-fallback|network:[a-z-]+|stencil:[a-z0-9._-]+|port:[a-z0-9._-]+)$/.test(visual.drawioShape)) throw new Error('Device drawio visual shape is invalid');
+  if (visual.zIndex != null && (!Number.isInteger(visual.zIndex) || visual.zIndex < 0 || visual.zIndex > 100000)) throw new Error('Device drawio visual order is invalid');
+  if (visual.text != null && (typeof visual.text !== 'string' || visual.text.length > 10000 || /[<>]/.test(visual.text))) throw new Error('Device drawio visual text is invalid');
+  validateLabelRuns(visual.labelRuns, 'Device drawio visual');
+  if (visual.drawioToken != null && (typeof visual.drawioToken !== 'string' || !/^[a-z0-9._ -]{1,120}$/.test(visual.drawioToken))) throw new Error('Device drawio visual token is invalid');
+  if (visual.drawioOptions != null && (!plainObject(visual.drawioOptions) || Object.keys(visual.drawioOptions).some((key) => !['dashed', 'startArrow', 'endArrow', 'startFill', 'endFill', 'startSize', 'endSize', 'flipH', 'flipV', 'fixedAspect', 'rotation', 'resIcon', 'prIcon', 'grIcon', 'grIconSize', 'grStroke', 'dx', 'dy', 'notch', 'entryX', 'entryY', 'exitX', 'exitY', 'entryDx', 'entryDy', 'exitDx', 'exitDy', 'entryPerimeter', 'exitPerimeter', 'targetPerimeterSpacing', 'routeMode', 'elbow', 'jettySize', 'jumpStyle', 'jumpSize', 'dashPattern', 'fontFamily', 'textDirection', 'labelBackgroundColor', 'gradientDirection', 'verticalLabelPosition', 'spacingLeft', 'spacingRight', 'spacingTop', 'spacingBottom', 'autosize'].includes(key)))) throw new Error('Device drawio visual options are invalid');
+  if (visual.drawioOptions?.resIcon != null && (typeof visual.drawioOptions.resIcon !== 'string' || !/^[a-z0-9._-]{1,120}$/i.test(visual.drawioOptions.resIcon))) throw new Error('Device drawio visual resource icon is invalid');
+  if (visual.drawioOptions?.prIcon != null && (typeof visual.drawioOptions.prIcon !== 'string' || !/^[a-z0-9._-]{1,120}$/i.test(visual.drawioOptions.prIcon))) throw new Error('Device drawio visual product icon is invalid');
+  if (visual.drawioOptions?.grIcon != null && (typeof visual.drawioOptions.grIcon !== 'string' || !/^[a-z0-9._-]{1,120}$/i.test(visual.drawioOptions.grIcon))) throw new Error('Device drawio visual group icon is invalid');
+  for (const key of ['dx', 'dy', 'notch', 'entryX', 'entryY', 'exitX', 'exitY', 'entryDx', 'entryDy', 'exitDx', 'exitDy', 'targetPerimeterSpacing', 'startSize', 'endSize', 'jettySize', 'jumpSize']) if (visual.drawioOptions?.[key] != null && (!Number.isFinite(visual.drawioOptions[key]) || ((key.endsWith('X') || key.endsWith('Y')) && !key.endsWith('Dx') && !key.endsWith('Dy') && (visual.drawioOptions[key] < 0 || visual.drawioOptions[key] > 1)) || (['startSize', 'endSize', 'jumpSize'].includes(key) && (visual.drawioOptions[key] < 1 || visual.drawioOptions[key] > 100)))) throw new Error('Device drawio visual port option is invalid');
+  if (visual.paint != null && (!plainObject(visual.paint) || Object.keys(visual.paint).some((key) => !['fill', 'gradientColor', 'stroke', 'textColor', 'rounded', 'shadow', 'lineStyle', 'fontWeight', 'textAlign', 'verticalAlign', 'strokeWidth', 'fontSize', 'opacity'].includes(key)))) throw new Error('Device drawio visual paint is invalid');
 }
 
 function validateRackPlacements(topology, deviceIds) {
@@ -160,6 +223,7 @@ export function validateProject(input) {
   const linkIds = uniqueIds(topology.links, 'Link');
   uniqueIds(topology.demands, 'Demand');
   if (topology.diagram != null) validateDiagram(topology.diagram, deviceIds);
+  const drawioAssetIds = new Set((topology.diagram?.drawioAssets || []).map(({ id }) => id));
   for (const key of ['services', 'racks', 'failureDomains']) if (topology[key] != null) {
     if (!Array.isArray(topology[key])) throw new Error(`${key} must be an array`);
     uniqueIds(topology[key], key); safeContent(topology[key], key);
@@ -190,6 +254,10 @@ export function validateProject(input) {
     validId(device.id, 'Device'); boundedText(device.name, 'Device name'); boundedText(device.kind, 'Device kind'); boundedText(device.zone, 'Device zone');
     if (device.vendor != null) boundedText(device.vendor, 'Device vendor');
     if (device.model != null) boundedText(device.model, 'Device model');
+    if (device.drawioVisual != null) {
+      validateDrawioVisual(device.drawioVisual);
+      if (device.drawioVisual.imageAssetId != null && !drawioAssetIds.has(device.drawioVisual.imageAssetId)) throw new Error('Device drawio visual references an unknown asset');
+    }
     // 로고는 프로젝트 파일과 함께 들어오므로 크기를 여기서도 막는다.
     if (device.vendorLogo != null && (typeof device.vendorLogo !== 'string' || device.vendorLogo.length > 24 * 1024 || !device.vendorLogo.startsWith('data:image/'))) {
       throw new Error('Device vendor logo must be an image data URI under 24KB');

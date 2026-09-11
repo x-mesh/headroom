@@ -133,6 +133,9 @@
           <div class="editor-panel-content" id="editor-panel-content"></div>
         </section>
       </section>
+      <div class="drawio-drop-overlay" id="drawio-drop-overlay" role="status" aria-live="polite" hidden>
+        <div><span>DRAW.IO PREVIEW</span><strong>drawio 파일을 여기에 놓으세요</strong><small>적용하기 전 원본 페이지를 구성도로 확인할 수 있습니다.</small></div>
+      </div>
 
       <section class="mobile-fault-tray" aria-label="빠른 장애 주입">
         <div><span class="section-code">QUICK FAILURE</span><strong>설계를 보며 장애 주입</strong></div>
@@ -204,6 +207,7 @@
             <div class="topology-stage" id="topology-stage">
             <div class="topology-canvas" id="topology-canvas">
               <svg class="link-layer" id="link-layer" viewBox="0 0 940 580" role="img" aria-label="장비를 잇는 링크"></svg>
+              <svg class="drawio-import-layer" id="drawio-import-layer" viewBox="0 0 940 580" aria-hidden="true"></svg>
               <div class="diagram-layer" id="diagram-layer" aria-label="도형과 주석"></div>
               <div class="node-layer" id="node-layer"></div>
               <svg class="diagram-group-layer" id="diagram-group-layer" viewBox="0 0 940 580" aria-label="도형 그룹"></svg>
