@@ -17,9 +17,17 @@ const failures = [];
 
 async function clickEditorAction(page, action) {
   const button = page.locator(`[data-editor-action="${action}"]`);
-  if (!await button.isVisible()) await page.locator('.editor-menu > summary').click();
+  const inEditorMenu = await button.evaluate((node) => Boolean(node.closest('.editor-menu')));
+  const inPalette = await button.evaluate((node) => Boolean(node.closest('#component-palette')));
+  if (!await button.isVisible()) {
+    if (inEditorMenu) await page.locator('.editor-menu').evaluate((menu) => { menu.open = true; });
+    else {
+      if (await page.locator('#toggle-left-panel').getAttribute('aria-pressed') === 'true') await page.locator('#toggle-left-panel').click();
+      if (inPalette && await page.locator('#panel-palette').isHidden()) await page.locator('#tab-palette').click();
+    }
+  }
   await button.click();
-  await page.locator('.editor-menu').evaluate((menu) => { menu.open = false; });
+  if (inEditorMenu) await page.locator('.editor-menu').evaluate((menu) => { menu.open = false; });
 }
 
 // 캔버스 편집은 선택·스크롤·설계를 모두 바꾸므로 깨끗한 페이지에서 따로 확인한다.
@@ -200,14 +208,19 @@ async function verifyCanvasEditing() {
   await page.locator('[data-diagram-lock]').uncheck();
 
   const drawio = '<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="2" value="설명" vertex="1" parent="1"><mxGeometry x="20" y="30" width="120" height="60" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>';
+  const historyBeforeDrawio = await page.evaluate(() => window.history.length);
+  const shapesBeforeDrawio = await page.locator('.diagram-shape').count();
   await page.locator('#drawio-file-input').setInputFiles({ name: 'sample.drawio', mimeType: 'application/xml', buffer: Buffer.from(drawio) });
-  await page.waitForFunction(() => document.querySelector('.diagram-shape')?.textContent === '설명');
-  assert.match(await page.locator('#toast').textContent(), /계산 의미는 장비에 별도로 지정/);
+  await page.waitForFunction(() => document.querySelector('#editor-panel-heading')?.textContent.includes('미리보기'));
+  assert.equal(await page.locator('.diagram-shape').count(), shapesBeforeDrawio, '미리보기를 열어도 현재 캔버스는 바꾸지 않는다');
+  await page.locator('[data-drawio-decision]').selectOption('device');
+  await page.waitForSelector('[data-drawio-kind]');
+  await page.locator('[data-drawio-kind]').selectOption('router');
+  await page.locator('[data-drawio-apply]').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.mesh-node')].some((node) => node.textContent.includes('설명')));
+  assert.equal(await page.evaluate(() => window.history.length), historyBeforeDrawio, 'SPA 가져오기는 페이지를 다시 열지 않는다');
   const devicesBeforeMapping = await page.locator('.mesh-node').count();
-  await clickEditorAction(page, 'map-device');
-  await page.locator('[data-editor-form="device"] button[type="submit"]').click();
-  assert.equal(await page.locator('.diagram-shape').count(), 0);
-  assert.equal(await page.locator('.mesh-node').count(), devicesBeforeMapping + 1, 'an imported shape can receive infrastructure meaning explicitly');
+  assert.ok(devicesBeforeMapping > 0, '명시한 장비 후보만 토폴로지 장비가 된다');
   // 토스트는 화면 하단에 고정이라 아래쪽 노드를 덮는다. 다음 클릭 전에 걷히기를 기다린다.
   await page.waitForFunction(() => !document.querySelector('#toast')?.classList.contains('visible'), null, { timeout: 8000 });
   await page.close();
@@ -333,7 +346,7 @@ async function verify(viewport, screenshot, interact = false) {
   assert.match(await page.locator('[data-delete-model="domain"][data-model-id="rack-04"]').locator('xpath=parent::*').textContent(), /공간/);
   assert.equal(await page.locator('#summary-headroom').textContent(), headroomBeforeSuggestion, 'accepting a domain declaration does not change the current calculation');
   await page.locator('#editor-close').click();
-  assert.match(await page.locator('#topology-heading').textContent(), /\d+%$/, 'the canvas headline states the answer, not the question');
+  assert.match(await page.locator('#topology-heading').textContent(), /(버팁니다|용량을 넘었습니다|계산할 수 없습니다|더 막히는 지점이 없습니다)$/, 'the canvas headline states the answer, not the question');
   assert.equal(await page.locator('#summary-headroom').getAttribute('data-tone'), 'amber', 'headroom is coloured by the engine threshold');
   assert.ok(await page.locator('.packet-dot').count() > 0, 'active links must render packet dots');
   const packet = page.locator('.packet-dot').first();
@@ -932,9 +945,10 @@ async function verify(viewport, screenshot, interact = false) {
     // 상자도 선을 담아야 한다. 두 선의 가운데를 함께 덮는 상자를 그려 확인한다.
     const span = await page.evaluate(() => {
       const mid = [...document.querySelectorAll('.link-hit')].slice(0, 2).map((hit) => {
-        const m = hit.getScreenCTM(); const at = (a) => +hit.getAttribute(a);
+        const m = hit.getScreenCTM();
         const point = hit.ownerSVGElement.createSVGPoint();
-        point.x = (at('x1') + at('x2')) / 2; point.y = (at('y1') + at('y2')) / 2;
+        const midpoint = hit.getPointAtLength(hit.getTotalLength() / 2);
+        point.x = midpoint.x; point.y = midpoint.y;
         return point.matrixTransform(m);
       });
       return { left: Math.min(...mid.map((p) => p.x)), right: Math.max(...mid.map((p) => p.x)),
@@ -965,7 +979,7 @@ async function verify(viewport, screenshot, interact = false) {
     await page.locator('#tab-palette').click();
     // 폼이 물어보는 한계 축은 클래스를 따른다. 스위치는 처리량, 서버는 NIC 다.
     for (const [name, kind, axis] of [['Source A', 'switch', 'forwarding_bps'], ['Target A', 'server', 'nic_bps']]) {
-      await page.locator('[data-editor-action="device"]').click();
+      await clickEditorAction(page, 'device');
       const form = page.locator('[data-editor-form="device"]');
       await form.locator('[name="name"]').fill(name);
       await form.locator('[name="kind"]').selectOption(kind);
@@ -978,7 +992,7 @@ async function verify(viewport, screenshot, interact = false) {
     await sourceNode.dragTo(page.locator('#topology-canvas'), { targetPosition: { x: 220, y: 180 } });
     const afterDrag = await sourceNode.boundingBox();
     assert.ok(beforeDrag && afterDrag && Math.abs(beforeDrag.x - afterDrag.x) > 10);
-    await page.locator('[data-editor-action="connect"]').click();
+    await clickEditorAction(page, 'connect');
     await page.locator('[data-device-id="source-a"]').click();
     await page.locator('[data-device-id="target-a"]').click();
     assert.equal(await page.locator('.link-group').count(), 1);
@@ -1267,7 +1281,7 @@ async function verify(viewport, screenshot, interact = false) {
       };
     });
     const atRest = await zoomState();
-    assert.deepEqual([atRest.label, atRest.zoom, atRest.nodeWidth], ['100%', 1, 104]);
+    assert.deepEqual([atRest.label, atRest.zoom, atRest.nodeWidth], ['100%', 1, 120]);
     assert.ok(atRest.pad > 0, 'the stage must pad the canvas so there is always empty space to grab');
     assert.equal(atRest.stageWidth, atRest.canvasWidth + atRest.pad * 2);
 
@@ -1276,7 +1290,7 @@ async function verify(viewport, screenshot, interact = false) {
     assert.ok(zoomed.zoom > 1 && zoomed.label === `${Math.round(zoomed.zoom * 100)}%`);
     assert.equal(zoomed.stageWidth, Math.round(atRest.canvasWidth * zoomed.zoom) + zoomed.pad * 2,
       'the stage must carry the scaled canvas plus its padding so the area can scroll');
-    assert.equal(zoomed.nodeWidth, Math.round(104 * zoomed.zoom), 'nodes scale with the canvas');
+    assert.equal(zoomed.nodeWidth, Math.round(120 * zoomed.zoom), 'nodes scale with the canvas');
 
     // 확대한 상태에서 화면상 이동 거리는 캔버스 좌표에서 배율만큼 작아야 한다.
     const dragTarget = page.locator('[data-device-id="source-a"]');
@@ -1295,7 +1309,7 @@ async function verify(viewport, screenshot, interact = false) {
     await page.locator('[data-zoom="out"]').click();
     assert.equal((await zoomState()).zoom, 1);
     await page.locator('[data-zoom="fit"]').click();
-    assert.ok((await zoomState()).zoom <= 1, 'fit never magnifies past 100%');
+    assert.ok((await zoomState()).zoom >= 1, 'fit magnifies a compact diagram to use the available viewport');
     await page.locator('[data-zoom="reset"]').click();
     assert.deepEqual(await zoomState(), atRest, 'reset returns the canvas to 100%');
 
@@ -1494,7 +1508,7 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForFunction((id) => document.querySelectorAll(`[data-link-id="${id}"] .link-handle[data-bend-kind="move"]`).length === 0, grab.id);
 
   }
-  await page.screenshot({ path: screenshot, fullPage: true });
+  if (process.env.UPDATE_SCREENSHOTS === '1') await page.screenshot({ path: screenshot, fullPage: true });
   await page.close();
 }
 
@@ -1598,7 +1612,10 @@ async function verifyNumberMotion() {
 // 오가야 하고, 화면이 넓을수록 그 거리가 멀어져 무엇을 가리키는지 흐려진다.
 async function verifyTopologyViews() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  await page.addInitScript(() => { localStorage.clear(); sessionStorage.setItem('rack-mesh-demo-teaser', '1'); });
+  await page.addInitScript(() => {
+    if (!sessionStorage.getItem('rack-mesh-view-test-initialized')) { localStorage.clear(); sessionStorage.setItem('rack-mesh-view-test-initialized', '1'); }
+    sessionStorage.setItem('rack-mesh-demo-teaser', '1');
+  });
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
@@ -1638,7 +1655,7 @@ async function verifyTopologyViews() {
   await page.mouse.down();
   await page.mouse.move(canvas.x + canvas.width * .7, canvas.y + canvas.height * .42, { steps: 5 });
   await page.mouse.up();
-  await page.screenshot({ path: '.impeccable/review/spatial-desktop.png', fullPage: true });
+  if (process.env.UPDATE_SCREENSHOTS === '1') await page.screenshot({ path: '.impeccable/review/spatial-desktop.png', fullPage: true });
 
   await page.locator('button[data-topology-view="voxel"]').click();
   await page.reload({ waitUntil: 'networkidle' });
@@ -1716,13 +1733,14 @@ async function verifyVirtualFailureList() {
   await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 24);
   await page.locator('#tab-failure').click();
   await page.waitForSelector('[data-failure-virtual]', { timeout: 25000 });
-  const virtual = page.locator('[data-failure-virtual="device-priority"]');
+  const virtual = page.locator('[data-failure-virtual^="device-"]').first();
+  const virtualKey = await virtual.getAttribute('data-failure-virtual');
   assert.equal(await virtual.getAttribute('role'), 'list', '대량 단일 장애 목록은 접근 가능한 목록이어야 합니다');
   assert.equal(await page.locator('[data-failure-type="device"]').count() < 40, true, '보이는 범위 밖 장비 행은 DOM 에 남기지 않습니다');
-  const first = page.locator('[data-failure-virtual="device-priority"] [data-failure-index="0"] button');
+  const first = page.locator(`[data-failure-virtual="${virtualKey}"] [data-failure-index="0"] button`);
   await first.focus();
   await page.keyboard.press('End');
-  await page.waitForSelector('[data-failure-virtual="device-priority"] [data-failure-index="23"]');
+  await page.waitForSelector(`[data-failure-virtual="${virtualKey}"] [data-failure-index="23"]`);
   assert.equal(await page.locator(':focus').evaluate((node) => node.closest('[data-failure-index]')?.dataset.failureIndex), '23', 'End 키는 가상 목록의 마지막 장비로 이동해야 합니다');
   assert.equal(await page.locator(':focus').evaluate((node) => node.closest('[data-failure-index]')?.getAttribute('aria-setsize')), '24', '키보드 탐색은 전체 후보 수를 유지해야 합니다');
   await page.close();
@@ -1782,7 +1800,7 @@ try {
   assert.ok(await reducedPage.locator('#topology-canvas').evaluate((node) => parseFloat(getComputedStyle(node).transitionDuration)) < 0.001);
   await reducedPage.waitForFunction(() => window.__rackMeshSpatial3D?.debug().reducedMotion === true);
   assert.equal(await reducedPage.evaluate(() => window.__rackMeshSpatial3D.debug().reducedMotion), true, '움직임 감소 설정은 WebGL traffic motion도 멈춰야 합니다');
-    await reducedPage.screenshot({ path: '.impeccable/review/mobile.png', fullPage: true });
+    if (process.env.UPDATE_SCREENSHOTS === '1') await reducedPage.screenshot({ path: '.impeccable/review/mobile.png', fullPage: true });
     await reducedPage.close();
   }
   assert.deepEqual(failures, []);

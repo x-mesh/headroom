@@ -12,6 +12,7 @@ import { vendorLogoFor } from './logos.js';
 import { buildTemplate, templateGroups, templates } from './templates.js';
 import { buildSpec, catalogEntry, catalogFor, catalogProfile } from './devices/catalog.js';
 import { addConnector, addShape, alignSelection, copySelection, distributeSelection, exportDiagramSvg, groupSelection, importDrawio, moveSelection, pasteSelection, removeDiagramElements, ungroupSelection, updateConnector, updateGroup, updateShape } from './diagram.js';
+import { applyDrawioImport, createDrawioPreview, parseDrawioDocument } from './drawio-import.js';
 import { createHistory } from './history.js';
 import { acceptanceDigest, evidenceApplicability } from './evidence.js';
 import { addMappedPlacement, addStandalonePlacement, createRack, firstFreeStartU, materializeRack, nearestFreeStartU, placementHeight, placementView, rackPlacements, rackSummary, removePlacement, removeRack, updatePlacement } from './rack.js';
@@ -32,6 +33,7 @@ let swapPreview = null;
 let swapTarget = null;
 let swapComparison = [];
 let absorbsExpanded = false;
+let drawioPreview = null;
 let resourceAbsorbsExpanded = false;
 let worstAxesExpanded = false;
 const failureFilter = { query: '', verdict: 'all' };
@@ -479,10 +481,12 @@ function syncSpatialScene() {
 }
 
 function setSpatialView(pitch, yaw, { persist = true } = {}) {
-  topologyView.pitch = Math.min(70, Math.max(28, pitch));
-  topologyView.yaw = yaw;
+  const previous = { pitch: topologyView.pitch, yaw: topologyView.yaw };
+  const next = { pitch: Math.min(70, Math.max(28, pitch)), yaw };
+  topologyView.pitch = next.pitch;
+  topologyView.yaw = next.yaw;
   applyTopologyView();
-  spatialScene?.orbit((yaw - topologyView.yaw) / .4, (pitch - topologyView.pitch) / .35);
+  spatialScene?.orbit((next.yaw - previous.yaw) * Math.PI / 180, (next.pitch - previous.pitch) * Math.PI / 180);
   if (!persist) return;
   try {
     localStorage.setItem('rack-mesh-spatial-pitch', String(topologyView.pitch));
@@ -2516,6 +2520,30 @@ function openEditorPanel(title, html) {
   element('editor-panel').scrollIntoView({ behavior: reducedMotion.matches ? 'auto' : 'smooth', block: 'nearest' });
 }
 
+function drawioDecisionOptions(candidate) {
+  const current = drawioPreview.decisions[candidate.id] || 'annotation';
+  const deviceKind = typeof current === 'object' ? current.kind || '' : candidate.suggestion.suggestedDeviceKind || '';
+  const type = typeof current === 'object' ? current.type : current;
+  const device = `<option value="device" ${type === 'device' ? 'selected' : ''}>장비</option>`;
+  const kindOptions = ['firewall', 'router', 'switch', 'server', 'storage', 'cloud', 'lb'].map((kind) => `<option value="${kind}" ${kind === deviceKind ? 'selected' : ''}>${escapeText(kind === 'lb' ? 'load balancer' : kind)}</option>`).join('');
+  return `<label>의미 <select data-drawio-decision="${escapeAttribute(candidate.id)}"><option value="annotation" ${type === 'annotation' ? 'selected' : ''}>주석</option>${device}<option value="zone" ${type === 'zone' ? 'selected' : ''}>영역</option><option value="exclude" ${type === 'exclude' ? 'selected' : ''}>제외</option></select></label>${type === 'device' ? `<label>종류 <select data-drawio-kind="${escapeAttribute(candidate.id)}"><option value="">선택</option>${kindOptions}</select></label>` : ''}`;
+}
+
+function renderDrawioPreview() {
+  if (!drawioPreview) return;
+  const preview = createDrawioPreview(drawioPreview.document, drawioPreview.pageId, drawioPreview.decisions);
+  const pages = drawioPreview.document.pages.map((page) => `<option value="${escapeAttribute(page.id)}" ${page.id === preview.page.id ? 'selected' : ''}>${escapeText(page.name)} · ${page.elements.length}개</option>`).join('');
+  const candidates = preview.candidates.map((candidate) => `<li><div><strong>${escapeText(candidate.text || '이름 없음')}</strong><small>${escapeText(candidate.suggestion.ruleId)} · ${escapeText(candidate.suggestion.confidence)}</small></div>${drawioDecisionOptions(candidate)}</li>`).join('');
+  const warningCounts = Object.entries(preview.warnings.reduce((counts, item) => ({ ...counts, [item.code]: (counts[item.code] || 0) + 1 }), {}));
+  const warningSummary = warningCounts.length ? warningCounts.map(([code, count]) => `${code} ${count}`).join(' · ') : '없음';
+  openEditorPanel('drawio 가져오기 미리보기', `<p class="editor-hint">적용 전에는 현재 설계와 계산 결과를 바꾸지 않습니다. 의미를 지정하지 않은 요소는 편집 가능한 주석 도면으로 가져옵니다.</p><label class="drawio-page-choice">페이지 <select data-drawio-page>${pages}</select></label><p class="drawio-warning">경고 ${preview.warnings.length}개 · ${escapeText(warningSummary)}</p><div class="form-actions"><button type="button" data-drawio-accept-high>높은 신뢰도 수락</button><button type="button" data-drawio-cancel>취소</button><button type="button" data-drawio-apply>페이지 적용</button></div><ul class="drawio-preview-list">${candidates}</ul>`);
+}
+
+function openDrawioPreview(document) {
+  drawioPreview = { document, pageId: document.pages[0].id, decisions: {} };
+  renderDrawioPreview();
+}
+
 function closeEditorPanel() { element('editor-panel').hidden = true; element('editor-panel-content').innerHTML = ''; }
 function formError(form, message) { const target = form.querySelector('.editor-error'); if (target) target.textContent = message; }
 function deviceOptions(selected = '') { return topology.devices.map(({ id, name }) => `<option value="${id}" ${id === selected ? 'selected' : ''}>${escapeAttribute(name)} · ${id}</option>`).join(''); }
@@ -3285,10 +3313,10 @@ function saveProject() {
   showToast('프로젝트 JSON을 저장했습니다.');
 }
 
-async function readFile(input) {
+async function readFile(input, { limit = 2_000_000, label = 'JSON' } = {}) {
   const file = input.files?.[0];
   if (!file) return null;
-  if (file.size > 2_000_000) throw new Error('JSON 파일은 2 MB 이하여야 합니다.');
+  if (file.size > limit) throw new Error(`${label} 파일은 ${Math.round(limit / 1024 / 1024)} MB 이하여야 합니다.`);
   const text = await file.text(); input.value = ''; return text;
 }
 
@@ -4257,6 +4285,27 @@ element('inspector-content').addEventListener('click', (event) => {
 });
 
 element('editor-panel-content').addEventListener('click', (event) => {
+  if (event.target.closest('[data-drawio-cancel]')) { drawioPreview = null; closeEditorPanel(); showToast('drawio 가져오기를 취소했습니다.'); return; }
+  if (event.target.closest('[data-drawio-accept-high]') && drawioPreview) {
+    const preview = createDrawioPreview(drawioPreview.document, drawioPreview.pageId, drawioPreview.decisions);
+    for (const candidate of preview.candidates) {
+      if (candidate.suggestion.confidence !== 'high') continue;
+      if (candidate.suggestion.classification === 'zone') drawioPreview.decisions[candidate.id] = 'zone';
+      else if (candidate.suggestion.classification === 'device' && candidate.suggestion.suggestedDeviceKind) drawioPreview.decisions[candidate.id] = { type: 'device', kind: candidate.suggestion.suggestedDeviceKind };
+    }
+    renderDrawioPreview(); return;
+  }
+  if (event.target.closest('[data-drawio-apply]') && drawioPreview) {
+    try {
+      const preview = createDrawioPreview(drawioPreview.document, drawioPreview.pageId, drawioPreview.decisions);
+      const imported = applyDrawioImport(topology, preview, drawioPreview.decisions);
+      topology = imported.topology;
+      state.selection = topology.devices.slice(-imported.applied.devices).map(({ id }) => ({ type: 'device', id }));
+      drawioPreview = null; closeEditorPanel();
+      commitTopology(`drawio 페이지를 적용했습니다. 장비 ${imported.applied.devices}개 · 계산 링크 ${imported.applied.links}개 · 경고 ${imported.warnings.length}개`);
+    } catch (error) { showToast(`drawio 적용 실패: ${error.message}`); }
+    return;
+  }
   const verificationTab = event.target.closest('[data-verification-tab]')?.dataset.verificationTab;
   if (verificationTab) { state.verificationTab = verificationTab; openVerificationPanel(); element('editor-panel-content').querySelector(`[data-verification-tab="${verificationTab}"]`)?.focus(); return; }
   const suggestion = event.target.closest('[data-domain-suggestion]');
@@ -4362,6 +4411,19 @@ element('editor-panel-content').addEventListener('click', (event) => {
   const demand = topology.demands.find(({ id }) => id === button.dataset.deleteDemand);
   if (!window.confirm(`${demand?.name || button.dataset.deleteDemand} demand와 해당 부하 정의를 삭제합니다. 계속하시겠습니까?`)) return;
   try { removeDemand(topology, button.dataset.deleteDemand); commitTopology('트래픽 수요를 삭제했습니다.'); openDemandManager(); } catch (error) { showToast(error.message); }
+});
+element('editor-panel-content').addEventListener('change', (event) => {
+  if (!drawioPreview) return;
+  const page = event.target.closest('[data-drawio-page]');
+  if (page) { drawioPreview.pageId = page.value; drawioPreview.decisions = {}; renderDrawioPreview(); return; }
+  const decision = event.target.closest('[data-drawio-decision]');
+  if (decision) {
+    const candidate = createDrawioPreview(drawioPreview.document, drawioPreview.pageId, drawioPreview.decisions).candidates.find((item) => item.id === decision.dataset.drawioDecision);
+    drawioPreview.decisions[decision.dataset.drawioDecision] = decision.value === 'device' ? { type: 'device', kind: candidate?.suggestion.suggestedDeviceKind || '' } : decision.value;
+    renderDrawioPreview(); return;
+  }
+  const kind = event.target.closest('[data-drawio-kind]');
+  if (kind) { drawioPreview.decisions[kind.dataset.drawioKind] = { type: 'device', kind: kind.value }; renderDrawioPreview(); }
 });
 element('inspector-content').addEventListener('change', (event) => {
   const lock = event.target.closest('[data-diagram-lock]');
@@ -4639,11 +4701,8 @@ element('zabbix-observed-load-file-input').addEventListener('change', async (eve
 });
 element('drawio-file-input').addEventListener('change', async (event) => {
   try {
-    const text = await readFile(event.target); if (!text) return;
-    const imported = importDrawio(text);
-    topology = { ...topology, diagram: imported };
-    state.selection = imported.shapes.map(({ id }) => ({ type: 'shape', id }));
-    commitTopology(`drawio에서 도형 ${imported.shapes.length}개와 연결선 ${imported.connectors.length}개를 가져왔습니다. 계산 의미는 장비에 별도로 지정하세요.`);
+    const text = await readFile(event.target, { limit: 4 * 1024 * 1024, label: 'drawio' }); if (!text) return;
+    openDrawioPreview(await parseDrawioDocument(text));
   } catch (error) { showToast(`drawio 가져오기 실패: ${error.message}`); }
 });
 const topologyScroll = document.querySelector('.topology-scroll');
@@ -4816,12 +4875,13 @@ element('topology-view-control').addEventListener('click', (event) => {
 element('spatial-view-tools').addEventListener('click', (event) => {
   const action = event.target.closest('[data-spatial-orbit]')?.dataset.spatialOrbit;
   if (!action) return;
-  const scene = ensureSpatialScene();
-  if (action === 'reset') scene.reset();
-  if (action === 'left') scene.orbit(-18, 0);
-  if (action === 'right') scene.orbit(18, 0);
-  if (action === 'up') scene.orbit(0, 12);
-  if (action === 'down') scene.orbit(0, -12);
+  ensureSpatialScene().then((scene) => {
+    if (action === 'reset') scene.reset();
+    if (action === 'left') scene.orbit(-18, 0);
+    if (action === 'right') scene.orbit(18, 0);
+    if (action === 'up') scene.orbit(0, 12);
+    if (action === 'down') scene.orbit(0, -12);
+  }).catch(() => {});
 });
 element('learning-panel').addEventListener('click', (event) => {
   const button = event.target.closest('[data-lesson-action]'); if (!button) return;
@@ -4847,11 +4907,11 @@ element('summary-survival').addEventListener('click', () => {
   setLeftPanel('failure', { explicit: true });
   requestAnimationFrame(() => element('failure-list').scrollIntoView({ block: 'nearest' }));
 });
-document.querySelector('[role="tablist"]').addEventListener('click', (event) => {
+document.querySelector('.failure-panel > .panel-tabs').addEventListener('click', (event) => {
   const tab = event.target.closest('[data-panel-tab]');
   if (tab) setLeftPanel(tab.dataset.panelTab, { explicit: true });
 });
-document.querySelector('[role="tablist"]').addEventListener('keydown', (event) => {
+document.querySelector('.failure-panel > .panel-tabs').addEventListener('keydown', (event) => {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
   const tabs = [...document.querySelectorAll('[data-panel-tab]')];
   const current = tabs.findIndex((tab) => tab.dataset.panelTab === state.leftPanel);

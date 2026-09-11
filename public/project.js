@@ -55,9 +55,15 @@ function uniqueIds(items, label) {
 }
 function validateDiagram(diagram, deviceIds) {
   if (!plainObject(diagram)) throw new Error('Diagram must be an object');
-  if (Object.keys(diagram).some((key) => !['shapes', 'connectors', 'groups'].includes(key))) throw new Error('Unknown diagram content');
+  if (Object.keys(diagram).some((key) => !['shapes', 'connectors', 'groups', 'drawioImport'].includes(key))) throw new Error('Unknown diagram content');
   for (const key of ['shapes', 'connectors', 'groups']) if (!Array.isArray(diagram[key])) throw new Error(`Diagram requires ${key}`);
   safeContent(diagram, 'Diagram');
+  if (diagram.drawioImport != null) {
+    if (!plainObject(diagram.drawioImport) || Object.keys(diagram.drawioImport).some((key) => !['pageId', 'warningCodes', 'decisions'].includes(key))) throw new Error('Drawio import metadata is invalid');
+    boundedText(diagram.drawioImport.pageId, 'Drawio import page');
+    if (!Array.isArray(diagram.drawioImport.warningCodes) || diagram.drawioImport.warningCodes.some((item) => typeof item !== 'string')) throw new Error('Drawio import warnings are invalid');
+    if (!plainObject(diagram.drawioImport.decisions) || Object.values(diagram.drawioImport.decisions).some((item) => item !== 'annotation' && item !== 'device' && item !== 'zone' && item !== 'exclude' && (!plainObject(item) || !['device', 'zone'].includes(item.type)))) throw new Error('Drawio import decisions are invalid');
+  }
   const ids = uniqueIds([...diagram.shapes, ...diagram.connectors, ...diagram.groups], 'Diagram');
   for (const id of deviceIds) if (ids.has(id)) throw new Error('Diagram and device IDs must be distinct');
   const endpoints = new Set([...deviceIds, ...diagram.shapes.map(({ id }) => id)]);
