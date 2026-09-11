@@ -30,7 +30,7 @@ function measure(action) {
 const topology = performanceFixture();
 const single = measure(() => sweepSingleFaults(topology));
 const survival = measure(() => calculateSurvivalMultiplier(topology, { sweep: single.value }));
-const domains = measure(() => sweepFailureDomains(topology));
+const domains = measure(() => sweepFailureDomains(topology, { sweep: single.value }));
 
 assert.equal(single.value.resources.length, 700);
 assert.equal(domains.value.domainCount, 8);

@@ -266,6 +266,17 @@ test('never turns an unknown axis into a number in the exported frame', () => {
   assert.ok(filled > 0);
 });
 
+test('exports the current diagram view without capacity numbers', () => {
+  const topology = buildTemplate('three-tier');
+  const result = calculateScenario(topology, { disabledDevices: ['web-a'] });
+  const svg = exportDiagramSvg(topology, result, { detailLevel: 'off' });
+
+  assert.match(svg, /DB/);
+  assert.match(svg, /DOWN/);
+  assert.doesNotMatch(svg, />[^<]*%[^<]*</);
+  assert.doesNotMatch(svg, /Mbps|Gbps|Mpps|Kcps|엔진|배율/);
+});
+
 test('draws the diagram alone when there is no calculation to stamp', () => {
   const topology = buildTemplate('three-tier');
   const svg = exportDiagramSvg(topology);

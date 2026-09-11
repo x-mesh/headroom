@@ -309,8 +309,8 @@ function releaseReferences(topology, { deviceId = null, linkId = null, demandId 
     }
     if (Array.isArray(topology.racks)) {
       topology.racks = topology.racks
-        .map((rack) => ({ ...rack, deviceIds: drop(rack.deviceIds || [], deviceId) }))
-        .filter((rack) => rack.deviceIds.length);
+        .map((rack) => ({ ...rack, deviceIds: drop(rack.deviceIds || [], deviceId), placements: Array.isArray(rack.placements) ? rack.placements.filter((placement) => placement.deviceId !== deviceId) : rack.placements }))
+        .filter((rack) => rack.deviceIds.length || rack.placements?.some((placement) => !placement.deviceId));
     }
   }
   if (Array.isArray(topology.failureDomains) && (deviceId || linkId)) {

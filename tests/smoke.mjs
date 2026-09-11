@@ -8,7 +8,7 @@ const { port } = server.address();
 const base = `http://127.0.0.1:${port}`;
 
 try {
-  const paths = ['/', '/styles.css', '/app.js', '/engine.js', '/data.js', '/icons.js', '/templates.js'];
+  const paths = ['/', '/styles.css', '/app.js', '/spatial-3d.js', '/rack-3d.js', '/rack.js', '/vendor/three.module.js', '/vendor/three.core.js', '/engine.js', '/data.js', '/icons.js', '/templates.js'];
   for (const path of paths) {
     const response = await fetch(`${base}${path}`);
     assert.equal(response.status, 200, `${path} must load`);

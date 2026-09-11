@@ -86,6 +86,42 @@ function validateDiagram(diagram, deviceIds) {
   for (const shape of diagram.shapes) if (shape.groupId != null && !groupIds.has(shape.groupId)) throw new Error('Diagram shape references an unknown group');
 }
 
+function validateRackPlacements(topology, deviceIds) {
+  const placementIds = new Set();
+  const mappedDevices = new Set();
+  for (const rack of topology.racks || []) {
+    rack.name ??= rack.id;
+    boundedText(rack.name, 'Rack name');
+    if (!Number.isInteger(rack.capacityU) || rack.capacityU < 1 || rack.capacityU > 100) throw new Error('Rack capacityU must be an integer from 1 to 100');
+    if (!Number.isFinite(rack.powerBudgetWatts) || rack.powerBudgetWatts <= 0) throw new Error('Rack power budget must be positive');
+    if (!['nameplate', 'typical', 'measured'].includes(rack.powerBasis)) throw new Error('Rack power basis is invalid');
+    if (rack.deviceIds != null && (!Array.isArray(rack.deviceIds) || rack.deviceIds.some((id) => !deviceIds.has(id)))) throw new Error('Rack references an unknown device');
+    if (rack.placements == null) continue;
+    if (!Array.isArray(rack.placements)) throw new Error('Rack placements must be an array');
+    const occupied = new Set();
+    for (const placement of rack.placements) {
+      if (Object.keys(placement).some((key) => !['id', 'deviceId', 'name', 'model', 'kind', 'startU', 'uHeight', 'powerWatts'].includes(key))) throw new Error('Rack placement has unknown fields');
+      validId(placement.id, 'Rack placement');
+      if (placementIds.has(placement.id)) throw new Error(`Rack placement contains duplicate ID ${placement.id}`);
+      placementIds.add(placement.id);
+      if (!Number.isInteger(placement.startU) || placement.startU < 1 || !Number.isInteger(placement.uHeight) || placement.uHeight < 1 || placement.startU + placement.uHeight - 1 > rack.capacityU) throw new Error('Rack placement is outside the rack');
+      if (placement.deviceId != null) {
+        if (!deviceIds.has(placement.deviceId)) throw new Error('Rack placement references an unknown device');
+        if (mappedDevices.has(placement.deviceId)) throw new Error('A topology device can appear in only one rack placement');
+        mappedDevices.add(placement.deviceId);
+      } else {
+        boundedText(placement.name, 'Rack device name'); boundedText(placement.kind, 'Rack device kind');
+        if (placement.model != null && placement.model !== '') boundedText(placement.model, 'Rack device model');
+      }
+      if (placement.powerWatts != null && (!Number.isFinite(placement.powerWatts) || placement.powerWatts < 0)) throw new Error('Rack device power must be non-negative');
+      for (let unit = placement.startU; unit < placement.startU + placement.uHeight; unit += 1) { if (occupied.has(unit)) throw new Error('Rack placements overlap'); occupied.add(unit); }
+    }
+    const placed = rack.placements.map(({ deviceId }) => deviceId).filter(Boolean).sort();
+    const declared = [...new Set(rack.deviceIds || [])].sort();
+    if (placed.length !== declared.length || placed.some((id, index) => id !== declared[index])) throw new Error('Rack deviceIds and placements do not match');
+  }
+}
+
 export function createProject(topology, scenario = {}) {
   const project = {
     schemaVersion: PROJECT_SCHEMA_VERSION, product: 'Rack Mesh',
@@ -122,6 +158,7 @@ export function validateProject(input) {
     if (!Array.isArray(topology[key])) throw new Error(`${key} must be an array`);
     uniqueIds(topology[key], key); safeContent(topology[key], key);
   }
+  validateRackPlacements(topology, deviceIds);
   for (const domain of topology.failureDomains || []) {
     domain.kind ??= 'other';
     if (!failureDomainKinds.includes(domain.kind)) throw new Error('Failure domain kind is unknown');

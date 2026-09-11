@@ -503,6 +503,19 @@ test('incremental sweep tasks preserve the completed synchronous results', () =>
   assert.deepEqual(domainTask.result, sweepFailureDomains(topology, { sweep }));
 });
 
+test('a completed fault sweep stays stable when survival reuses its scenarios', () => {
+  const topology = buildTemplate('dual-stack');
+  const sweep = sweepSingleFaults(topology);
+  const before = structuredClone(sweep);
+
+  const reused = calculateSurvivalMultiplier(topology, { sweep });
+  const independent = calculateSurvivalMultiplier(topology);
+
+  assert.deepEqual(reused, independent);
+  assert.deepEqual(sweep, before);
+  assert.deepEqual(calculateSurvivalMultiplier(topology, { scale: 1.5, sweep }), calculateSurvivalMultiplier(topology, { scale: 1.5 }));
+});
+
 test('calculates survival by multiplier, keeps severance distinct, and excludes endpoints', () => {
   const topology = cloneTopology();
   const survival = calculateSurvivalMultiplier(topology);

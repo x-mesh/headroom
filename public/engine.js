@@ -724,10 +724,13 @@ export function evaluateRacks(topology) {
     const values = (field) => devices.map((device) => physical(device)?.[field]);
     const power = values(powerFields[rack.powerBasis]);
     const units = values('uHeight');
+    const standalone = (rack.placements || []).filter(({ deviceId }) => !deviceId);
     const known = (numbers) => numbers.length > 0 && numbers.every((value) => Number.isFinite(value) && value >= 0);
-    const powerKnown = Boolean(powerFields[rack.powerBasis]) && known(power) && devices.every((device) => !physical(device)?.powerBasis || physical(device).powerBasis === rack.powerBasis);
-    const powerWatts = powerKnown ? power.reduce((sum, value) => sum + value, 0) : null;
-    const usedU = known(units) ? units.reduce((sum, value) => sum + value, 0) : null;
+    const powerKnown = Boolean(powerFields[rack.powerBasis]) && (!devices.length || known(power)) && devices.every((device) => !physical(device)?.powerBasis || physical(device).powerBasis === rack.powerBasis);
+    const standalonePowerKnown = standalone.every(({ powerWatts: value }) => Number.isFinite(value) && value >= 0);
+    const powerWatts = powerKnown && standalonePowerKnown ? power.reduce((sum, value) => sum + value, 0) + standalone.reduce((sum, item) => sum + item.powerWatts, 0) : null;
+    const placedUnits = rack.placements?.reduce((sum, placement) => sum + placement.uHeight, 0);
+    const usedU = Number.isFinite(placedUnits) ? placedUnits : known(units) ? units.reduce((sum, value) => sum + value, 0) : null;
     const powerBudgetKnown = Number.isFinite(rack.powerBudgetWatts) && rack.powerBudgetWatts > 0;
     const capacityKnown = Number.isFinite(rack.capacityU) && rack.capacityU > 0;
     const overloaded = (powerKnown && powerBudgetKnown && powerWatts > rack.powerBudgetWatts) || (usedU != null && capacityKnown && usedU > rack.capacityU);
@@ -820,8 +823,26 @@ function singleFaultCandidates(topology) {
   return [['device', topology.devices, 'disabledDevices'], ['link', topology.links, 'disabledLinks']].flatMap(([type, items, key]) => items.map((item) => ({ type, item, key })));
 }
 
-function singleFaultResult(topology, base, endpoints, { type, item, key }, worstAxes = null) {
+// 공개 결과 형식은 유지하고, 같은 스윕을 생존 배수 계산에 넘겼을 때만 장애 시나리오를 재사용한다.
+const singleFaultScenarioCache = new WeakMap();
+const singleFaultKey = (type, id) => `${type}:${id}`;
+function survivalServiceResults(result) {
+  return (result?.services || []).map((service) => {
+    const demands = (service.demandIds || []).map((id) => result.demands.find((demand) => demand.id === id)).filter(Boolean);
+    return { id: service.id, name: service.name || service.id, status: service.status, requiredDeliveryRatio: service.requiredDeliveryRatio ?? 1,
+      deliveredRatio: demands.length ? Math.min(...demands.map(({ deliveredRatio }) => deliveredRatio ?? 0)) : null,
+      admissionRatio: demands.length ? Math.min(...demands.map(({ admissionRatio }) => admissionRatio ?? 0)) : null,
+      bounded: demands.some(({ deliveredRatioBound }) => deliveredRatioBound !== 'exact') };
+  });
+}
+
+function singleFaultResult(topology, base, endpoints, { type, item, key }, worstAxes = null, scenarios = null) {
   const result = calculateScenario(topology, { ...base, [key]: [item.id] });
+  scenarios?.set(singleFaultKey(type, item.id), {
+    breachScale: result.summary.growthLadder?.rungs[0]?.breachScale ?? null,
+    unresolvedCount: result.summary.growthLadder?.unresolved.length ?? 0,
+    services: survivalServiceResults(result),
+  });
   const partial = result.demands.some(({ deliveredRatio, admissionRatio }) => deliveredRatio != null && deliveredRatio < 1 || admissionRatio < 1);
   const verdict = result.summary.evaluationStatus === 'invalid' || result.summary.evaluationStatus === 'not-ready' ? 'unknown'
     : result.summary.unreachableCount > 0 ? 'severs'
@@ -877,20 +898,25 @@ export function createSingleFaultSweepTask(topology, options = {}) {
   const candidates = singleFaultCandidates(topology);
   const resources = [];
   const worstAxes = new Map();
+  const scenarios = new Map();
   let cursor = 0;
+  let finalResult = null;
   return {
     total: candidates.length,
     get completed() { return cursor; },
     get done() { return cursor === candidates.length; },
     step(count = 1) {
       const stop = Math.min(cursor + count, candidates.length);
-      while (cursor < stop) resources.push(singleFaultResult(topology, base, endpoints, candidates[cursor++], worstAxes));
+      while (cursor < stop) resources.push(singleFaultResult(topology, base, endpoints, candidates[cursor++], worstAxes, scenarios));
       return this.done ? this.result : null;
     },
     get result() {
       if (!this.done) return null;
+      if (finalResult) return finalResult;
       const summary = summarizeSingleFaults(topology, baseline, resources);
-      return { ...summary, worstAxes: [...worstAxes.values()].sort((a, b) => a.resourceId.localeCompare(b.resourceId) || String(a.direction).localeCompare(String(b.direction)) || a.axis.localeCompare(b.axis)) };
+      finalResult = { ...summary, worstAxes: [...worstAxes.values()].sort((a, b) => a.resourceId.localeCompare(b.resourceId) || String(a.direction).localeCompare(String(b.direction)) || a.axis.localeCompare(b.axis)) };
+      singleFaultScenarioCache.set(finalResult, { topology, scale: base.scale, strictPaths: Boolean(base.strictPaths), scenarios });
+      return finalResult;
     },
   };
 }
@@ -908,19 +934,14 @@ function survivalEndpoints(topology) {
     ...(demand.paths || []).flatMap(({ devices }) => [devices?.[0], devices?.at(-1)])]).filter(Boolean))].sort();
 }
 
-function finalizeSurvivalMultiplier(topology, options, endpointIds, candidates, worst) {
+function finalizeSurvivalMultiplier(topology, options, endpointIds, candidates, worst, scenarios) {
   if (!worst) return { status: 'unavailable', multiplier: null, worstFault: null, bounded: candidates.some(({ bounded }) => bounded), unresolvedCount: 0, endpointIds, evaluated: candidates.length, candidates: candidates.length, services: [] };
   const scale = options.scale ?? 1;
-  const worstScenario = topology.services?.length
+  const cachedWorst = scenarios?.get(singleFaultKey(worst.type, worst.id));
+  const worstScenario = topology.services?.length && !cachedWorst
     ? calculateScenario(topology, { scale, ...(worst.type === 'device' ? { disabledDevices: [worst.id] } : { disabledLinks: [worst.id] }), ...(options.strictPaths ? { strictPaths: true } : {}) })
     : null;
-  const services = (worstScenario?.services || []).map((service) => {
-    const demands = (service.demandIds || []).map((id) => worstScenario.demands.find((demand) => demand.id === id)).filter(Boolean);
-    return { id: service.id, name: service.name || service.id, status: service.status, requiredDeliveryRatio: service.requiredDeliveryRatio ?? 1,
-      deliveredRatio: demands.length ? Math.min(...demands.map(({ deliveredRatio }) => deliveredRatio ?? 0)) : null,
-      admissionRatio: demands.length ? Math.min(...demands.map(({ admissionRatio }) => admissionRatio ?? 0)) : null,
-      bounded: demands.some(({ deliveredRatioBound }) => deliveredRatioBound !== 'exact') };
-  });
+  const services = topology.services?.length ? cachedWorst?.services || survivalServiceResults(worstScenario) : [];
   return {
     status: worst.verdict === 'severs' ? 'severed' : worst.multiplier < 1 - EPSILON ? 'capacity-insufficient' : 'survives',
     multiplier: worst.multiplier, worstFault: { id: worst.id, type: worst.type, verdict: worst.verdict },
@@ -936,16 +957,22 @@ export function createSurvivalMultiplierTask(topology, options = {}) {
   const endpointIds = survivalEndpoints(topology);
   const endpoints = new Set(endpointIds);
   const candidates = sweep.resources.filter(({ endpoint, type, id }) => !endpoint && !(type === 'device' && endpoints.has(id)));
+  const cached = singleFaultScenarioCache.get(sweep);
+  const scenarios = cached?.topology === topology && cached.scale === scale && cached.strictPaths === Boolean(options.strictPaths)
+    ? cached.scenarios : null;
   let worst = null;
   let cursor = 0;
   const inspect = (candidate) => {
     const fault = candidate.type === 'device' ? { disabledDevices: [candidate.id] } : { disabledLinks: [candidate.id] };
     // 경로 단절은 부하를 줄여도 회복되지 않는다. 사다리를 다시 계산하지 않는다.
-    const scenario = candidate.verdict === 'severs' ? null : calculateScenario(topology, { scale, ...fault, ...(options.strictPaths ? { strictPaths: true } : {}) });
+    const cachedScenario = candidate.verdict === 'severs' ? null : scenarios?.get(singleFaultKey(candidate.type, candidate.id));
+    const scenario = candidate.verdict === 'severs' || cachedScenario ? null
+      : calculateScenario(topology, { scale, ...fault, ...(options.strictPaths ? { strictPaths: true } : {}) });
     const ladder = scenario?.summary.growthLadder;
-    const multiplier = candidate.verdict === 'severs' ? 0 : ladder?.rungs[0]?.breachScale ?? null;
-    const bounded = candidate.bounded || Boolean(ladder?.unresolved.length);
-    const entry = { id: candidate.id, type: candidate.type, verdict: candidate.verdict, multiplier, bounded, unresolvedCount: ladder?.unresolved.length ?? 0 };
+    const multiplier = candidate.verdict === 'severs' ? 0 : cachedScenario ? cachedScenario.breachScale : ladder?.rungs[0]?.breachScale ?? null;
+    const unresolvedCount = cachedScenario?.unresolvedCount ?? ladder?.unresolved.length ?? 0;
+    const bounded = candidate.bounded || unresolvedCount > 0;
+    const entry = { id: candidate.id, type: candidate.type, verdict: candidate.verdict, multiplier, bounded, unresolvedCount };
     if (multiplier == null) return;
     if (!worst || multiplier < worst.multiplier - EPSILON || (Math.abs(multiplier - worst.multiplier) <= EPSILON && idCompare(entry, worst) < 0)) worst = entry;
   };
@@ -958,7 +985,7 @@ export function createSurvivalMultiplierTask(topology, options = {}) {
       while (cursor < stop) inspect(candidates[cursor++]);
       return this.done ? this.result : null;
     },
-    get result() { return this.done ? finalizeSurvivalMultiplier(topology, options, endpointIds, candidates, worst) : null; },
+    get result() { return this.done ? finalizeSurvivalMultiplier(topology, options, endpointIds, candidates, worst, scenarios) : null; },
   };
 }
 

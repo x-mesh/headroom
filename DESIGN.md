@@ -119,7 +119,7 @@ components:
     textColor: "{colors.text}"
     typography: "{typography.data}"
     rounded: "{rounded.square}"
-    width: "126px"
+    width: "120px"
   status-badge:
     backgroundColor: "transparent"
     textColor: "{colors.muted}"
@@ -156,6 +156,7 @@ A compact toolbar and inline task panel extend the console into a topology edito
 **Key Characteristics:**
 
 - Light sage ground, quiet surfaces, and borderless device symbols on a tinted canvas.
+- Three topology views: classic symbols, CSS 2.5D voxel chassis, and a spatial WebGL equipment scene.
 - Deep green top and mobile control bars.
 - Square controls, thin rules, and compact data typography.
 - Four summary sparklines and status-aware topology motion.
@@ -255,6 +256,16 @@ At 760px, place editor forms and demand rows in two columns. Keep each form acti
 
 Keep the topology canvas at 940px by 580px. On mobile, cap its viewport at 500px and provide horizontal pan access.
 
+Keep the DOM topology stage for classic and voxel views. Hide it while the spatial WebGL canvas is active.
+
+Size the WebGL canvas to its host on desktop and mobile. Update the camera aspect ratio after each resize.
+
+Orbit the spatial camera from a primary-button drag. Zoom it with the wheel or the shared zoom controls.
+
+Give spatial controls reset actions for the camera orbit and distance.
+
+Give each mobile spatial view button a 44px by 44px target. Provide a view reset action.
+
 Give the mobile editor toolbar its own horizontal scroll. Preserve the separate pan region inside the topology viewport.
 
 Keep the mobile failure tray sticky at the top. Keep its deep green surface above the light workspace.
@@ -263,7 +274,13 @@ Use the observed space rhythm: 8px for compact gaps, 14px for mobile controls, 1
 
 ## Elevation & Depth
 
-The system uses tonal layers, one-pixel borders, and limited shadows. White nodes lift from the sage canvas without a card-heavy page.
+The system uses tonal layers, one-pixel borders, and limited shadows. Device labels sit directly on the sage canvas.
+
+Voxel chassis use face contrast and a small floor shadow. Spatial devices use lit meshes with profile-specific materials.
+
+The WebGL scene uses a hemisphere light and two directional lights. One directional light casts equipment shadows.
+
+Use `THREE.PCFSoftShadowMap` for spatial depth. Keep the ground plane and `GridHelper` under the equipment.
 
 ### Shadow Vocabulary
 
@@ -271,6 +288,8 @@ The system uses tonal layers, one-pixel borders, and limited shadows. White node
 - **Live Glow** (`0 2px 9px color-mix(in srgb, var(--cyan) 65%, transparent)`): Mark the live telemetry indicator.
 - **Node Rest** (`0 8px 22px color-mix(in srgb, var(--panel-deep) 15%, transparent)`): Separate white nodes from the canvas.
 - **Node State Glow** (`0 8px 26px color-mix(in srgb, var(--node-color) 18%, transparent)`): Mark hover and selection.
+- **Voxel Chassis** (`0 5px 9px color-mix(in srgb, var(--panel-deep) 24%, transparent)`): Separate the front face from the canvas.
+- **WebGL Soft Shadow** (`THREE.PCFSoftShadowMap`): Separate spatial equipment from the ground plane.
 - **Sticky Tray** (`0 8px 22px color-mix(in srgb, var(--panel-deep) 24%, transparent)`): Separate the mobile tray from content.
 - **Toast Lift** (`0 10px 30px color-mix(in srgb, var(--panel-deep) 24%, transparent)`): Lift transient result feedback.
 
@@ -294,6 +313,14 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Primary:** Use signal lime, dark action text, and 15px horizontal padding.
 - **Text:** Use a transparent surface and a visible border on the deep top bar.
 - **Hover / Focus:** Shift the border or surface. Use a 2px signal focus outline with a 3px offset.
+
+### Topology View Switch
+
+- **Modes:** Offer classic, voxel, and spatial views in one square segmented control.
+- **State:** Mark the active view with `aria-pressed`.
+- **Persistence:** Store the mode, spatial pitch, and spatial yaw in `localStorage`.
+- **Transition:** Reveal each view with one authored blur and clip transition.
+- **Continuity:** Keep the topology data and selection unchanged across view changes.
 
 ### Editor Toolbar and Overlay Panel
 
@@ -473,15 +500,80 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Area Height:** Cap the topology area to the viewport. The padded stage must scroll inside it, never stretch the page.
 - **Pan Exceptions:** Start no pan on a node, on a link, in connect mode, or from touch. Touch keeps the native scroll.
 - **Cap:** Stop growing at 12000px so an imported file cannot ask for a canvas the browser cannot paint.
+- **DOM Zoom:** Apply the same zoom state to classic and voxel views.
+- **Spatial Zoom:** Change the `PerspectiveCamera` distance with the wheel, zoom controls, and reset control.
+
+### Spatial Canvas
+
+- **Runtime:** Use `three@0.186.0` and `THREE.WebGLRenderer`.
+- **Camera:** Use `PerspectiveCamera` with a 44-degree field of view.
+- **Equipment:** Build each chassis with `BoxGeometry` and `MeshStandardMaterial`.
+- **Lighting:** Add `HemisphereLight` and `DirectionalLight`. Enable `PCFSoftShadowMap`.
+- **Ground:** Put a receiving plane and `GridHelper` under the equipment.
+- **Profiles:** Set width, height, depth, and color from the equipment profile.
+- **Details:** Add ports, server bays, and wireless antennas as separate geometry.
+- **Links:** Draw each link with `TubeGeometry` on a curve at world height `0.32`.
+- **Traffic:** Move a `SphereGeometry` mesh along each active link curve.
+- **Labels:** Render text to `CanvasTexture`. Display each texture with a camera-facing `Sprite`.
+- **Selection:** Use `Raycaster` against equipment meshes and label sprites.
+- **Orbit:** Orbit the camera from primary-button drags on the WebGL canvas.
+- **Zoom:** Change camera distance with the wheel and shared zoom controls.
+- **Reset:** Restore the camera yaw, pitch, and distance from either reset control.
+- **Persistence:** Store the selected view, pitch, and yaw in `localStorage`.
+- **Reduced Motion:** Stop traffic progress. Keep manual orbit and zoom available.
+- **DOM Stage:** Hide `topology-stage` in spatial view. Keep it for classic and voxel views.
+- **Responsive Canvas:** Fit the renderer to its host. Limit the pixel ratio to two.
+- **Mobile Targets:** Give every spatial view button a 44px by 44px target.
+- **Edit Chrome:** Hide DOM port, link, resize, and selection handles in spatial view.
 
 ### Topology Node and Link
 
 - **Pointer Layers:** The node layer covers the whole canvas, so it must pass pointer events through and let only the nodes take them. Otherwise the links underneath cannot be clicked at all.
-- **Node:** Stack a 92 by 42 device symbol over a label block in a 104px column. Use no card border, no card surface, and no shadow. Keep the node small: a topology holds dozens of them, and the axis rows carry the reading.
+- **Node:** Stack a 92 by 42 device symbol over a label block in a 120px column. Use no card border or card surface. Keep the node small. A topology holds dozens of nodes, and the axis rows carry the reading.
 - **Anchor:** Keep the device position at the center of the symbol box. Offset the node by half the symbol height, never by half the node height.
-- **Symbol:** Draw one inline sprite symbol for each device. Map the device class to a symbol and fall back to the rack symbol. Paint the symbol with text color, never with state color. Shape carries the class. Color and token carry the state.
-- **Symbol Choice:** The stencil set draws the server variants as one stack plus a small mark. At node size that mark disappears. If the set holds a shape with a different outline, map the class to that shape. Draw the database class as the cylinder.
-- **Hand-drawn Symbol:** If no stencil tells a class apart, or the stencil shows the wrong thing, draw that symbol. Keep the stencil grammar: the same padded viewBox, the same three paint tokens, and no literal color.
+- **Classic Symbol:** Use the existing inline SVG symbol for every device. Keep links flat on the canvas.
+- **Voxel Chassis:** Use a CSS 2.5D chassis for all 22 palette device types. Build front, top, and side faces.
+- **Voxel Faces:** Use a 68px front face, an 8px top face, and an 8px side face. Use fixed deep-green tones for chassis material. Use a darker olive material for firewalls.
+- **Network Profiles:** Map switch and hub to ports. Map router and modem to ports plus a route mark.
+- **Wireless Profile:** Map wireless to ports plus antennas.
+- **Security Profiles:** Map firewall, IPS, WAF, VPN, and SSL VPN to ports plus a shield.
+- **Balancer Profile:** Map the load balancer to ports plus a balance mark.
+- **Server Profiles:** Map server, web, VM, and mail to bays plus fans.
+- **Mainframe Profile:** Map mainframe to wide storage bays.
+- **Storage Profiles:** Map database, storage, NAS, and backup to storage bays.
+- **Cloud Profile:** Map cloud to a cloud mark.
+- **Client Profile:** Map client to a screen plus ports.
+- **Generic Profile:** Map an unrecognized type to a generic port chassis.
+- **Voxel State:** Use three LEDs with the semantic node color. Use a 2.4s stepped cycle at rest, 1.1s for warning, and 0.46s for overload.
+- **Voxel Interaction:** Lift the chassis by 4px on hover, keyboard focus, or selection. Increase saturation and brightness without changing the node layout.
+- **Voxel Disabled:** Keep the chassis at rest. Remove lift and transitions. Apply grayscale and 48% opacity. Stop LED and fan motion.
+- **Spatial Switch:** Use `3.6 × 0.72 × 2.1` and color `0x2f675c`.
+- **Spatial Hub:** Use `3.2 × 0.78 × 2.0` and color `0x386b61`.
+- **Spatial Router:** Use `3.2 × 1.0 × 2.25` and color `0x315e56`.
+- **Spatial Modem:** Use `2.7 × 0.9 × 1.9` and color `0x41675f`.
+- **Spatial Wireless:** Use `2.8 × 0.45 × 2.5` and color `0x477b70`.
+- **Spatial Firewall:** Use `3.1 × 1.25 × 2.0` and color `0x626b55`.
+- **Spatial IPS:** Use `3.1 × 1.15 × 2.0` and color `0x526654`.
+- **Spatial WAF:** Use `3.1 × 1.15 × 2.0` and color `0x536a5b`.
+- **Spatial VPN:** Use `3.0 × 1.0 × 2.0` and color `0x4c6258`.
+- **Spatial SSL VPN:** Use `3.0 × 1.0 × 2.0` and color `0x4c6258`.
+- **Spatial Balancer:** Use `3.2 × 0.9 × 2.1` and color `0x2d6459`.
+- **Spatial Server:** Use `2.65 × 2.1 × 2.35` and color `0x435f59`.
+- **Spatial Web Server:** Use `2.65 × 1.8 × 2.2` and color `0x42645d`.
+- **Spatial VM:** Use `2.45 × 1.45 × 2.0` and color `0x496961`.
+- **Spatial Database:** Use `2.9 × 2.45 × 2.3` and color `0x455e5d`.
+- **Spatial Mail:** Use `2.65 × 1.8 × 2.2` and color `0x4c645e`.
+- **Spatial Mainframe:** Use `3.25 × 3.3 × 2.6` and color `0x394f50`.
+- **Spatial Storage:** Use `3.2 × 2.8 × 2.45` and color `0x436360`.
+- **Spatial NAS:** Use `3.0 × 2.5 × 2.25` and color `0x4b6965`.
+- **Spatial Backup:** Use `3.0 × 2.55 × 2.3` and color `0x526a64`.
+- **Spatial Cloud:** Use `3.35 × 1.0 × 3.0` and color `0x3e7771`.
+- **Spatial Client:** Use `2.5 × 0.65 × 1.75` and color `0x4c625b`.
+- **Spatial Generic:** Use `2.8 × 1.1 × 2.0` and color `0x47645d`.
+- **Spatial Ports:** Add 12 ports to switches, six to routers, and four to other equipment.
+- **Spatial Bays:** Add four bay meshes to server, storage, database, mail, backup, and mainframe profiles.
+- **Spatial Antennas:** Add two cylinder meshes to the wireless profile.
+- **Spatial Disabled:** Use material color `0x59635f`. Disable the status rail emissive light.
 - **Symbol Fill:** Fill the symbol with the canvas color. Links stop at the shape edge.
 - **State Rail:** Put a three-pixel state rail under the symbol. Hatch it for overload. Dash it for unknown and offline.
 - **Axis Rows:** Show one monospace row for each configured axis: state token, four-character axis name, compact load, and utilization. Show at most four rows and count the rest in the meta line.
@@ -562,9 +654,12 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 
 ### Reduced Motion
 
-- **Preference:** If reduced motion is active, hide packet dots and stop visible telemetry variation.
+- **Preference:** Hide DOM packet dots and stop visible telemetry variation when reduced motion is active.
+- **Voxel Motion:** Keep every voxel chassis at rest. Stop LED and fan animation. Remove chassis filters and transitions.
 - **Indicator:** Keep the live label visible without perceptible motion.
-- **Transitions:** Set motion duration to 0.01ms and restore automatic scroll behavior.
+- **View Transition:** Stop the blur and clip reveal. Show the selected view immediately.
+- **Spatial Motion:** Stop WebGL traffic movement. Preserve manual orbit, zoom, selection, pitch, and yaw.
+- **Transitions:** Set other motion duration to 0.01ms. Restore automatic scroll behavior.
 - **Cadence:** Reduce telemetry refresh to 2400ms. Preserve flat sparkline history and exact scenario values.
 
 ## Do's and Don'ts
@@ -573,6 +668,11 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 
 - **Do** keep the light sage workspace and deep green control frame.
 - **Do** draw topology nodes as a device symbol over a label stack.
+- **Do** offer classic, voxel, and spatial views without changing scenario results.
+- **Do** use CSS 2.5D voxel chassis for all 22 palette device types.
+- **Do** render spatial equipment through `THREE.WebGLRenderer`.
+- **Do** use geometry profiles for spatial dimensions, color, ports, bays, and antennas.
+- **Do** render spatial labels as `CanvasTexture` sprites.
 - **Do** label all synthetic telemetry as synthetic.
 - **Do** keep presentation variation separate from deterministic scenario results.
 - **Do** pair each status color with text, shape, or a line pattern.
@@ -595,3 +695,7 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Don't** replace the current project before validation and confirmation.
 - **Don't** hide form errors in a global status message.
 - **Don't** encode capacity or failure state with color alone.
+- **Do not** use classic SVG symbols as voxel substitutes.
+- **Do not** reuse CSS 2.5D voxel chassis as spatial equipment.
+- **Do not** build spatial equipment from DOM faces or CSS transforms.
+- **Do not** animate WebGL traffic when reduced motion is active.

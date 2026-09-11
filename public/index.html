@@ -39,6 +39,10 @@
           </div>
         </div>
         <div class="topbar-context">
+          <div class="workspace-switch" role="tablist" aria-label="작업 공간">
+            <button type="button" role="tab" data-workspace="topology" aria-selected="true">토폴로지</button>
+            <button type="button" role="tab" data-workspace="rack" aria-selected="false">랙</button>
+          </div>
           <div class="scenario-copy">
             <strong id="scenario-title">계산 중</strong>
             <span id="scenario-subtitle">계산 중</span>
@@ -84,16 +88,16 @@
           <div class="top-menu-wrap">
             <button class="solid-button top-menu-trigger" id="export-menu-button" type="button" aria-expanded="false" aria-controls="export-menu" aria-label="결과 내보내기 메뉴"><span class="action-icon icon-export" aria-hidden="true"></span><span class="action-label">결과 내보내기</span> <span class="menu-chevron" aria-hidden="true"></span></button>
             <div class="top-menu" id="export-menu" role="menu" aria-label="결과 내보내기" hidden>
-              <p class="top-menu-heading">결과 내보내기<span>분석용 데이터 또는 공유용 그림을 선택합니다.</span></p>
+              <p class="top-menu-heading">결과 내보내기<span id="export-view-state">이미지는 현재 캔버스 보기(전체)를 따릅니다.</span></p>
               <div class="top-menu-section">
                 <button type="button" role="menuitem" data-export-action="result"><strong>결과 JSON</strong><small>계산 결과, 기준선, 판정을 내보냅니다.</small></button>
                 <button type="button" role="menuitem" data-export-action="report-markdown"><strong>보고서 Markdown</strong><small>리뷰 문서에 붙일 요약과 축별 근거를 냅니다.</small></button>
                 <button type="button" role="menuitem" data-export-action="report-html"><strong>보고서 HTML</strong><small>공유할 독립형 보고서를 냅니다.</small></button>
                 <button type="button" role="menuitem" data-export-action="report-json"><strong>보고서 JSON</strong><small>같은 보고서 모델을 기계가 읽게 냅니다.</small></button>
-                <button type="button" role="menuitem" data-editor-action="export-svg"><strong>SVG 이미지</strong><small>설계와 계산 판정을 벡터 이미지로 내보냅니다.</small></button>
-                <button type="button" role="menuitem" data-editor-action="export-png"><strong>PNG 이미지</strong><small>문서와 메신저용 고해상도 이미지를 만듭니다.</small></button>
-                <button type="button" role="menuitem" data-editor-action="export-svg-anonymized"><strong>익명 SVG 이미지</strong><small>장비명과 모델을 역할 기반 이름으로 바꿉니다.</small></button>
-                <button type="button" role="menuitem" data-editor-action="export-png-anonymized"><strong>익명 PNG 이미지</strong><small>장비명과 모델을 역할 기반 이름으로 바꿉니다.</small></button>
+                <button type="button" role="menuitem" data-editor-action="export-svg"><strong>SVG 이미지</strong><small>현재 캔버스 보기로 벡터 이미지를 만듭니다.</small></button>
+                <button type="button" role="menuitem" data-editor-action="export-png"><strong>PNG 이미지</strong><small>현재 캔버스 보기로 고해상도 이미지를 만듭니다.</small></button>
+                <button type="button" role="menuitem" data-editor-action="export-svg-anonymized"><strong>익명 SVG 이미지</strong><small>현재 보기에서 장비명과 모델을 익명화합니다.</small></button>
+                <button type="button" role="menuitem" data-editor-action="export-png-anonymized"><strong>익명 PNG 이미지</strong><small>현재 보기에서 장비명과 모델을 익명화합니다.</small></button>
               </div>
             </div>
           </div>
@@ -183,6 +187,9 @@
                 <button type="button" data-zoom="in" aria-label="확대">+</button>
                 <button type="button" data-zoom="fit">맞춤</button>
               </div>
+              <div class="topology-view-control" id="topology-view-control" role="group" aria-label="토폴로지 표시 방식">
+                <button type="button" data-topology-view="classic">기본</button><button type="button" data-topology-view="voxel">Voxel</button><button type="button" data-topology-view="spatial">3D</button>
+              </div>
               <div class="topology-live-status"><span><i></i> DETERMINISTIC MODEL</span><div class="path-readout" id="path-readout">2 DEMANDS · 4 ACTIVE PATHS</div></div>
               <button type="button" class="mobile-inspector-open" id="mobile-inspector-open">선택 장비 검사</button>
               <details class="view-settings"><summary>보기</summary><div class="layout-control" id="class-control" aria-label="클래스 배지 표시"></div></details>
@@ -190,6 +197,10 @@
           </header>
           <div class="topology-scroll">
             <div class="mobile-pan-cue" aria-hidden="true"><span>←</span> 좌우로 탐색 <span>→</span></div>
+            <div class="spatial-view-tools" id="spatial-view-tools" hidden>
+              <span>드래그하여 회전</span><div role="group" aria-label="3D 시점 회전"><button type="button" data-spatial-orbit="left">좌</button><button type="button" data-spatial-orbit="up">위</button><button type="button" data-spatial-orbit="reset">초기</button><button type="button" data-spatial-orbit="down">아래</button><button type="button" data-spatial-orbit="right">우</button></div>
+            </div>
+            <div class="spatial-webgl" id="spatial-webgl" hidden aria-label="3D 토폴로지 장면"><canvas id="spatial-webgl-canvas"></canvas><div class="spatial-webgl-labels" id="spatial-webgl-labels"></div></div>
             <div class="topology-stage" id="topology-stage">
             <div class="topology-canvas" id="topology-canvas">
               <svg class="link-layer" id="link-layer" viewBox="0 0 940 580" role="img" aria-label="장비를 잇는 링크"></svg>
@@ -217,6 +228,31 @@
             <button type="button" class="inspector-close-mobile" id="inspector-close-mobile" aria-label="장비 검사 닫기">닫기</button>
           </header>
           <div id="inspector-content" class="inspector-content"></div>
+        </aside>
+      </section>
+
+      <section class="rack-workspace" id="rack-workspace" aria-labelledby="rack-workspace-heading" hidden>
+        <aside class="rack-sidebar" aria-label="랙 목록과 추가">
+          <header><div><span class="section-code">RACK BUILDER</span><h2>랙 구성</h2></div><button type="button" data-rack-action="new-rack">랙 추가</button></header>
+          <div class="panel-tabs rack-sidebar-tabs" role="tablist" aria-label="랙 구성 도구"><button type="button" role="tab" data-rack-sidebar-tab="devices" aria-selected="true">장비</button><button type="button" role="tab" data-rack-sidebar-tab="racks" aria-selected="false">랙</button></div>
+          <div class="rack-sidebar-panel" data-rack-sidebar-panel="devices"><p class="panel-note">장비를 원하는 랙의 U 근처로 끌어 놓으세요.</p><div class="rack-equipment-palette" id="rack-equipment-palette"></div></div>
+          <div class="rack-sidebar-panel" data-rack-sidebar-panel="racks" hidden><p class="panel-note">랙은 토폴로지와 독립적으로 구성할 수 있습니다.</p><div class="rack-list" id="rack-list"></div></div>
+        </aside>
+        <section class="rack-stage-panel">
+          <header class="rack-toolbar">
+            <div><h1 id="rack-workspace-heading">랙 배치</h1><p id="rack-workspace-summary">랙을 추가해 시작하세요.</p></div>
+            <div class="rack-toolbar-actions">
+              <div class="topology-view-control" role="group" aria-label="랙 표시 방식"><button type="button" data-rack-view="2d" aria-pressed="true">2D</button><button type="button" data-rack-view="3d" aria-pressed="false">3D</button></div>
+              <div class="rack-3d-controls" id="rack-3d-controls" hidden><div class="topology-view-control" role="group" aria-label="랙 3D 면"><button type="button" data-rack-face="front" aria-pressed="true">전면</button><button type="button" data-rack-face="rear" aria-pressed="false">후면</button></div><button type="button" data-rack-cables aria-pressed="true">케이블 켬</button></div>
+            </div>
+          </header>
+          <div class="rack-empty" id="rack-empty"><strong>아직 랙이 없습니다</strong><span>랙을 추가한 뒤 장비를 U 위치에 배치하세요.</span><button type="button" data-rack-action="new-rack">첫 랙 추가</button></div>
+          <div class="rack-2d-scroll" id="rack-2d-scroll" hidden><div class="rack-2d-canvas" id="rack-2d-canvas"></div></div>
+          <div class="rack-3d-stage" id="rack-3d-stage" hidden><canvas id="rack-3d-canvas"></canvas><div class="rack-3d-hint"><span>드래그하여 회전 · 스크롤하여 확대</span><strong id="rack-cable-note">논리 링크 · 실제 배선 아님</strong></div></div>
+        </section>
+        <aside class="rack-inspector" aria-labelledby="rack-inspector-heading">
+          <header><div><span class="section-code">RACK INSPECTOR</span><h2 id="rack-inspector-heading">배치 검사</h2></div></header>
+          <div id="rack-inspector-content" class="rack-inspector-content"><p class="panel-note">랙 또는 장비를 선택하세요.</p></div>
         </aside>
       </section>
     </main>

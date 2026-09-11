@@ -370,6 +370,11 @@ async function verify(viewport, screenshot, interact = false) {
     assert.ok(symbol.painted, `${symbol.id}: symbol renders an empty box`);
     assert.ok(symbol.insideCanvas, `${symbol.id}: node overflows the canvas bottom`);
   }
+  const voxelKinds = await page.locator('[data-voxel-kind]').evaluateAll((nodes) => [...new Set(nodes.map((node) => node.dataset.voxelKind))].sort());
+  assert.deepEqual(voxelKinds, ['firewall', 'router', 'server', 'switch'], '대표 장비 네 종류는 voxel chassis를 사용해야 합니다');
+  assert.equal(await page.locator('[data-voxel-kind] .voxel-front').count(), await page.locator('[data-voxel-kind]').count(), '각 voxel chassis에는 정면이 있어야 합니다');
+  assert.equal(await page.locator('[data-voxel-kind] .voxel-top').count(), await page.locator('[data-voxel-kind]').count(), '각 voxel chassis에는 윗면이 있어야 합니다');
+  assert.equal(await page.locator('[data-voxel-kind] .voxel-side').count(), await page.locator('[data-voxel-kind]').count(), '각 voxel chassis에는 측면이 있어야 합니다');
   // 선이 곧을 수도 굽을 수도 있으므로 좌표 속성이 아니라 그려진 길의 끝을 잰다. 어느 모양이든
   // 끝은 심볼 가운데여야 한다 - 거기서 벗어나면 선이 어느 장비에 닿았는지 그림이 말하지 못한다.
   const anchored = await page.evaluate(() => {
@@ -424,6 +429,10 @@ async function verify(viewport, screenshot, interact = false) {
   const off = await detail('off');
   assert.ok(brief.rows < full.rows, `요약이 전체보다 줄어야 한다: ${brief.rows} / ${full.rows}`);
   assert.equal(off.rows, 0, '없앰은 축 줄을 하나도 그리지 않는다');
+  assert.equal(await page.locator('.link-label').evaluateAll((labels) => labels.every((label) => label.textContent === 'DOWN')), true, '구성도는 살아 있는 링크의 퍼센트를 숨긴다');
+  await page.locator('#export-menu-button').click();
+  assert.match(await page.locator('#export-view-state').textContent(), /현재 캔버스 보기\(구성도\)/);
+  await page.keyboard.press('Escape');
   assert.equal(brief.unknown, full.unknown, `요약이 미확인 축을 숨겼습니다: ${brief.unknown} / ${full.unknown}`);
   await detail('full');
 
@@ -732,6 +741,12 @@ async function verify(viewport, screenshot, interact = false) {
     await failure.click();
     await page.waitForFunction(() => Number(document.querySelector('#summary-faults')?.textContent) === 1);
     assert.equal(await failure.getAttribute('aria-pressed'), 'true');
+    const disabledVoxel = page.locator('[data-device-id="fw-a"] .voxel-chassis');
+    const disabledTransform = await disabledVoxel.evaluate((node) => getComputedStyle(node).transform);
+    await page.locator('[data-device-id="fw-a"]').hover();
+    assert.equal(await disabledVoxel.evaluate((node) => getComputedStyle(node).transform), disabledTransform, '장애 장비는 hover 상태에서도 움직이지 않아야 합니다');
+    assert.equal(await disabledVoxel.evaluate((node) => getComputedStyle(node).transitionDuration), '0s', '장애 장비에는 transition이 없어야 합니다');
+    assert.equal(await page.locator('[data-device-id="fw-a"] .voxel-led').first().evaluate((node) => getComputedStyle(node).animationName), 'none', '장애 장비 LED는 멈춰야 합니다');
     assert.match(await page.locator('#evidence-state').textContent(), /한계 확인됨|한계 미확인 [0-9]+개/);
     assert.equal(await page.locator('#capacity-state').textContent(), '용량 초과');
     const faultNote = await page.locator('#bottleneck-note').textContent();
@@ -1581,6 +1596,68 @@ async function verifyNumberMotion() {
 
 // 설명은 설명하는 것 옆에 있어야 한다. 화면 구석에 붙어 있으면 눈이 버튼과 글 사이를 계속
 // 오가야 하고, 화면이 넓을수록 그 거리가 멀어져 무엇을 가리키는지 흐려진다.
+async function verifyTopologyViews() {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  await page.addInitScript(() => { localStorage.clear(); sessionStorage.setItem('rack-mesh-demo-teaser', '1'); });
+  page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
+  page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
+  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+
+  assert.equal(await page.locator('button[data-topology-view="voxel"]').getAttribute('aria-pressed'), 'true', 'Voxel 도면은 기본 표시 방식이어야 합니다');
+  const paletteKinds = await page.locator('[data-palette-kind]').evaluateAll((items) => [...new Set(items.map((item) => item.dataset.paletteKind))]);
+  for (const kind of paletteKinds) {
+    if (!await page.locator(`[data-voxel-kind="${kind}"]`).count()) {
+      await page.locator(`[data-palette-kind="${kind}"]`).first().evaluate((button) => button.click());
+    }
+  }
+  const voxelKinds = await page.locator('[data-voxel-kind]').evaluateAll((items) => [...new Set(items.map((item) => item.dataset.voxelKind))].sort());
+  assert.deepEqual(voxelKinds, [...paletteKinds].sort(), '팔레트의 모든 장비 종류는 Voxel 도면을 가져야 합니다');
+
+  await page.locator('button[data-topology-view="classic"]').click();
+  assert.equal(await page.locator('[data-voxel-kind]').count(), 0, '기본 도면은 기존 SVG 심볼만 사용해야 합니다');
+  assert.equal(await page.locator('.node-glyph').count(), await page.locator('.mesh-node').count(), '기본 도면의 모든 장비에 SVG 심볼이 있어야 합니다');
+
+  await page.locator('button[data-topology-view="spatial"]').click();
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator('.topology-panel').getAttribute('data-topology-view-mode'), 'spatial');
+  assert.equal(await page.locator('#spatial-view-tools').isVisible(), true, '3D 공간에는 시점 컨트롤이 보여야 합니다');
+  await page.waitForFunction(() => window.__rackMeshSpatial3D?.debug().renderer === 'WebGLRenderer');
+  const webglBefore = await page.evaluate(() => window.__rackMeshSpatial3D.debug());
+  assert.equal(webglBefore.renderer, 'WebGLRenderer', '3D 공간은 WebGLRenderer를 사용해야 합니다');
+  assert.ok(webglBefore.meshes > await page.locator('.mesh-node').count(), '3D 공간은 장비마다 실제 geometry mesh를 만들어야 합니다');
+  assert.ok(webglBefore.packets > 0, '3D 공간은 링크 위에 움직이는 traffic mesh를 만들어야 합니다');
+  assert.equal(await page.locator('#topology-stage').evaluate((node) => getComputedStyle(node).display), 'none', '3D 공간에서는 DOM 토폴로지를 숨겨야 합니다');
+  assert.equal(await page.locator('#spatial-webgl').isVisible(), true, '3D 공간에서는 WebGL 표면을 보여야 합니다');
+  await page.locator('[data-spatial-orbit="right"]').click();
+  await page.locator('[data-spatial-orbit="right"]').click();
+  await page.waitForTimeout(300);
+  const webglAfter = await page.evaluate(() => window.__rackMeshSpatial3D.debug());
+  assert.notDeepEqual(webglAfter.camera, webglBefore.camera, '시점 버튼은 실제 perspective camera를 움직여야 합니다');
+  const canvas = await page.locator('#spatial-webgl-canvas').boundingBox();
+  await page.mouse.move(canvas.x + canvas.width * .45, canvas.y + canvas.height * .55);
+  await page.mouse.down();
+  await page.mouse.move(canvas.x + canvas.width * .7, canvas.y + canvas.height * .42, { steps: 5 });
+  await page.mouse.up();
+  await page.screenshot({ path: '.impeccable/review/spatial-desktop.png', fullPage: true });
+
+  await page.locator('button[data-topology-view="voxel"]').click();
+  await page.reload({ waitUntil: 'networkidle' });
+  assert.equal(await page.locator('button[data-topology-view="voxel"]').getAttribute('aria-pressed'), 'true', '선택한 표시 방식은 다시 열어도 유지되어야 합니다');
+  await page.evaluate(() => {
+    localStorage.setItem('rack-mesh-topology-view', 'spatial');
+    localStorage.setItem('rack-mesh-spatial-pitch', '30');
+    localStorage.setItem('rack-mesh-spatial-yaw', '105');
+    localStorage.setItem('rack-mesh-spatial-distance', '24');
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForFunction(() => window.__rackMeshSpatial3D?.debug().renderer === 'WebGLRenderer');
+  const restoredView = await page.evaluate(() => window.__rackMeshSpatial3D.debug().view);
+  assert.ok(Math.abs(restoredView.pitch - 30) < .1, `저장한 WebGL pitch를 복원해야 합니다: ${restoredView.pitch}`);
+  assert.ok(Math.abs(restoredView.yaw - 105) < .1, `저장한 WebGL yaw를 복원해야 합니다: ${restoredView.yaw}`);
+  assert.equal(restoredView.distance, 24, '저장한 WebGL zoom distance를 복원해야 합니다');
+  await page.close();
+}
+
 async function verifyTourAnchoring() {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } });
   await page.addInitScript(() => localStorage.clear());
@@ -1692,12 +1769,20 @@ try {
     await verifyBackendPool();
     await verifySharedPowerTemplate();
     await verifyNumberMotion();
+    await verifyTopologyViews();
     await verifyTourAnchoring();
     await verifyVirtualFailureList();
     await verifyInferredSwapSlot();
     const reducedPage = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
     await reducedPage.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
-    assert.equal(await reducedPage.locator('.packet-dot').first().evaluate((node) => getComputedStyle(node).display), 'none');
+    await reducedPage.locator('button[data-topology-view="spatial"]').click();
+  assert.equal(await reducedPage.locator('.packet-dot').first().evaluate((node) => getComputedStyle(node).display), 'none');
+    assert.equal(await reducedPage.locator('.voxel-led').first().evaluate((node) => getComputedStyle(node).animationName), 'none');
+    assert.equal(await reducedPage.locator('.voxel-fan').first().evaluate((node) => getComputedStyle(node).animationName), 'none');
+  assert.ok(await reducedPage.locator('#topology-canvas').evaluate((node) => parseFloat(getComputedStyle(node).transitionDuration)) < 0.001);
+  await reducedPage.waitForFunction(() => window.__rackMeshSpatial3D?.debug().reducedMotion === true);
+  assert.equal(await reducedPage.evaluate(() => window.__rackMeshSpatial3D.debug().reducedMotion), true, '움직임 감소 설정은 WebGL traffic motion도 멈춰야 합니다');
+    await reducedPage.screenshot({ path: '.impeccable/review/mobile.png', fullPage: true });
     await reducedPage.close();
   }
   assert.deepEqual(failures, []);

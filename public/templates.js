@@ -696,8 +696,22 @@ function rackPower() {
     // 전력 기준은 랙이 정한다. 장비가 다른 기준을 선언하면 합계를 내지 않고 미확인으로 남긴다 —
     // nameplate 과 typical 은 더할 수 없는 값이다.
     racks: [
-      { id: 'rack-01', name: 'RACK 01', deviceIds: ['core', 'fw', 'gpu-01', 'gpu-02'], powerBasis: 'typical', powerBudgetWatts: 5000, capacityU: 42 },
-      { id: 'rack-02', name: 'RACK 02', deviceIds: ['gpu-03', 'nas'], powerBasis: 'typical', powerBudgetWatts: 5000, capacityU: 42 },
+      { id: 'rack-01', name: 'RACK 01', deviceIds: ['core', 'fw', 'gpu-01', 'gpu-02'], powerBasis: 'typical', powerBudgetWatts: 5000, capacityU: 42, placements: [
+        { id: 'rack-01-pdu-a', name: 'PDU A', kind: 'pdu', startU: 1, uHeight: 1, powerWatts: 0 },
+        { id: 'rack-01-gpu-01', deviceId: 'gpu-01', startU: 3, uHeight: 4 },
+        { id: 'rack-01-gpu-02', deviceId: 'gpu-02', startU: 8, uHeight: 4 },
+        { id: 'rack-01-cable-manager', name: 'CABLE MANAGER', kind: 'cable-management', startU: 36, uHeight: 1, powerWatts: 0 },
+        { id: 'rack-01-fw', deviceId: 'fw', startU: 37, uHeight: 2 },
+        { id: 'rack-01-patch-panel', name: 'PATCH PANEL 01', kind: 'patch-panel', startU: 39, uHeight: 1, powerWatts: 0 },
+        { id: 'rack-01-core', deviceId: 'core', startU: 41, uHeight: 1 },
+      ] },
+      { id: 'rack-02', name: 'RACK 02', deviceIds: ['gpu-03', 'nas'], powerBasis: 'typical', powerBudgetWatts: 5000, capacityU: 42, placements: [
+        { id: 'rack-02-pdu-a', name: 'PDU A', kind: 'pdu', startU: 1, uHeight: 1, powerWatts: 0 },
+        { id: 'rack-02-gpu-03', deviceId: 'gpu-03', startU: 3, uHeight: 4 },
+        { id: 'rack-02-nas', deviceId: 'nas', startU: 8, uHeight: 2 },
+        { id: 'rack-02-cable-manager', name: 'CABLE MANAGER', kind: 'cable-management', startU: 39, uHeight: 1, powerWatts: 0 },
+        { id: 'rack-02-patch-panel', name: 'PATCH PANEL 02', kind: 'patch-panel', startU: 41, uHeight: 1, powerWatts: 0 },
+      ] },
     ],
   });
 }
@@ -1099,7 +1113,7 @@ export const templates = [
     grade: { verdict: 'single-point', severs: 7 },
     summary: '대역폭이 아니라 랙의 전력 예산이 먼저 차는 구성입니다.',
     teaches: '랙에 자리는 31U가 남았는데 전력 예산이 먼저 넘었습니다. 5,000W 예산에 typical 합계가 5,550W입니다. 네트워크 축은 전부 통과인데 전체 판정이 fail인 이유가 이것이고, 배율을 아무리 낮춰도 이 값은 바뀌지 않습니다 — 전력은 트래픽의 함수가 아닙니다. 그리고 nameplate과 typical은 더할 수 없습니다. 장비 하나가 랙과 다른 전력 기준을 선언하면 이 랙의 전력은 합계가 아니라 미확인이 됩니다.',
-    tags: ['랙', '전력', 'U', '코로케이션', 'GPU'],
+    tags: ['랙', '전력', 'U', '코로케이션', 'GPU', '2D 랙', '3D 랙', 'U 배치'],
     experiment: {
       prompt: '배율을 올리면 이 설계의 판정이 달라질까요?',
       action: { type: 'scale', value: 1.1, label: '배율 1.10배' },

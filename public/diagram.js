@@ -356,13 +356,26 @@ function nodeMarkup(view, device) {
  * result 없이 부르면 도면만 나온다 — 숫자를 지어내지 않고 그 사실을 적는다.
  */
 export function exportDiagramSvg(topology, result = null, options = {}) {
+  const detailLevel = ['off', 'brief', 'full'].includes(options.detailLevel) ? options.detailLevel : 'full';
   const exportInput = options.anonymize ? anonymizeExport(topology, result) : { topology: draft(topology), result };
   const next = exportInput.topology;
   result = exportInput.result;
   const views = new Map();
   if (result) {
     const verdicts = new Map((options.sweep?.resources || []).map((item) => [item.id, item]));
-    for (const device of result.devices) views.set(device.id, nodeView(device, { verdict: verdicts.get(device.id), synthetic: Boolean(topology.synthetic) }));
+    for (const device of result.devices) {
+      const full = nodeView(device, { verdict: verdicts.get(device.id), synthetic: Boolean(topology.synthetic) });
+      const withoutCount = full.meta.split(' · ').filter((part) => !/^\+\d+$/.test(part) && part !== 'SPOF');
+      if (detailLevel === 'off') { views.set(device.id, { ...full, status: device.active ? 'healthy' : full.status, axes: [], hidden: 0, spof: false, meta: withoutCount.join(' · ') }); continue; }
+      if (detailLevel === 'brief' && device.active) {
+        const kept = full.axes.filter((axis) => axis.binding || axis.status === 'unknown');
+        const axes = kept.length ? kept : full.axes.slice(0, 1);
+        const hidden = full.hidden + full.axes.length - axes.length;
+        views.set(device.id, { ...full, axes, hidden, meta: [...withoutCount, full.spof ? 'SPOF' : '', hidden ? `+${hidden}` : ''].filter(Boolean).join(' · ') });
+        continue;
+      }
+      views.set(device.id, full);
+    }
   }
   const linkStatus = new Map((result?.links || []).map((link) => [link.id, link]));
   const severed = new Set((result?.demands || []).flatMap(({ severedPaths }) => (severedPaths || []).flatMap(({ links }) => links)));
@@ -392,7 +405,7 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
   const groups = result ? groupBoxes(result.devices.filter(({ position }) => position)) : [];
   const extent = [...nodes.flatMap((n) => [{ x: coordinate(n.x), y: coordinate(n.y) }, { x: coordinate(n.x + n.width), y: coordinate(n.y + n.height) }]),
     ...groups.flatMap((g) => [{ x: g.x, y: g.y }, { x: g.x + g.width, y: g.y + g.height }]), ...routes.flatMap((r) => r.points)];
-  const headroom = result ? 88 : 24;
+  const headroom = result && detailLevel !== 'off' ? 88 : 24;
   const left = Math.min(...extent.map((p) => p.x)) - 24;
   const top = Math.min(...extent.map((p) => p.y)) - headroom;
   const width = Math.max(...extent.map((p) => p.x)) - left + 24;
@@ -407,7 +420,7 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
 
   // 라벨 자리는 화면과 같은 함수가 정한다. 한쪽에만 보이는 숫자가 있으면 위키에 붙인 그림이
   // 화면과 다른 말을 한다. 굽은 링크는 가운데 마디 위에서 자리를 찾는다.
-  const edgeLabel = (link, edge) => (!link ? (edge.label || '') : link.severed ? 'DOWN' : formatNodePercent(link.axes?.forwarding_bps?.utilization ?? null));
+  const edgeLabel = (link, edge) => (!link ? (edge.label || '') : link.severed ? 'DOWN' : detailLevel === 'off' ? '' : formatNodePercent(link.axes?.forwarding_bps?.utilization ?? null));
   const midSegment = (points) => { const half = Math.max(1, Math.floor(points.length / 2)); return [points[half - 1], points[half]]; };
   const labelSpots = placeLinkLabels(routes.filter(({ edge }) => edgeLabel(linkStatus.get(edge.id), edge)).map(({ edge, points }) => {
     const link = linkStatus.get(edge.id);
@@ -425,7 +438,7 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
     // 화면과 같은 판정을 쓴다(public/app.js renderTopology). 끊긴 링크는 DOWN 이고, 살아 있지만
     // 이 트래픽이 지날 수 없는 링크는 따로 표시한다. 죽은 링크에 0% 를 적으면 한가한 것으로 읽힌다.
     const onSeveredPath = link && !link.severed && severed.has(edge.id);
-    const status = !link ? null : link.severed ? 'disabled' : onSeveredPath ? 'severed-path' : link.primaryStatus;
+    const status = !link ? null : link.severed ? 'disabled' : onSeveredPath ? 'severed-path' : detailLevel === 'off' ? 'healthy' : link.primaryStatus;
     const stroke = status ? (LINK_INK[status] || INK.cyan) : INK.line;
     const dash = LINK_DASH[status] ? ` stroke-dasharray="${LINK_DASH[status]}"` : '';
     const spot = labelSpots.get(edge.id);
@@ -468,7 +481,7 @@ export function exportDiagramSvg(topology, result = null, options = {}) {
       + `<text x="${fmt(n.x + n.width / 2)}" y="${fmt(n.y + n.height / 2)}" text-anchor="middle" fill="${n.textColor || INK.text}" font-size="${n.fontSize || 14}" font-weight="${n.fontWeight || 'normal'}" font-family="sans-serif">${String(n.text || '').split('\n').map((line, i) => `<tspan x="${fmt(n.x + n.width / 2)}" dy="${i ? 18 : 0}">${xml(line)}</tspan>`).join('')}</text>`;
   }).join('');
 
-  const stamp = result ? stampMarkup(topology, result, options, left, top, width, height) : text(left + 12, top + 16, '계산 결과 없음 · 도면만 내보냈습니다', { size: 10, fill: INK.muted });
+  const stamp = detailLevel === 'off' ? '' : result ? stampMarkup(topology, result, options, left, top, width, height) : text(left + 12, top + 16, '계산 결과 없음 · 도면만 내보냈습니다', { size: 10, fill: INK.muted });
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${fmt(left)} ${fmt(top)} ${fmt(width)} ${fmt(height)}" width="${fmt(width)}" height="${fmt(height)}">`
     + `<rect x="${fmt(left)}" y="${fmt(top)}" width="${fmt(width)}" height="${fmt(height)}" fill="${INK.canvas}"/>`

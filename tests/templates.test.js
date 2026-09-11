@@ -95,6 +95,22 @@ test('the default dual fabric exposes rack and rack failure domains', () => {
   assert.deepEqual(domains.redundancyInvalid.map(({ id }) => id), ['pdu-3']);
 });
 
+test('the rack template opens with a valid physical placement', () => {
+  const topology = buildTemplate('rack-power');
+  assert.equal(topology.racks.length, 2);
+  assert.ok(topology.racks.every((rack) => rack.placements.length > rack.deviceIds.length));
+  assert.ok(topology.racks.flatMap(({ placements }) => placements).some(({ deviceId }) => !deviceId));
+  for (const rack of topology.racks) {
+    const occupied = new Set();
+    for (const placement of rack.placements) for (let unit = placement.startU; unit < placement.startU + placement.uHeight; unit += 1) {
+      assert.ok(unit <= rack.capacityU, `${rack.id}의 ${placement.id}가 랙 범위를 벗어났습니다.`);
+      assert.equal(occupied.has(unit), false, `${rack.id}의 ${unit}U가 겹칩니다.`);
+      occupied.add(unit);
+    }
+  }
+  assert.doesNotThrow(() => serializeProject(topology, { scale: 1 }));
+});
+
 test('the initial demo itself exposes service, rack domains, and rack budgets', () => {
   const topology = cloneTopology();
   assert.deepEqual(topology.services?.map(({ name, requiredDeliveryRatio }) => [name, requiredDeliveryRatio]), [['Public API', 0.99]]);
