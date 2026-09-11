@@ -1,0 +1,38 @@
+{
+  "upstream": "https://github.com/jgraph/mxgraph",
+  "extractedFrom": "/Applications/draw.io.app/Contents/Resources/app.asar",
+  "drawioVersion": "25.0.1",
+  "fetchedAt": "2026-09-12",
+  "license": "Apache-2.0",
+  "sources": {
+    "src/view/mxEdgeStyle.js": {
+      "bytes": 43104,
+      "sha256": "797be1a91c9bc75a4a3871d6a10830d8a4d835a7a84fababa3e1814095d06495"
+    },
+    "src/view/mxPerimeter.js": {
+      "bytes": 20536,
+      "sha256": "1298716ca3e30f891aa73cccdff00b14fe33483dbfc26ae82a520f785d45bab1"
+    },
+    "src/util/mxUtils.js": {
+      "bytes": 124691,
+      "sha256": "5bb60d5ffdba29c82aeb6f2d8d57d6d9b1a295056b9a7ea60b2df93683e64840"
+    },
+    "src/util/mxConstants.js": {
+      "bytes": 69328,
+      "sha256": "eef3835b32f4d15d8e6b31474a9057c03cfc58b4117fe5d0d0523277d95f1ac0"
+    }
+  },
+  "vendored": {
+    "public/vendor/mx-edge-style.js": {
+      "members": [
+        "mxEdgeStyle.SegmentConnector",
+        "mxEdgeStyle.OrthConnector",
+        "mxEdgeStyle.getJettySize",
+        "mxEdgeStyle.scalePointArray",
+        "mxEdgeStyle.scaleCellState",
+        "mxEdgeStyle.getRoutePattern",
+        "mxPerimeter.RectanglePerimeter"
+      ]
+    }
+  }
+}
