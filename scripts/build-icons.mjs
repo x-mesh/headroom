@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const subsetFile = resolve(root, 'vendor/drawio-stencils/networks.subset.xml');
+const referenceSubsetFile = resolve(root, 'vendor/drawio-stencils/references.subset.xml');
 const provenanceFile = resolve(root, 'vendor/drawio-stencils/PROVENANCE.json');
 const outputFile = resolve(root, 'public/icons.js');
 
@@ -25,8 +26,7 @@ const STENCILS = {
   server: 'Server', web: 'Web Server', vm: 'Virtual Server', mainframe: 'Mainframe',
   mail: 'Mail Server', db: 'Storage',
   storage: 'External Storage', nas: 'NAS Filer', backup: 'Tape Storage',
-  client: 'Users',
-  rack: 'Rack', cloud: 'Cloud',
+  client: 'Users', rack: 'Rack', cloud: 'Cloud', mobile: 'Mobile', pc: 'PC', 'server-storage': 'Server Storage',
 };
 // 스트로크는 경로 위에 중앙 정렬되므로 선언 박스를 넘는다. 8개 도형의 실측 필요값은 1.0 이다.
 const PAD = 2;
@@ -116,21 +116,20 @@ export function buildPathData(children) {
 }
 
 const samePaint = (a, b) => a.kind === b.kind && a.value === b.value;
-const sameState = (a, b) => samePaint(a.fill, b.fill) && samePaint(a.stroke, b.stroke) && a.strokeWidth === b.strokeWidth && a.dash === b.dash;
+const sameState = (a, b) => samePaint(a.fill, b.fill) && samePaint(a.stroke, b.stroke) && a.strokeWidth === b.strokeWidth && a.dash === b.dash && a.opacity === b.opacity;
 
-export function interpretShape(shape) {
+export function interpretShape(shape, { literalColors = false } = {}) {
   const name = shape.attrs.name || fail('이름 없는 <shape>입니다.');
-  if (shape.attrs.aspect !== 'variable') fail(`${name}: aspect="${shape.attrs.aspect}"는 지원하지 않습니다.`);
+  if (!['variable', 'fixed'].includes(shape.attrs.aspect)) fail(`${name}: aspect="${shape.attrs.aspect}"는 지원하지 않습니다.`);
   if (![String(BASE_STROKE_WIDTH), 'inherit'].includes(shape.attrs.strokewidth)) fail(`${name}: strokewidth="${shape.attrs.strokewidth}"는 지원하지 않습니다.`);
   const width = num(shape, 'w');
   const height = num(shape, 'h');
-  if (shape.children.some((child) => child.tag === 'background')) fail(`${name}: <background>는 지원하지 않습니다.`);
   const foreground = shape.children.find((child) => child.tag === 'foreground') || fail(`${name}: <foreground>가 없습니다.`);
   for (const child of shape.children) {
-    if (!['connections', 'foreground'].includes(child.tag)) fail(`${name}: <shape> 아래에 알 수 없는 요소 <${child.tag}>`);
+    if (!['connections', 'background', 'foreground'].includes(child.tag)) fail(`${name}: <shape> 아래에 알 수 없는 요소 <${child.tag}>`);
   }
 
-  const state = { fill: INHERIT, stroke: INHERIT, strokeWidth: BASE_STROKE_WIDTH, dash: null };
+  const state = { fill: INHERIT, stroke: INHERIT, strokeWidth: BASE_STROKE_WIDTH, dash: null, opacity: 1 };
   // save/restore 는 도색 상태만 쌓았다 되돌린다. 경로는 대기 노드가 따로 들고 있다.
   const stateStack = [];
   const elements = [];
@@ -147,13 +146,14 @@ export function interpretShape(shape) {
     // 속성 없는 rect 는 크기 0 이다. mxGraph 가 save/restore 뒤 대기 노드를 비울 때 쓰는
     // 관용구이며 화면에 아무것도 남기지 않으므로 생성물에서 뺀다.
     if (pending.tag === 'rect' && (!pending.attrs.width || !pending.attrs.height)) skipped += 1;
-    else elements.push({ ...pending, fill, stroke, strokeWidth: state.strokeWidth, dash: state.dash });
+    else elements.push({ ...pending, fill, stroke, strokeWidth: state.strokeWidth, dash: state.dash, opacity: state.opacity });
     pending = null;
     paints += 1;
   };
 
-  for (const node of foreground.children) {
+  for (const layer of shape.children.filter((child) => child.tag === 'background' || child.tag === 'foreground')) for (const node of layer.children) {
     switch (node.tag) {
+      case 'linejoin': break;
       case 'rect': setPending('rect', { x: num(node, 'x', 0), y: num(node, 'y', 0), width: num(node, 'w', 0), height: num(node, 'h', 0) }); break;
       case 'roundrect': {
         const w = num(node, 'w');
@@ -180,8 +180,15 @@ export function interpretShape(shape) {
         const color = (node.attrs.color || '').toLowerCase();
         const key = node.tag === 'fillcolor' ? 'fill' : 'stroke';
         if (color === 'none') { state[key] = NONE; break; }
-        const token = COLOR_TOKENS[color] || fail(`${name}: 허용되지 않은 색 ${node.attrs.color}`);
-        state[key] = { kind: 'literal', value: color, token };
+        const token = COLOR_TOKENS[color];
+        if (!token && (!literalColors || !/^#[0-9a-f]{6}$/i.test(color))) fail(`${name}: 허용되지 않은 색 ${node.attrs.color}`);
+        state[key] = { kind: 'literal', value: color, ...(token ? { token } : {}) };
+        break;
+      }
+      case 'alpha': {
+        const value = num(node, 'alpha');
+        if (value < 0 || value > 1) fail(`${name}: alpha 범위가 아닙니다.`);
+        state.opacity = value;
         break;
       }
       case 'dashpattern': state.dash = String(node.attrs.pattern || '').trim() || null; break;
@@ -189,7 +196,7 @@ export function interpretShape(shape) {
       case 'strokewidth': {
         if (node.attrs.fixed === '1') fail(`${name}: strokewidth fixed="1"은 지원하지 않습니다.`);
         const value = num(node, 'width');
-        if (![1, 2].includes(value)) fail(`${name}: strokewidth="${value}"는 지원하지 않습니다.`);
+        if (value <= 0 || value > 20) fail(`${name}: strokewidth="${value}"는 지원하지 않습니다.`);
         state.strokeWidth = value;
         break;
       }
@@ -242,22 +249,26 @@ function stateMarkup(state, base) {
   for (const key of ['fill', 'stroke']) {
     if (samePaint(state[key], base[key])) continue;
     if (state[key].kind === 'none') attrs.push(`${key}="none"`);
-    else if (state[key].kind === 'literal') styles.push(`${key}:var(${state[key].token},${state[key].value})`);
+    else if (state[key].kind === 'literal') {
+      if (state[key].token) styles.push(`${key}:var(${state[key].token},${state[key].value})`);
+      else attrs.push(`${key}="${state[key].value}"`);
+    }
     else fail(`상속 상태를 되돌릴 수 없습니다: ${key}`);
   }
   if (state.strokeWidth !== base.strokeWidth) attrs.push(`stroke-width="${fmt(state.strokeWidth)}"`);
+  if (state.opacity !== base.opacity) attrs.push(`opacity="${fmt(state.opacity)}"`);
   if (state.dash !== base.dash) attrs.push(`stroke-dasharray="${state.dash ?? 'none'}"`);
   if (styles.length) attrs.push(`style="${styles.join(';')}"`);
   return attrs;
 }
 
 export function serializeBody(elements) {
-  const base = { fill: INHERIT, stroke: INHERIT, strokeWidth: BASE_STROKE_WIDTH, dash: null };
+  const base = { fill: INHERIT, stroke: INHERIT, strokeWidth: BASE_STROKE_WIDTH, dash: null, opacity: 1 };
   const runs = [];
   for (const element of elements) {
     const last = runs[runs.length - 1];
     if (last && sameState(last.state, element)) last.items.push(element);
-    else runs.push({ state: { fill: element.fill, stroke: element.stroke, strokeWidth: element.strokeWidth, dash: element.dash }, items: [element] });
+    else runs.push({ state: { fill: element.fill, stroke: element.stroke, strokeWidth: element.strokeWidth, dash: element.dash, opacity: element.opacity }, items: [element] });
   }
   const body = runs.map((run) => {
     const attrs = stateMarkup(run.state, base);
@@ -269,16 +280,20 @@ export function serializeBody(elements) {
   return `<g style="${rootStyle}">${body}</g>`;
 }
 
-function renderModule(icons, provenance) {
+function renderModule(icons, drawioStencils, provenance) {
   const entries = icons.map(({ kind, id, stencil, width, height, viewBox, body }) =>
-    `  ${kind}: Object.freeze({ id: '${id}', stencil: '${stencil}', width: ${width}, height: ${height}, viewBox: '${viewBox}', body: ${JSON.stringify(body)} }),`).join('\n');
+    `  ${JSON.stringify(kind)}: Object.freeze({ id: '${id}', stencil: '${stencil}', width: ${width}, height: ${height}, viewBox: '${viewBox}', body: ${JSON.stringify(body)} }),`).join('\n');
+  const stencilEntries = drawioStencils.map(({ drawioId, path, stencil, width, height, viewBox, body }) =>
+    `  ${JSON.stringify(drawioId)}: Object.freeze({ path: '${path}', stencil: '${stencil}', width: ${width}, height: ${height}, viewBox: '${viewBox}', body: ${JSON.stringify(body)} }),`).join('\n');
+  const portEntries = (provenance.subsets?.exactPorts || []).map(({ drawioId, path, renderer }) =>
+    `  ${JSON.stringify(drawioId)}: Object.freeze({ path: '${path}', renderer: '${renderer}' }),`).join('\n');
   return `// GENERATED by scripts/build-icons.mjs — do not edit.
-// Source: drawio ${provenance.path} @ ${provenance.commit} (Apache-2.0)
+// Source: drawio stencil subsets @ ${provenance.commit} (Apache-2.0)
 // See vendor/drawio-stencils/NOTICE.md for the stencil license restriction.
 
 export const ICON_SOURCE = Object.freeze({
   upstream: '${provenance.upstream}',
-  path: '${provenance.path}',
+  path: '${provenance.subsets.networks.path}',
   commit: '${provenance.commit}',
   license: 'Apache-2.0',
   notice: 'vendor/drawio-stencils/NOTICE.md',
@@ -293,6 +308,16 @@ ${entries}
 
 export const ICON_KINDS = Object.freeze(Object.keys(ICONS));
 
+/** draw.io token → byte-exact upstream stencil SVG. 제품 장비 아이콘 목록에는 포함하지 않는다. */
+export const DRAWIO_STENCILS = Object.freeze({
+${stencilEntries}
+});
+
+/** upstream JS source를 좁은 SVG renderer로 포트한 exact token registry. */
+export const DRAWIO_EXACT_PORTS = Object.freeze({
+${portEntries}
+});
+
 /** 알 수 없는 kind 폴백. 외부·인터넷 경계는 cloud 를 쓴다. */
 export const ICON_FALLBACK = 'rack';
 export const ICON_EXTERNAL = 'cloud';
@@ -304,7 +329,7 @@ export const ICON_SPRITE = '<svg xmlns="http://www.w3.org/2000/svg" width="0" he
 }
 
 async function generate() {
-  const [xml, provenanceRaw] = await Promise.all([readFile(subsetFile, 'utf8'), readFile(provenanceFile, 'utf8')]);
+  const [xml, referencesXml, provenanceRaw] = await Promise.all([readFile(subsetFile, 'utf8'), readFile(referenceSubsetFile, 'utf8'), readFile(provenanceFile, 'utf8')]);
   const provenance = JSON.parse(provenanceRaw);
   const shapes = parseXml(xml).children[0].children.filter((child) => child.tag === 'shape');
   const byName = new Map();
@@ -321,15 +346,24 @@ async function generate() {
       body: serializeBody(elements),
     };
   });
-  return { source: renderModule(icons, provenance), icons };
+  const referenceShapes = parseXml(referencesXml).children[0].children.filter((child) => child.tag === 'shape');
+  const references = provenance.subsets?.references?.stencils || fail('reference stencil provenance가 없습니다.');
+  if (referenceShapes.length !== references.length) fail('reference stencil 개수가 provenance와 다릅니다.');
+  const drawioStencils = referenceShapes.map((shape, index) => {
+    const reference = references[index];
+    if (shape.attrs.name !== reference.name) fail(`reference stencil 순서가 다릅니다: ${reference.drawioId}`);
+    const { width, height, elements } = interpretShape(shape, { literalColors: true });
+    return { drawioId: reference.drawioId, path: reference.path, stencil: reference.name, width, height, viewBox: `${-PAD} ${-PAD} ${fmt(width + PAD * 2)} ${fmt(height + PAD * 2)}`, body: serializeBody(elements) };
+  });
+  return { source: renderModule(icons, drawioStencils, provenance), icons, drawioStencils };
 }
 
 async function main() {
-  const { source, icons } = await generate();
+  const { source, icons, drawioStencils } = await generate();
   if (process.argv.includes('--check')) {
     const current = await readFile(outputFile, 'utf8').catch(() => null);
     if (current !== source) fail('public/icons.js가 최신이 아닙니다. `make icons`를 실행하세요.');
-    console.log(`icons ok · ${icons.length} symbols`);
+    console.log(`icons ok · ${icons.length} symbols · ${drawioStencils.length} draw.io stencils`);
     return;
   }
   await writeFile(outputFile, source);

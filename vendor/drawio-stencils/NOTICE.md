@@ -8,9 +8,16 @@ Rack Mesh device symbols come from the draw.io (diagrams.net) stencil library.
 - File: `src/main/webapp/stencils/networks.xml`
 - Commit and checksums: see `PROVENANCE.json`
 
-`networks.subset.xml` holds eight shapes copied byte for byte from that file:
-Switch, Router, Firewall, Load Balancer, Server, Storage, Rack, and Cloud.
+`networks.subset.xml` holds network shapes copied byte for byte from that file.
 `scripts/build-icons.mjs` converts them to SVG in `src/icons.js`.
+
+`references.subset.xml` holds observed XML stencils and only the resource-icon
+dependencies that those references require. `PROVENANCE.json` lists the upstream
+path and checksum for every source and subset.
+
+`PROVENANCE.json` lists the observed custom-shape sources and their exact port
+scope. If an AWS resource icon has no exact dependency, its upstream wrapper
+draws only its background. The importer does not alias it to a similar glyph.
 
 ## License
 
@@ -35,7 +42,6 @@ If the distribution of Rack Mesh changes, review this clause again.
 
 ## Trademarks
 
-The Apache License 2.0 does not grant trademark rights. The `networks.xml`
-shapes are vendor neutral. This project does not use the vendor stencil
-directories (`cisco/`, `aws/`, `azure2/`, `gcp/`, `ibm/`), because those carry
-separate trademark conditions.
+The Apache License 2.0 does not grant trademark rights. The generated registry
+uses only the paths recorded in `PROVENANCE.json`. It does not include a full
+vendor stencil pack.
