@@ -745,7 +745,7 @@ function renderPowerDomains() {
       const inRack = (domain.deviceIds || []).filter((id) => placed.has(id)).length;
       return `<button type="button" class="rack-domain-chip" data-power-domain="${escapeAttribute(domain.id)}" aria-pressed="${domain.down}" style="--domain-color:${domain.color}"><i></i><strong>${escapeText(domain.name)}</strong><span>랙 안 ${inRack}대 / 전체 ${(domain.deviceIds || []).length}대</span><em>${domain.down ? '복구' : '끄기'}</em></button>`;
     }).join('')}`
-    : '<p class="panel-note">전원 장애 도메인이 없습니다. 검증 패널의 장애 도메인에서 추가하세요.</p>';
+    : '<p class="panel-note">전원 장애 도메인이 없습니다. 같은 전원에 물린 장비를 묶으면 여기에 표시됩니다.</p><button type="button" class="rack-domain-add" data-rack-action="new-power-domain">장애 도메인 만들기</button>';
 }
 
 function renderRackWorkspace() {
@@ -4081,6 +4081,14 @@ element('rack-workspace').addEventListener('click', (event) => {
   const action = event.target.closest('[data-rack-action]')?.dataset.rackAction;
   if (!action) return;
   const rack = currentRack();
+  if (action === 'new-power-domain') {
+    // 장애 도메인 편집기는 토폴로지 화면에만 있다. 열어 주기 전에 그 화면으로 옮긴다.
+    state.verificationTab = 'domain';
+    setWorkspace('topology');
+    openVerificationPanel();
+    showToast('장애 도메인 탭입니다. 종류를 전원으로 두고 함께 멈출 장비를 고르세요.');
+    return;
+  }
   if (action === 'new-rack') {
     element('rack-inspector-content').innerHTML = `<form data-rack-form="rack-new"><label>랙 이름<input name="name" maxlength="80" required placeholder="RACK 01"></label><label>공간 (U)<input name="capacityU" type="number" min="1" max="100" required value="42"></label><label>전력 예산 (W)<input name="power" type="number" min="1" required value="10000"></label><label>전력 기준<select name="basis"><option value="nameplate">명판값</option><option value="typical">일반 부하</option><option value="measured">실측</option></select></label><button type="submit">랙 생성</button><p class="rack-form-error"></p></form>`;
     element('rack-inspector-content').querySelector('input[name="name"]').focus(); return;
