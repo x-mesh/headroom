@@ -714,29 +714,69 @@ export function evaluateServices(topology, demands, disabledDevices = new Set())
   });
 }
 
+const RACK_POWER_FIELDS = Object.freeze({ nameplate: 'maximumDrawWatts', typical: 'typicalDrawWatts', measured: 'measuredDrawWatts' });
+
+function rackPhysical(device) { return device?.spec ? device.spec.physical ?? null : device?.metadata ?? null; }
+
+// 놓기 전 미리보기와 최종 판정이 같은 규칙을 써야 한다. extra 에 가정 배치를 넣으면 그 장비를
+// 더한 결과를 돌려준다.
+export function rackUsage(topology, rack, extra = null) {
+  const field = RACK_POWER_FIELDS[rack.powerBasis];
+  const devices = (rack.deviceIds || []).map((id) => topology.devices.find((device) => device.id === id));
+  const standalone = (rack.placements || []).filter(({ deviceId }) => !deviceId);
+  const unknownPower = [];
+  const deviceWatts = devices.map((device) => {
+    const physical = rackPhysical(device);
+    const value = field ? physical?.[field] : undefined;
+    // 장비가 자기 기준을 밝혔는데 랙 기준과 다르면 더할 수 없다. 명판값과 실측을 섞으면 합계가 거짓이 된다.
+    const mismatched = Boolean(physical?.powerBasis) && physical.powerBasis !== rack.powerBasis;
+    if (!Number.isFinite(value) || value < 0 || mismatched) { unknownPower.push(device?.name || device?.id || '알 수 없는 장비'); return null; }
+    return value;
+  });
+  const standaloneWatts = standalone.map((placement) => {
+    if (!Number.isFinite(placement.powerWatts) || placement.powerWatts < 0) { unknownPower.push(placement.name || placement.id); return null; }
+    return placement.powerWatts;
+  });
+  const added = extra ? rackExtraWatts(topology, rack, extra) : { watts: 0, known: true };
+  if (extra && !added.known) unknownPower.push(extra.name || '추가할 장비');
+  const powerKnown = Boolean(field) && !unknownPower.length;
+  const powerWatts = powerKnown ? [...deviceWatts, ...standaloneWatts].reduce((sum, value) => sum + value, 0) + added.watts : null;
+  const placedUnits = rack.placements?.reduce((sum, placement) => sum + placement.uHeight, 0);
+  const declaredUnits = devices.map((device) => rackPhysical(device)?.uHeight);
+  const spaceKnown = Number.isFinite(placedUnits) || (declaredUnits.length > 0 && declaredUnits.every((value) => Number.isFinite(value) && value >= 0));
+  const usedU = Number.isFinite(placedUnits) ? placedUnits : spaceKnown ? declaredUnits.reduce((sum, value) => sum + value, 0) : null;
+  const powerBudgetWatts = Number.isFinite(rack.powerBudgetWatts) && rack.powerBudgetWatts > 0 ? rack.powerBudgetWatts : null;
+  const capacityU = Number.isFinite(rack.capacityU) && rack.capacityU > 0 ? rack.capacityU : null;
+  const totalU = usedU == null ? null : usedU + (extra ? Number(extra.uHeight) || 0 : 0);
+  const overloaded = (powerWatts != null && powerBudgetWatts != null && powerWatts > powerBudgetWatts) || (totalU != null && capacityU != null && totalU > capacityU);
+  return {
+    powerWatts, powerBudgetWatts, powerKnown, unknownPower,
+    usedU: totalU, capacityU, spaceKnown,
+    powerRatio: powerWatts != null && powerBudgetWatts != null ? powerWatts / powerBudgetWatts : null,
+    spaceRatio: totalU != null && capacityU != null ? totalU / capacityU : null,
+    powerHeadroomWatts: powerWatts != null && powerBudgetWatts != null ? powerBudgetWatts - powerWatts : null,
+    remainingU: totalU != null && capacityU != null ? capacityU - totalU : null,
+    overloaded,
+    status: overloaded ? 'fail' : !powerKnown || totalU == null || powerBudgetWatts == null || capacityU == null ? 'unknown' : 'pass',
+  };
+}
+
+function rackExtraWatts(topology, rack, extra) {
+  if (extra.deviceId) {
+    const device = topology.devices.find(({ id }) => id === extra.deviceId);
+    const physical = rackPhysical(device);
+    const field = RACK_POWER_FIELDS[rack.powerBasis];
+    const value = field ? physical?.[field] : undefined;
+    const mismatched = Boolean(physical?.powerBasis) && physical.powerBasis !== rack.powerBasis;
+    return Number.isFinite(value) && value >= 0 && !mismatched ? { watts: value, known: true } : { watts: 0, known: false };
+  }
+  return Number.isFinite(extra.powerWatts) && extra.powerWatts >= 0 ? { watts: extra.powerWatts, known: true } : { watts: 0, known: false };
+}
+
 export function evaluateRacks(topology) {
-  const powerFields = { nameplate: 'maximumDrawWatts', typical: 'typicalDrawWatts', measured: 'measuredDrawWatts' };
   return (topology.racks || []).map((rack) => {
-    const devices = (rack.deviceIds || []).map((id) => topology.devices.find((device) => device.id === id));
-    // 카탈로그 후보는 이전 장비의 metadata를 물려받지 않는다. 후보에 물리 사양이 없으면
-    // 랙 결과도 미확인으로 남겨야 한다. 그렇지 않으면 작은 장비의 전력이 큰 후보에 남는다.
-    const physical = (device) => device?.spec ? device.spec.physical ?? null : device?.metadata ?? null;
-    const values = (field) => devices.map((device) => physical(device)?.[field]);
-    const power = values(powerFields[rack.powerBasis]);
-    const units = values('uHeight');
-    const standalone = (rack.placements || []).filter(({ deviceId }) => !deviceId);
-    const known = (numbers) => numbers.length > 0 && numbers.every((value) => Number.isFinite(value) && value >= 0);
-    const powerKnown = Boolean(powerFields[rack.powerBasis]) && (!devices.length || known(power)) && devices.every((device) => !physical(device)?.powerBasis || physical(device).powerBasis === rack.powerBasis);
-    const standalonePowerKnown = standalone.every(({ powerWatts: value }) => Number.isFinite(value) && value >= 0);
-    const powerWatts = powerKnown && standalonePowerKnown ? power.reduce((sum, value) => sum + value, 0) + standalone.reduce((sum, item) => sum + item.powerWatts, 0) : null;
-    const placedUnits = rack.placements?.reduce((sum, placement) => sum + placement.uHeight, 0);
-    const usedU = Number.isFinite(placedUnits) ? placedUnits : known(units) ? units.reduce((sum, value) => sum + value, 0) : null;
-    const powerBudgetKnown = Number.isFinite(rack.powerBudgetWatts) && rack.powerBudgetWatts > 0;
-    const capacityKnown = Number.isFinite(rack.capacityU) && rack.capacityU > 0;
-    const overloaded = (powerKnown && powerBudgetKnown && powerWatts > rack.powerBudgetWatts) || (usedU != null && capacityKnown && usedU > rack.capacityU);
-    return { ...rack, powerWatts, usedU, powerHeadroomWatts: powerKnown && powerBudgetKnown ? rack.powerBudgetWatts - powerWatts : null,
-      remainingU: usedU != null && capacityKnown ? rack.capacityU - usedU : null,
-      status: overloaded ? 'fail' : !powerKnown || usedU == null || !powerBudgetKnown || !capacityKnown ? 'unknown' : 'pass' };
+    const usage = rackUsage(topology, rack);
+    return { ...rack, powerWatts: usage.powerWatts, usedU: usage.usedU, powerHeadroomWatts: usage.powerHeadroomWatts, remainingU: usage.remainingU, status: usage.status };
   });
 }
 
