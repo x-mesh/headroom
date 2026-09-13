@@ -197,6 +197,15 @@ function styleMap(style) {
   return values;
 }
 
+// draw.io styles sometimes write a stencil name without its underscores, so
+// mxgraph.aws4.applicationloadbalancer has to reach application_load_balancer.
+const STENCIL_BY_COMPACT = new Map(Object.keys(DRAWIO_STENCILS).map((key) => [key.replaceAll('_', ''), key]));
+function stencilKey(value) {
+  const token = String(value || '');
+  if (!token) return null;
+  return DRAWIO_STENCILS[token] ? token : STENCIL_BY_COMPACT.get(token.replaceAll('_', '')) || null;
+}
+
 function visualToken(map) {
   const shape = String(map.shape || '').toLowerCase();
   if (shape === 'mxgraph.aws4.resourceicon') return String(map.resIcon || map.prIcon || map.resourceIcon || shape).toLowerCase();
@@ -233,10 +242,16 @@ function safeShape(map) {
   if (normalized === 'mxgraph.aws4.resourceicon') return 'port:mxgraph.aws4.resourceicon';
   if (normalized === 'mxgraph.cisco19.rect' || CISCO_RECT_TOKENS[token]) return 'port:mxgraph.cisco19.rect';
   if (normalized === 'mxgraph.arrows2.stripedarrow') return 'port:mxgraph.arrows2.stripedarrow';
-  if (DRAWIO_STENCILS[token] || DRAWIO_STENCILS[normalized]) return `stencil:${DRAWIO_STENCILS[token] ? token : normalized}`;
+  // prIcon names the glyph, so the wrapper id has to win over the glyph token.
+  if (normalized === 'mxgraph.kubernetes.icon') return 'port:mxgraph.kubernetes.icon';
+  if (normalized === 'mxgraph.ios.iphone') return 'port:mxgraph.ios.iPhone';
+  if (normalized === 'umlactor') return 'port:umlActor';
+  if (normalized === 'note' || normalized === 'note2') return 'port:note';
+  const stencil = stencilKey(token) || stencilKey(normalized);
+  if (stencil) return `stencil:${stencil}`;
   if (DRAWIO_EXACT_PORTS[token] || DRAWIO_EXACT_PORTS[normalized]) return `port:${DRAWIO_EXACT_PORTS[token] ? token : normalized}`;
   if (['rectangle', 'rect', 'ellipse', 'text', 'edgelabel', 'image', 'cube', 'cylinder3', 'hexagon', 'line'].includes(normalized)) return normalized === 'rectangle' ? 'rect' : normalized === 'edgelabel' ? 'text' : normalized === 'line' ? 'rect' : normalized;
-  if (normalized === 'swimlane' || normalized === 'group' || normalized === 'container') return 'container';
+  if (normalized === 'swimlane' || normalized === 'group' || normalized === 'container' || normalized === 'table') return 'container';
   const network = NETWORK_STENCILS[normalized.replace(/^mxgraph\.networks\./, '')];
   if (network) return `network:${network}`;
   if (/^mxgraph\.aws4\.(?:group|container)/.test(normalized) || /^aws4\.(?:group|container)/.test(normalized)) return 'aws-frame';
@@ -267,6 +282,8 @@ function safeOptions(map) {
     ...(assetToken(map.prIcon) ? { prIcon: assetToken(map.prIcon) } : {}),
     ...(assetToken(map.grIcon) ? { grIcon: assetToken(map.grIcon) } : {}),
     ...(dimension(map.grIconSize) != null ? { grIconSize: Math.max(1, Math.min(100000, dimension(map.grIconSize))) } : {}),
+    // `size` is the corner fold on a note. Keep the raw value; each shape clamps it.
+    ...(dimension(map.size) != null ? { size: Math.max(0, Math.min(100000, dimension(map.size))) } : {}),
     ...(map.grStroke === '0' ? { grStroke: false } : map.grStroke === '1' ? { grStroke: true } : {}),
     ...(Number.isFinite(Number(map.dx)) ? { dx: Math.max(0, Math.min(100000, Number(map.dx))) } : {}),
     ...(Number.isFinite(Number(map.dy)) ? { dy: Math.max(0, Math.min(1, Number(map.dy))) } : {}),
@@ -633,6 +650,52 @@ function renderExactPort(element, fill, stroke, strokeWidth, dash) {
     const notch = Math.max(0, Math.min(width, Number.isFinite(options.notch) ? options.notch : 0));
     return `<path d="M ${svgNumber(x + notch)} ${svgNumber(y + dy)} L ${svgNumber(x + width - dx)} ${svgNumber(y + dy)} L ${svgNumber(x + width - dx)} ${svgNumber(y)} L ${svgNumber(x + width)} ${svgNumber(y + height / 2)} L ${svgNumber(x + width - dx)} ${svgNumber(y + height)} L ${svgNumber(x + width - dx)} ${svgNumber(y + height - dy)} L ${svgNumber(x + notch)} ${svgNumber(y + height - dy)} Z M ${svgNumber(x)} ${svgNumber(y + height - dy)} L ${svgNumber(x + notch * .16)} ${svgNumber(y + height - dy)} L ${svgNumber(x + notch * .16)} ${svgNumber(y + dy)} L ${svgNumber(x)} ${svgNumber(y + dy)} Z M ${svgNumber(x + notch * .32)} ${svgNumber(y + height - dy)} L ${svgNumber(x + notch * .8)} ${svgNumber(y + height - dy)} L ${svgNumber(x + notch * .8)} ${svgNumber(y + dy)} L ${svgNumber(x + notch * .32)} ${svgNumber(y + dy)} Z" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"${dash}/>`;
   }
+  if (port === 'mxgraph.kubernetes.icon') {
+    // mxKubernetes.js: the frame in strokeColor, the same frame inset to 94% in
+    // fillColor, then the prIcon glyph at a 20% inset in strokeColor.
+    const glyph = `mxgraph.kubernetes.${String(options.prIcon || '').toLowerCase()}`;
+    return `${stencilFillMarkup('mxgraph.kubernetes.frame', x, y, width, height, stroke)}${stencilFillMarkup('mxgraph.kubernetes.frame', x + width * .03, y + height * .03, width * .94, height * .94, fill)}${stencilFillMarkup(glyph, x + width * .2, y + height * .2, width * .6, height * .6, stroke)}`;
+  }
+  if (port === 'mxgraph.ios.iPhone') {
+    // mxMockupiOS.js mxShapeMockupiPhone: a black body, a bezel highlight, the
+    // screen, then the camera, speaker and home button.
+    const round = width < 100 ? 4 : 25;
+    const px = (value) => svgNumber(x + value); const py = (value) => svgNumber(y + value);
+    const box = (left, top, wide, high, rx, ry, paint) => `<rect x="${px(left)}" y="${py(top)}" width="${svgNumber(wide)}" height="${svgNumber(high)}"${rx ? ` rx="${svgNumber(rx)}" ry="${svgNumber(ry)}"` : ''} ${paint}/>`;
+    const oval = (left, top, wide, high, paint) => `<ellipse cx="${px(left + wide / 2)}" cy="${py(top + high / 2)}" rx="${svgNumber(wide / 2)}" ry="${svgNumber(high / 2)}" ${paint}/>`;
+    const id = `drawio-iphone-${String(element.id || `${x}-${y}`).replace(/[^a-z0-9_-]/gi, '')}`;
+    const ramp = (suffix, from, to) => `<linearGradient id="${id}-${suffix}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${from}"/><stop offset="1" stop-color="${to}"/></linearGradient>`;
+    const screens = { bgWhite: '#ffffff', bgGray: '#dddddd', bgFlat: svgColor(element.paint?.fill, '#1f2923') };
+    const screen = screens[options.bgStyle] || '#1f2923';
+    return `<defs>${ramp('bezel', '#808080', '#000000')}${ramp('home', '#bbbbbb', '#000000')}</defs>`
+      + box(0, 0, width, height, round, round, 'fill="#000000" stroke="#000000"')
+      + `<path d="M ${px(width * .325)} ${py(0)} L ${px(width - round)} ${py(0)} A ${svgNumber(round)} ${svgNumber(round)} 0 0 1 ${px(width)} ${py(round)} L ${px(width)} ${py(height * .5)} L ${px(width * .7)} ${py(height * .5)} Z" fill="url(#${id}-bezel)" stroke="none"/>`
+      + box(width * .0625, height * .15, width * .875, height * .7, 0, 0, `fill="${screen}" stroke="none"`)
+      + box(width * .0625, height * .15, width * .875, height * .7, 0, 0, 'fill="none" stroke="#18211b" stroke-width="1"')
+      + box(0, 0, width, height, round, round, 'fill="none" stroke="#dddddd" stroke-width="1.5" opacity=".8"')
+      + (width > 50 ? box(5, 5, width - 10, height - 10, width < 100 ? 3 : 22.5, width < 100 ? 3 : 22.5, 'fill="none" stroke="#666666"') : '')
+      + oval(width * .4875, height * .04125, width * .025, height * .0125, 'fill="#000099" stroke="#000000" stroke-width="2.5"')
+      + box(width * .375, height * .075, width * .25, height * .01875, width * .02, height * .01, 'fill="#444444" stroke="#333333" stroke-width="1.5"')
+      + oval(width * .4, height * .875, width * .2, height * .1, `fill="url(#${id}-home)" stroke="none"`)
+      + oval(width * .404, height * .876, width * .19, height * .095, 'fill="none" stroke="#333333" stroke-width="1.5" opacity=".5"')
+      + `<path d="M ${px(width * .4025)} ${py(height * .925)} A ${svgNumber(width * .0975)} ${svgNumber(height * .04625)} 0 0 1 ${px(width * .5975)} ${py(height * .925)} A ${svgNumber(width * .2)} ${svgNumber(height * .1)} 0 0 1 ${px(width * .4025)} ${py(height * .925)} Z" fill="#000000" stroke="#333333" stroke-width="1.5" opacity=".85"/>`
+      + box(width * .4575, height * .905, width * .0875, height * .04375, height * .00625, height * .00625, 'fill="none" stroke="#dddddd" stroke-width="1.5" opacity=".7"');
+  }
+  if (port === 'umlActor') {
+    // Shapes.js UmlActorShape.paintBackground: a filled head, then the body,
+    // arms and legs as bare strokes.
+    const px = (value) => svgNumber(x + value); const py = (value) => svgNumber(y + value);
+    const head = `<ellipse cx="${px(width / 2)}" cy="${py(height / 8)}" rx="${svgNumber(width / 4)}" ry="${svgNumber(height / 8)}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"${dash}/>`;
+    const limbs = `M ${px(width / 2)} ${py(height / 4)} L ${px(width / 2)} ${py(height * 2 / 3)} M ${px(width / 2)} ${py(height / 3)} L ${px(0)} ${py(height / 3)} M ${px(width / 2)} ${py(height / 3)} L ${px(width)} ${py(height / 3)} M ${px(width / 2)} ${py(height * 2 / 3)} L ${px(0)} ${py(height)} M ${px(width / 2)} ${py(height * 2 / 3)} L ${px(width)} ${py(height)}`;
+    return `${head}<path d="${limbs}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}"${dash}/>`;
+  }
+  if (port === 'note') {
+    // Shapes.js NoteShape.paintVertexShape: the corner fold is `size`, clamped
+    // so it can never exceed the shape it is cut from.
+    const fold = Math.max(0, Math.min(width, height, Number.isFinite(Number(options.size)) ? Number(options.size) : 30));
+    const px = (value) => svgNumber(x + value); const py = (value) => svgNumber(y + value);
+    return `<path d="M ${px(0)} ${py(0)} L ${px(width - fold)} ${py(0)} L ${px(width)} ${py(fold)} L ${px(width)} ${py(height)} L ${px(0)} ${py(height)} Z" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"${dash}/>`;
+  }
   if (port === 'mxgraph.cisco19.rect') {
     // mxCisco19.js: observed prIcon values use bg1 followed by the named Cisco19 stencil.
     const prIcon = String(options.prIcon || 'l2_switch').toLowerCase();
@@ -930,20 +993,37 @@ function edgePath(route, crossings = new Map(), jumpStyle = null, jumpSize = 6, 
     }
     return path;
   }
-  const last = route.points.at(-1); const second = route.points[1] || last; const beforeLast = route.points.at(-2) || first;
-  const c1 = { x: first.x + (second.x - first.x) * .5, y: first.y };
-  const c2 = { x: last.x - (last.x - beforeLast.x) * .5, y: last.y };
-  return `M ${svgNumber(first.x)} ${svgNumber(first.y)} C ${svgNumber(c1.x)} ${svgNumber(c1.y)} ${svgNumber(c2.x)} ${svgNumber(c2.y)} ${svgNumber(last.x)} ${svgNumber(last.y)}`;
+  // mxPolyline.paintCurvedLine: every point but the last two becomes a control
+  // point, and the curve passes through the midpoint between each pair. A single
+  // cubic between the ends would skip the waypoints entirely.
+  const points = route.points; const count = points.length;
+  let path = `M ${svgNumber(first.x)} ${svgNumber(first.y)}`;
+  for (let index = 1; index < count - 2; index += 1) {
+    const control = points[index]; const next = points[index + 1];
+    path += ` Q ${svgNumber(control.x)} ${svgNumber(control.y)} ${svgNumber((control.x + next.x) / 2)} ${svgNumber((control.y + next.y) / 2)}`;
+  }
+  const control = points[count - 2]; const end = points[count - 1];
+  return `${path} Q ${svgNumber(control.x)} ${svgNumber(control.y)} ${svgNumber(end.x)} ${svgNumber(end.y)}`;
 }
 
-// mxGraph createArrow: the line stops this far short so the arrow tip lands
-// on the perimeter. classic tapers to three quarters; the rest run full length.
+// The span mxMarker draws for each arrow. classic tapers to three quarters;
+// the rest run full length.
 function markerLength(type, size, strokeWidth) {
   if (!type || type === 'none') return 0;
   if (type === 'oval') return size;
-  if (type === 'open') return size + strokeWidth;
+  if (type === 'open' || type === 'openThin') return size + strokeWidth;
   const taper = type === 'classic' || type === 'classicThin' ? 3 / 4 : 1;
   return (size + strokeWidth) * taper + strokeWidth * 1.118;
+}
+
+// How far mxMarker moves the line end back. A filled arrow hides the line, so
+// the line stops where the arrow starts. An open arrow is a bare V, so the line
+// runs on to its tip and only clears the stroke join.
+function markerInset(type, size, strokeWidth) {
+  if (!type || type === 'none') return 0;
+  if (type === 'oval') return size / 2;
+  if (type === 'open' || type === 'openThin') return strokeWidth * 2.236;
+  return markerLength(type, size, strokeWidth);
 }
 
 function insetTerminal(points, index, neighbour, distance) {
@@ -963,8 +1043,8 @@ function insetRoute(points, edge) {
   const options = edge.drawioOptions || {};
   const strokeWidth = Math.max(.5, Math.min(20, Number(edge.paint?.strokeWidth) || 1));
   const moved = [...points];
-  insetTerminal(moved, 0, 1, markerLength(options.startArrow, options.startSize || 6, strokeWidth));
-  insetTerminal(moved, moved.length - 1, moved.length - 2, markerLength(options.endArrow ?? 'classic', options.endSize || 6, strokeWidth));
+  insetTerminal(moved, 0, 1, markerInset(options.startArrow, options.startSize || 6, strokeWidth));
+  insetTerminal(moved, moved.length - 1, moved.length - 2, markerInset(options.endArrow ?? 'classic', options.endSize || 6, strokeWidth));
   return moved;
 }
 
