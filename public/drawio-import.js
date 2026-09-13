@@ -604,16 +604,23 @@ export function classifyDrawioElement(element) {
   const token = String(element.drawioToken || [legacy.shape, legacy.resIcon, legacy.prIcon, legacy.resourceIcon, legacy.icon].filter(Boolean).join(' ') || element.drawioShape || '').toLowerCase();
   const namespace = /(?:mxgraph\.aws|aws\d*\.)/i.test(token) ? 'aws'
     : /(?:mxgraph\.cisco|cisco\d*\.)/i.test(token) ? 'cisco'
-      : /(?:mxgraph\.azure|azure\d*\.)/i.test(token) ? 'azure'
+      // mscae 는 Microsoft 가 Azure 와 System Center 를 함께 담아 낸 스텐실 묶음이다.
+      : /(?:mxgraph\.(?:azure|mscae)|azure\d*\.)/i.test(token) ? 'azure'
         : token.startsWith('network:') || /(?:router|switch|firewall|server|database)/.test(token) ? 'generic-network' : null;
   if (!namespace) return { classification: 'annotation', suggestedDeviceKind: null, confidence: 'none', ruleId: 'unclassified', evidence: 'none' };
   if (namespace === 'aws' && (token === 'aws-frame' || /(?:^|[._ ])(?:group|container)(?:[._ ]|$)/.test(token))) return { classification: 'zone', suggestedDeviceKind: null, confidence: 'high', ruleId: 'aws-container', evidence: token };
+  // 짧은 약어는 다른 이름 안에 묻혀서 오탐한다. 'pc' 는 vpc_nat_gateway 안에, 'ecr' 은
+  // secrets_manager 안에, 's3' 는 aws3 네임스페이스 자체에 들어 있다. 구분자로 끊어서만 맞춘다.
+  const abbr = (...names) => new RegExp(`(?:^|[._ ])(?:${names.join('|')})(?:[._ ]|$)`).test(token);
   const kind = /(?:lb|load[_ ]?balanc|elastic_load_balancing)/.test(token) ? 'lb'
     : /firewall/.test(token) ? 'firewall'
-      : /router/.test(token) ? 'router'
+      // 관리형 게이트웨이는 트래픽이 지나가는 길목이라 router 로 둔다.
+      : /(?:router|internet_gateway|nat_gateway|transit_gateway|vpn_gateway|customer_gateway|vpn_connection|direct_connect)/.test(token) ? 'router'
         : /switch/.test(token) ? 'switch'
-          : /(?:server|pc|mobile|instance|ec2|fargate|ecs_service|ecs_task|lambda_function)/.test(token) ? 'server'
-            : /storage/.test(token) ? 'storage' : null;
+          // 관리형 서비스도 대역을 쓰고 한계가 있어 장비로 센다. 한계 자체는 미확인으로 남는다.
+          : /(?:server|mobile|instance|ec2|fargate|ecs_service|ecs_task|lambda_function|route_?53|cloudfront|api_gateway|athena|codedeploy|elasticache|redis|memcached|aurora|dynamodb|admin_console)/.test(token)
+            || abbr('pc', 'kms', 'ecr', 'rds') ? 'server'
+            : /(?:storage|glacier|elastic_file_system|elastic_block_store)/.test(token) || abbr('s3', 'efs', 'ebs') ? 'storage' : null;
   if (namespace) {
     return { classification: kind ? 'device' : 'device-candidate', suggestedDeviceKind: kind, confidence: kind ? 'high' : 'low', ruleId: namespace, evidence: token };
   }

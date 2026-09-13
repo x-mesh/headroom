@@ -69,6 +69,35 @@ test('classifier uses stencil namespace order and never guesses labels', () => {
   assert.equal(classifyDrawioElement({ type: 'container', rawStyle: '' }).classification, 'zone');
 });
 
+test('managed gateways route, managed buckets store, managed services serve', () => {
+  const kindOf = (token) => classifyDrawioElement({ type: 'shape', rawStyle: `shape=${token}` }).suggestedDeviceKind;
+  for (const token of ['mxgraph.aws4.nat_gateway', 'mxgraph.aws3.internet_gateway', 'mxgraph.aws4.vpn_gateway', 'mxgraph.aws3.vpn_connection', 'mxgraph.aws3.direct_connect']) {
+    assert.equal(kindOf(token), 'router', token);
+  }
+  for (const token of ['mxgraph.aws3.s3', 'mxgraph.aws4.s3']) assert.equal(kindOf(token), 'storage', token);
+  for (const token of ['mxgraph.aws3.route_53', 'mxgraph.aws3.cloudfront', 'mxgraph.aws3.athena', 'mxgraph.aws3.kms', 'mxgraph.aws3.codedeploy', 'mxgraph.aws3.ecr_registry', 'mxgraph.aws3.redis']) {
+    assert.equal(kindOf(token), 'server', token);
+  }
+  // 이름을 붙였다고 한계까지 아는 것은 아니다. 종류만 정해지고 용량은 미확인으로 남아야 한다.
+  assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.aws3.cloudfront' }).classification, 'device');
+});
+
+test('a short abbreviation does not claim the name it is buried in', () => {
+  // vpc_nat_gateway 는 통과 경로지 서버가 아니고, secrets_manager 안의 ecr 은 레지스트리가 아니다.
+  assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.aws3.vpc_nat_gateway' }).suggestedDeviceKind, 'router');
+  assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.aws4.secrets_manager' }).suggestedDeviceKind, null);
+  // aws3 네임스페이스 자체가 s3 로 끝나므로 저장소 판정이 번지면 안 된다.
+  assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.aws3.ec2' }).suggestedDeviceKind, 'server');
+  assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.aws3.auto_scaling' }).suggestedDeviceKind, null);
+});
+
+test('mscae stencils are the Microsoft namespace, not unclassified noise', () => {
+  const admin = classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.mscae.system_center.admin_console' });
+  assert.equal(admin.ruleId, 'azure');
+  assert.equal(admin.suggestedDeviceKind, 'server');
+  assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.mscae.cloud.unknown_widget' }).classification, 'device-candidate');
+});
+
 test('network stencil tokens keep drawio underscore names in the exact registry', async () => {
   const document = await parseDrawioDocument(graph(`<mxCell id="vm" style="shape=mxgraph.networks.virtual_server" vertex="1" parent="1"><mxGeometry x="10" y="20" width="80" height="60" as="geometry"/></mxCell><mxCell id="lb" style="shape=mxgraph.networks.load_balancer" vertex="1" parent="1"><mxGeometry x="120" y="20" width="80" height="60" as="geometry"/></mxCell>`));
   assert.deepEqual(document.pages[0].elements.map(({ drawioShape }) => drawioShape), ['network:vm', 'network:lb']);
