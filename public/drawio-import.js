@@ -616,13 +616,15 @@ export function classifyDrawioElement(element) {
       : /(?:mxgraph\.(?:azure|mscae)|azure\d*\.)/i.test(token) ? 'azure'
         : token.startsWith('network:') || /(?:router|switch|firewall|server|database)/.test(token) ? 'generic-network' : null;
   if (!namespace) return { classification: 'annotation', suggestedDeviceKind: null, confidence: 'none', ruleId: 'unclassified', evidence: 'none' };
-  if (namespace === 'aws' && (token === 'aws-frame' || /(?:^|[._ ])(?:group|container)(?:[._ ]|$)/.test(token))) return { classification: 'zone', suggestedDeviceKind: null, confidence: 'high', ruleId: 'aws-container', evidence: token };
+  // aws4 는 테두리 프레임을 이름 앞머리로 적는다: group, group_vpc, group_security_group.
+  // 뒤에 붙는 group 은 프레임이 아니라 그 자체가 무엇인 것이다 - security_group 은 필터다.
+  if (namespace === 'aws' && (token === 'aws-frame' || /(?:^|[. ])(?:group|container)(?:[._ ]|$)/.test(token))) return { classification: 'zone', suggestedDeviceKind: null, confidence: 'high', ruleId: 'aws-container', evidence: token };
   // 짧은 약어는 다른 이름 안에 묻혀서 오탐한다. 'pc' 는 vpc_nat_gateway 안에, 'ecr' 은
   // secrets_manager 안에, 's3' 는 aws3 네임스페이스 자체에 들어 있다. 구분자로 끊어서만 맞춘다.
   const abbr = (...names) => new RegExp(`(?:^|[._ ])(?:${names.join('|')})(?:[._ ]|$)`).test(token);
   const kind = /(?:lb|load[_ ]?balanc|elastic_load_balancing)/.test(token) ? 'lb'
-      // 네트워크 ACL 은 서브넷 경계에서 패킷을 거르므로 방화벽으로 센다.
-    : /(?:firewall|network_access_control)/.test(token) || abbr('nacl') ? 'firewall'
+      // 서브넷 경계의 네트워크 ACL 과 ENI 단의 보안 그룹은 둘 다 패킷을 거른다.
+    : /(?:firewall|network_access_control|security[_ ]?group)/.test(token) || abbr('nacl') ? 'firewall'
       // 관리형 게이트웨이는 트래픽이 지나가는 길목이라 router 로 둔다.
       : /(?:router|(?:internet|nat|transit|vpn|customer|vpc)_?gateway|vpn_connection|direct_connect)/.test(token) ? 'router'
         : /switch/.test(token) ? 'switch'

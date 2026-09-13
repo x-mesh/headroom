@@ -109,8 +109,21 @@ test('a network ACL filters packets at the subnet edge, so it counts as a firewa
   for (const token of ['mxgraph.aws3.network_access_controllist', 'mxgraph.aws4.network_access_control_list', 'mxgraph.aws4.nacl']) {
     assert.equal(kindOf(token), 'firewall', token);
   }
+  // 보안 그룹은 ENI 단에서 거른다. 같은 분류다.
+  for (const token of ['mxgraph.aws3.security_group', 'mxgraph.aws4.security_group', 'mxgraph.aws4.securitygroup']) {
+    assert.equal(kindOf(token), 'firewall', token);
+  }
   // 이름에 access control 이 들어간다고 다 패킷을 거르지는 않는다. Azure 쪽은 인증 서비스다.
   assert.equal(kindOf('mxgraph.azure.access_control'), null);
+});
+
+test('a frame named group stays a zone, a thing named group does not', () => {
+  const classOf = (token) => classifyDrawioElement({ type: 'shape', rawStyle: `shape=${token}` }).classification;
+  // aws4 는 테두리 프레임을 앞머리 group 으로 적는다. 뒤에 붙는 group 은 프레임이 아니다.
+  for (const token of ['mxgraph.aws4.group', 'mxgraph.aws4.group_vpc', 'mxgraph.aws4.group_security_group', 'mxgraph.aws4.container_1']) {
+    assert.equal(classOf(token), 'zone', token);
+  }
+  assert.equal(classOf('mxgraph.aws4.security_group'), 'device');
 });
 
 test('a drawing of people or a policy is not a device', () => {
