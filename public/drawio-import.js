@@ -427,6 +427,57 @@ async function registerImage(value, registry, warnings, id) {
   } catch (cause) { warnings.push(warning(cause.code || 'invalid-image', id)); return null; }
 }
 
+// draw.io can carry a whole stencil inside the style: the XML is URI encoded,
+// deflate-raw compressed and base64 wrapped. Every one observed is the same
+// narrow dialect - a single <path> of move/line/curve closed by <fillstroke> -
+// so read exactly that and fall back to the plain box on anything else.
+const INLINE_STENCIL_BOX = 100;
+const STENCIL_STEPS = { move: ['M', ['x', 'y']], line: ['L', ['x', 'y']], curve: ['C', ['x1', 'y1', 'x2', 'y2', 'x3', 'y3']], close: ['Z', []] };
+// Paint and metadata elements are read past, not drawn: the shape takes the
+// cell's own fill and stroke, the same way a registry stencil does.
+const STENCIL_SKIPPED = new Set(['shape', 'foreground', 'background', 'connections', 'constraint', 'path', 'fill', 'stroke', 'fillstroke', 'fillcolor', 'strokecolor', 'alpha', 'strokewidth', 'linejoin', 'linecap', 'miterlimit', 'dashed', 'dashpattern', 'save', 'restore']);
+
+async function inflateStencil(value) {
+  const bytes = Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  const inflated = new Uint8Array(await new Response(stream).arrayBuffer());
+  return decodeURIComponent(Array.from(inflated, (byte) => String.fromCharCode(byte)).join(''));
+}
+
+function stencilGeometry(xml) {
+  const parts = [];
+  let box = { width: INLINE_STENCIL_BOX, height: INLINE_STENCIL_BOX };
+  let open = false;
+  for (const [, tag, attributes] of xml.matchAll(/<([a-zA-Z][\w.-]*)((?:\s+[\w:.-]+="[^"]*")*)\s*\/?>/g)) {
+    const name = tag.toLowerCase();
+    const values = {};
+    for (const [, key, value] of attributes.matchAll(/([\w:.-]+)="([^"]*)"/g)) values[key.toLowerCase()] = value;
+    if (name === 'shape') {
+      const width = Number(values.w); const height = Number(values.h);
+      if (width > 0 && height > 0) box = { width, height };
+      continue;
+    }
+    if (name === 'path') { open = true; continue; }
+    const step = STENCIL_STEPS[name];
+    if (!step) { if (STENCIL_SKIPPED.has(name)) continue; return null; }
+    if (!open) return null;
+    const [command, keys] = step;
+    const numbers = keys.map((key) => Number(values[key]));
+    if (numbers.some((value) => !Number.isFinite(value))) return null;
+    if (!parts.length && command !== 'M') return null;
+    parts.push(numbers.length ? `${command} ${numbers.map(svgNumber).join(' ')}` : command);
+  }
+  return parts.length > 1 ? { ...box, path: parts.join(' ') } : null;
+}
+
+async function inlineStencil(shape) {
+  const source = String(shape || '');
+  if (!source.toLowerCase().startsWith('stencil(') || !source.endsWith(')')) return null;
+  const payload = source.slice(8, -1);
+  if (!/^[A-Za-z0-9+/=]+$/.test(payload) || payload.length > 64 * 1024) return null;
+  try { return stencilGeometry(await inflateStencil(payload)); } catch { return null; }
+}
+
 async function approvedStyle(style, registry, warnings, id) {
   const map = styleMap(style);
   const result = {};
@@ -445,7 +496,8 @@ async function approvedStyle(style, registry, warnings, id) {
   const known = new Set(['shape', 'fillColor', 'gradientColor', 'gradientDirection', 'strokeColor', 'fontColor', 'fontFamily', 'fontStyle', 'fontSize', 'textDirection', 'labelBackgroundColor', 'rounded', 'shadow', 'dashed', 'dashPattern', 'strokeWidth', 'opacity', 'image', 'imageAspect', 'html', 'whiteSpace', 'group', 'container', 'swimlane', 'startArrow', 'endArrow', 'startFill', 'endFill', 'startSize', 'endSize', 'edgeStyle', 'elbow', 'curved', 'orthogonalLoop', 'jettySize', 'jumpStyle', 'jumpSize', 'orthogonal', 'entryX', 'entryY', 'entryDx', 'entryDy', 'entryPerimeter', 'exitX', 'exitY', 'exitDx', 'exitDy', 'exitPerimeter', 'targetPerimeterSpacing', 'perimeter', 'labelPosition', 'verticalLabelPosition', 'spacing', 'spacingTop', 'spacingBottom', 'spacingLeft', 'spacingRight', 'rotation', 'flipH', 'flipV', 'aspect', 'dx', 'dy', 'notch', 'resIcon', 'prIcon', 'grIcon', 'grIconSize', 'grStroke', 'points', 'align', 'verticalAlign', 'text', 'collapsible', 'expand', 'recursiveResize', 'boundedLbl', 'backgroundOutline', 'size', 'darkOpacity', 'darkOpacity2', 'fixedSize', 'resizable', 'movable', 'rotatable', 'deletable', 'editable', 'locked', 'connectable', 'outlineConnect', 'labelBorderColor', 'pointerEvents', 'textShadow', 'convertToSvg', 'imageBackground', 'endWidth', 'startWidth', 'width', 'imageBorder', 'fillStyle', 'edgeLabel', 'horizontal', 'fixDash', 'snapToPoint', 'enumerate', 'comic', 'background', 'crop', 'arcSize', 'absoluteArcSize', 'portConstraint', 'spacingLabel', 'labelWidth', 'labelHeight', 'overflow', 'spacingX', 'spacingY', 'fontBackgroundColor', 'fontBorderColor', 'autosize']);
   if (Object.keys(map).some((key) => !known.has(key) && !key.startsWith('sketch'))) warnings.push(warning('unsupported-style', id));
   const token = visualToken(map).replace(/[^a-z0-9._ -]/g, '').slice(0, 120);
-  return { paint: result, drawioShape: safeShape(map), drawioOptions: safeOptions(map), ...(token ? { drawioToken: token.slice(0, 120) } : {}), ...(imageAssetId ? { imageAssetId } : {}) };
+  const stencil = await inlineStencil(map.shape);
+  return { paint: result, drawioShape: stencil ? 'stencil-inline' : safeShape(map), drawioOptions: safeOptions(map), ...(stencil ? { drawioStencil: stencil } : {}), ...(token ? { drawioToken: token.slice(0, 120) } : {}), ...(imageAssetId ? { imageAssetId } : {}) };
 }
 
 function parseCells(model, page, warnings) {
@@ -508,7 +560,7 @@ async function pageElements(model, page, registry) {
     if (cell.vertex && (drawioShape === 'vendor-fallback' || drawioShape === 'generic-fallback')) warnings.push(warning('unsupported-vendor-stencil', id, styles.shape));
     if (cell.vertex) {
       const labelRuns = drawioLabelRuns(cell.rawValue);
-      elements.push({ id, sourceId: cell.sourceId, type, text: cell.value, parentSourceId: cell.parentId, geometry: position, paint: visual.paint, drawioShape, drawioOptions: visual.drawioOptions, zIndex: zIndex++, ...(labelRuns.some((line) => line.length) ? { labelRuns } : {}), ...(visual.drawioToken ? { drawioToken: visual.drawioToken } : {}), ...(visual.imageAssetId ? { imageAssetId: visual.imageAssetId } : {}), relative: position.relative });
+      elements.push({ id, sourceId: cell.sourceId, type, text: cell.value, parentSourceId: cell.parentId, geometry: position, paint: visual.paint, drawioShape, drawioOptions: visual.drawioOptions, zIndex: zIndex++, ...(labelRuns.some((line) => line.length) ? { labelRuns } : {}), ...(visual.drawioToken ? { drawioToken: visual.drawioToken } : {}), ...(visual.drawioStencil ? { drawioStencil: visual.drawioStencil } : {}), ...(visual.imageAssetId ? { imageAssetId: visual.imageAssetId } : {}), relative: position.relative });
     }
     else {
       const parent = cell.parentId && cells.has(cell.parentId) ? locate(cell.parentId) : { x: 0, y: 0 };
@@ -744,6 +796,12 @@ export function renderDrawioVisualSvg(element, assets = []) {
   else if (element.drawioShape?.startsWith('network:')) body = iconMarkup(element.drawioShape.slice(8), element.geometry, paint);
   else if (element.drawioShape?.startsWith('stencil:')) {
     body = stencilMarkup(element.drawioShape.slice(8), x, y, width, height, fill, stroke);
+  }
+  else if (element.drawioShape === 'stencil-inline' && element.drawioStencil) {
+    // The stencil is drawn in its own 100 by 100 box, so scale it into the cell.
+    const stencil = element.drawioStencil;
+    const scaleX = width / (stencil.width || 100); const scaleY = height / (stencil.height || 100);
+    body = `<g transform="translate(${svgNumber(x)} ${svgNumber(y)}) scale(${svgNumber(scaleX)} ${svgNumber(scaleY)})"><path d="${stencil.path}" fill="${fill}" stroke="${stroke}" stroke-width="${svgNumber(strokeWidth / Math.max(Math.sqrt(Math.abs(scaleX * scaleY)), .0001))}"${dash}/></g>`;
   }
   else if (element.drawioShape?.startsWith('port:')) body = renderExactPort(element, fill, stroke, strokeWidth, dash);
   else if (element.drawioShape === 'container' && element.drawioToken === 'group' && !element.text) body = '';
@@ -1187,7 +1245,7 @@ export function applyDrawioImport(topology, preview, decisions = preview.decisio
       map.set(candidate.sourceId, id); outcomes[candidate.sourceId] = visualOutcome(candidate); applied.visual[visualCounter(outcomes[candidate.sourceId])] += 1; applied.devices += 1; continue;
     }
     const id = uniqueId(ids, `shape-${candidate.id}`);
-    const shape = { id, kind: candidate.drawioShape === 'ellipse' ? 'ellipse' : candidate.drawioShape === 'text' ? 'text' : 'rect', text: candidate.text, x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height, unmapped: true, drawioShape: candidate.drawioShape, drawioOptions: candidate.drawioOptions, paint: candidate.paint, zIndex: sourceOrder(candidate.zIndex), ...(candidate.drawioToken ? { drawioToken: candidate.drawioToken } : {}), ...(candidate.imageAssetId ? { imageAssetId: candidate.imageAssetId } : {}), ...(candidate.labelRuns ? { labelRuns: candidate.labelRuns } : {}) };
+    const shape = { id, kind: candidate.drawioShape === 'ellipse' ? 'ellipse' : candidate.drawioShape === 'text' ? 'text' : 'rect', text: candidate.text, x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height, unmapped: true, drawioShape: candidate.drawioShape, drawioOptions: candidate.drawioOptions, paint: candidate.paint, zIndex: sourceOrder(candidate.zIndex), ...(candidate.drawioToken ? { drawioToken: candidate.drawioToken } : {}), ...(candidate.drawioStencil ? { drawioStencil: candidate.drawioStencil } : {}), ...(candidate.imageAssetId ? { imageAssetId: candidate.imageAssetId } : {}), ...(candidate.labelRuns ? { labelRuns: candidate.labelRuns } : {}) };
     next.diagram.shapes.push(shape); map.set(candidate.sourceId, id); applied.annotations += 1;
     outcomes[candidate.sourceId] = candidate.imageAssetId ? 'rendered-exact' : visualOutcome(candidate); applied.visual[visualCounter(outcomes[candidate.sourceId])] += 1;
   }

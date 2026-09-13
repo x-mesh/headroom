@@ -388,3 +388,35 @@ test('a shape that cannot be drawn names itself in the warning', async () => {
   assert.equal(document.pages[0].elements[0].drawioShape, 'vendor-fallback');
   assert.match(renderDrawioPageSvg(document.pages[0]), /<rect x="0" y="0" width="40" height="60" rx="0" fill="#ffffff" stroke="#000000"/);
 });
+
+test('a stencil carried inside the style is decoded and drawn', async () => {
+  // draw.io URI encodes the stencil XML, deflate-raw compresses it and wraps the
+  // result in base64. This payload is <shape w="40" h="50"> with one path.
+  const payload = 'fVJRFoIgEDwNv70CvUBmn92BdE1eCD5ApduHLRbaqz9mZpnZXSCssC3vgdA9tz1UjrAToXTkRvCrDDQNSotkvkeoeAfIHLVHyjqj7zCJ2sVaoVowwqE6IZe97rOSsKLSSoUwoZV9E8GDC+VWARc06INXBw4MsrEPH9EuR/xI1TP6hsNXVqMN3IweVI2453PX86nTIyTGv22lUElh9qeyGgx6Hja1EdPYvKcRLzpdL92zdVNsJS9hUltIZ/+M1ggp8ZVSfbuKQOF3YOUT';
+  const document = await parseDrawioDocument(graph(`<mxCell id="s" style="shape=stencil(${payload});fillColor=#ff0000;strokeColor=#000000" vertex="1" parent="1"><mxGeometry x="0" y="0" width="80" height="100" as="geometry"/></mxCell>`));
+  const shape = document.pages[0].elements[0];
+  assert.equal(shape.drawioShape, 'stencil-inline');
+  assert.deepEqual(document.warnings, [], 'a stencil the file carries is not an unsupported stencil');
+  // The box comes from the stencil, not from the cell, so the cell only scales it.
+  assert.deepEqual([shape.drawioStencil.width, shape.drawioStencil.height], [40, 50]);
+  assert.equal(shape.drawioStencil.path, 'M 0 0 L 40 0 C 40 25 20 50 0 50 Z');
+  const svg = renderDrawioPageSvg(document.pages[0]);
+  assert.match(svg, /scale\(2 2\)/, '80 by 100 over a 40 by 50 stencil is a factor of two');
+  assert.match(svg, /d="M 0 0 L 40 0 C 40 25 20 50 0 50 Z" fill="#ff0000" stroke="#000000"/);
+  assert.doesNotMatch(svg, /<script|foreignObject/i);
+});
+
+test('an inline stencil survives a project round trip', async () => {
+  const payload = 'fVJRFoIgEDwNv70CvUBmn92BdE1eCD5ApduHLRbaqz9mZpnZXSCssC3vgdA9tz1UjrAToXTkRvCrDDQNSotkvkeoeAfIHLVHyjqj7zCJ2sVaoVowwqE6IZe97rOSsKLSSoUwoZV9E8GDC+VWARc06INXBw4MsrEPH9EuR/xI1TP6hsNXVqMN3IweVI2453PX86nTIyTGv22lUElh9qeyGgx6Hja1EdPYvKcRLzpdL92zdVNsJS9hUltIZ/+M1ggp8ZVSfbuKQOF3YOUT';
+  const document = await parseDrawioDocument(graph(`<mxCell id="s" style="shape=stencil(${payload})" vertex="1" parent="1"><mxGeometry x="0" y="0" width="80" height="100" as="geometry"/></mxCell>`));
+  const applied = applyDrawioImport({ devices: [], links: [], demands: [] }, createDrawioPreview(document));
+  const restored = parseProject(serializeProject(applied.topology, { scale: 1 }));
+  assert.equal(restored.topology.diagram.shapes[0].drawioStencil.path, 'M 0 0 L 40 0 C 40 25 20 50 0 50 Z');
+});
+
+test('a stencil payload that is not the drawn dialect falls back to the box', async () => {
+  for (const style of ['shape=stencil(not-base64!)', 'shape=stencil(QUJD)']) {
+    const document = await parseDrawioDocument(graph(`<mxCell id="s" style="${style}" vertex="1" parent="1"><mxGeometry x="0" y="0" width="40" height="40" as="geometry"/></mxCell>`));
+    assert.notEqual(document.pages[0].elements[0].drawioShape, 'stencil-inline');
+  }
+});

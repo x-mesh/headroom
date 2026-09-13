@@ -101,15 +101,22 @@ function validateDiagram(diagram, deviceIds) {
   for (const id of deviceIds) if (ids.has(id)) throw new Error('Diagram and device IDs must be distinct');
   const endpoints = new Set([...deviceIds, ...diagram.shapes.map(({ id }) => id)]);
   for (const shape of diagram.shapes) {
-    if (Object.keys(shape).some((key) => !['id', 'kind', 'type', 'text', 'x', 'y', 'width', 'height', 'fill', 'gradientColor', 'stroke', 'lineStyle', 'textColor', 'strokeWidth', 'opacity', 'fontSize', 'textAlign', 'verticalAlign', 'fontWeight', 'gradient', 'rounded', 'sketch', 'glass', 'shadow', 'groupId', 'unmapped', 'locked', 'drawioShape', 'drawioOptions', 'drawioToken', 'paint', 'imageAssetId', 'labelRuns', 'zIndex'].includes(key))) throw new Error('Unknown diagram shape content');
+    if (Object.keys(shape).some((key) => !['id', 'kind', 'type', 'text', 'x', 'y', 'width', 'height', 'fill', 'gradientColor', 'stroke', 'lineStyle', 'textColor', 'strokeWidth', 'opacity', 'fontSize', 'textAlign', 'verticalAlign', 'fontWeight', 'gradient', 'rounded', 'sketch', 'glass', 'shadow', 'groupId', 'unmapped', 'locked', 'drawioShape', 'drawioOptions', 'drawioToken', 'drawioStencil', 'paint', 'imageAssetId', 'labelRuns', 'zIndex'].includes(key))) throw new Error('Unknown diagram shape content');
     validateLabelRuns(shape.labelRuns, 'Diagram shape');
     if (!['rectangle', 'ellipse', 'text', 'note', 'rect'].includes(shape.kind ?? shape.type)) throw new Error('Unknown diagram shape type');
     for (const key of ['x', 'y', 'width', 'height']) if (!Number.isFinite(shape[key]) || (['width', 'height'].includes(key) && shape[key] <= 0)) throw new Error(`Diagram shape requires valid ${key}`);
     if (shape.text != null && (typeof shape.text !== 'string' || shape.text.length > 10000)) throw new Error('Diagram text must be under 10000 characters');
     if (shape.locked != null && typeof shape.locked !== 'boolean') throw new Error('Diagram shape lock must be boolean');
     if (shape.zIndex != null && (!Number.isInteger(shape.zIndex) || shape.zIndex < 0 || shape.zIndex > 100000)) throw new Error('Diagram shape order is invalid');
-    if (shape.drawioShape != null && (typeof shape.drawioShape !== 'string' || !/^(?:rect|ellipse|text|image|cube|cylinder3|hexagon|container|aws-frame|vendor-fallback|generic-fallback|network:[a-z-]+|stencil:[a-z0-9._-]+|port:[a-z0-9._-]+|composer:[a-z-]+)$/.test(shape.drawioShape))) throw new Error('Drawio shape is invalid');
+    if (shape.drawioShape != null && (typeof shape.drawioShape !== 'string' || !/^(?:rect|ellipse|text|image|cube|cylinder3|hexagon|container|aws-frame|vendor-fallback|generic-fallback|stencil-inline|network:[a-z-]+|stencil:[a-z0-9._-]+|port:[a-z0-9._-]+|composer:[a-z-]+)$/.test(shape.drawioShape))) throw new Error('Drawio shape is invalid');
     if (shape.drawioToken != null && (typeof shape.drawioToken !== 'string' || !/^[a-z0-9._ -]{1,120}$/.test(shape.drawioToken))) throw new Error('Drawio shape token is invalid');
+    // A stencil carried inside the file is path data only. Numbers and command
+    // letters cannot express markup, so the bound is on size, not on escaping.
+    if (shape.drawioStencil != null && (!plainObject(shape.drawioStencil) || Object.keys(shape.drawioStencil).some((key) => !['width', 'height', 'path'].includes(key))
+      || !Number.isFinite(shape.drawioStencil.width) || !Number.isFinite(shape.drawioStencil.height)
+      || shape.drawioStencil.width <= 0 || shape.drawioStencil.height <= 0
+      || typeof shape.drawioStencil.path !== 'string' || shape.drawioStencil.path.length > 64 * 1024
+      || !/^[MLCZ0-9.\- ]+$/.test(shape.drawioStencil.path))) throw new Error('Drawio inline stencil is invalid');
     if (shape.drawioOptions != null && (!plainObject(shape.drawioOptions) || Object.keys(shape.drawioOptions).some((key) => !['dashed', 'startArrow', 'endArrow', 'startFill', 'endFill', 'startSize', 'endSize', 'flipH', 'flipV', 'fixedAspect', 'rotation', 'resIcon', 'prIcon', 'grIcon', 'grIconSize', 'grStroke', 'size', 'dx', 'dy', 'notch', 'entryX', 'entryY', 'exitX', 'exitY', 'entryDx', 'entryDy', 'exitDx', 'exitDy', 'entryPerimeter', 'exitPerimeter', 'targetPerimeterSpacing', 'routeMode', 'elbow', 'jettySize', 'jumpStyle', 'jumpSize', 'dashPattern', 'fontFamily', 'textDirection', 'labelBackgroundColor', 'gradientDirection', 'verticalLabelPosition', 'spacingLeft', 'spacingRight', 'spacingTop', 'spacingBottom', 'autosize'].includes(key)))) throw new Error('Drawio shape options are invalid');
     if (shape.drawioOptions?.resIcon != null && (typeof shape.drawioOptions.resIcon !== 'string' || !/^[a-z0-9._-]{1,120}$/i.test(shape.drawioOptions.resIcon))) throw new Error('Drawio resource icon is invalid');
     if (shape.drawioOptions?.prIcon != null && (typeof shape.drawioOptions.prIcon !== 'string' || !/^[a-z0-9._-]{1,120}$/i.test(shape.drawioOptions.prIcon))) throw new Error('Drawio product icon is invalid');
@@ -142,7 +149,7 @@ function validateDiagram(diagram, deviceIds) {
 function validateDrawioVisual(visual) {
   if (!plainObject(visual) || Object.keys(visual).some((key) => !['width', 'height', 'drawioShape', 'drawioOptions', 'drawioToken', 'paint', 'imageAssetId', 'text', 'labelRuns', 'zIndex'].includes(key))) throw new Error('Device drawio visual is invalid');
   if (!Number.isFinite(visual.width) || !Number.isFinite(visual.height) || visual.width <= 0 || visual.height <= 0 || visual.width > 1e6 || visual.height > 1e6) throw new Error('Device drawio visual bounds are invalid');
-  if (typeof visual.drawioShape !== 'string' || !/^(?:rect|ellipse|text|image|cube|cylinder3|hexagon|container|aws-frame|vendor-fallback|generic-fallback|network:[a-z-]+|stencil:[a-z0-9._-]+|port:[a-z0-9._-]+)$/.test(visual.drawioShape)) throw new Error('Device drawio visual shape is invalid');
+  if (typeof visual.drawioShape !== 'string' || !/^(?:rect|ellipse|text|image|cube|cylinder3|hexagon|container|aws-frame|vendor-fallback|generic-fallback|stencil-inline|network:[a-z-]+|stencil:[a-z0-9._-]+|port:[a-z0-9._-]+)$/.test(visual.drawioShape)) throw new Error('Device drawio visual shape is invalid');
   if (visual.zIndex != null && (!Number.isInteger(visual.zIndex) || visual.zIndex < 0 || visual.zIndex > 100000)) throw new Error('Device drawio visual order is invalid');
   if (visual.text != null && (typeof visual.text !== 'string' || visual.text.length > 10000 || /[<>]/.test(visual.text))) throw new Error('Device drawio visual text is invalid');
   validateLabelRuns(visual.labelRuns, 'Device drawio visual');
