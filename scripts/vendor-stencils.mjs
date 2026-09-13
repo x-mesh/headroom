@@ -54,6 +54,13 @@ export const REFERENCE_STENCILS = [
   { drawioId: 'mxgraph.aws4.security_group', path: 'src/main/webapp/stencils/aws4.xml', name: 'security group' },
   { drawioId: 'mxgraph.aws4.vpc', path: 'src/main/webapp/stencils/aws4.xml', name: 'vpc' },
   { drawioId: 'mxgraph.cisco19.lock', path: 'src/main/webapp/stencils/cisco19.xml', name: 'lock' },
+  { drawioId: 'mxgraph.aws4.users', path: 'src/main/webapp/stencils/aws4.xml', name: 'users' },
+  { drawioId: 'mxgraph.flowchart.terminator', path: 'src/main/webapp/stencils/flowchart.xml', name: 'Terminator' },
+  // Kubernetes icons are a wrapper: the frame draws the tile and prIcon names
+  // the glyph inside it. Only the observed glyphs are vendored.
+  { drawioId: 'mxgraph.kubernetes.frame', path: 'src/main/webapp/stencils/kubernetes.xml', name: 'frame' },
+  { drawioId: 'mxgraph.kubernetes.node', path: 'src/main/webapp/stencils/kubernetes.xml', name: 'node' },
+  { drawioId: 'mxgraph.kubernetes.pod', path: 'src/main/webapp/stencils/kubernetes.xml', name: 'pod' },
   { drawioId: 'mxgraph.cisco_safe.capability.web_application_firewall', path: 'src/main/webapp/stencils/cisco_safe/capability.xml', name: 'web application firewall' },
   { drawioId: 'mxgraph.aws4.api_gateway', path: 'src/main/webapp/stencils/aws4.xml', name: 'api gateway' },
   { drawioId: 'mxgraph.aws4.key_management_service', path: 'src/main/webapp/stencils/aws4.xml', name: 'key management service' },
@@ -90,6 +97,10 @@ export const REFERENCE_STENCILS = [
 ];
 
 export const EXACT_PORTS = [
+  { drawioId: 'mxgraph.ios.iPhone', path: 'src/main/webapp/shapes/mockup/mxMockupiOS.js', symbol: 'mxShapeMockupiPhone.paintVertexShape', renderer: 'mockup-iphone', dependencies: [], styleFields: ['fillColor', 'bgStyle'], exactScope: 'the black body, the bezel highlight, the screen for the flat background styles, and the camera, speaker and home button chrome. bgMap and bgStriped draw their flat screen instead of the illustration upstream fills it with.' },
+  { drawioId: 'umlActor', path: 'src/main/webapp/js/grapheditor/Shapes.js', symbol: 'UmlActorShape.paintBackground', renderer: 'uml-actor', dependencies: [], styleFields: ['fillColor', 'strokeColor', 'strokeWidth'], exactScope: 'head ellipse at (w/4, 0, w/2, h/4) filled and stroked, then the body, arms and legs stroked at the same fractions upstream uses.' },
+  { drawioId: 'note', path: 'src/main/webapp/js/grapheditor/Shapes.js', symbol: 'NoteShape.paintVertexShape', renderer: 'note', dependencies: [], styleFields: ['fillColor', 'strokeColor', 'strokeWidth', 'size'], exactScope: 'the folded-corner outline with size clamped to 0..min(w, h). The darkOpacity wedge is not drawn because the observed styles leave it at 0.' },
+  { drawioId: 'mxgraph.kubernetes.icon', path: 'src/main/webapp/shapes/mxKubernetes.js', symbol: 'mxShapeKubernetesIcon.paintVertexShape', renderer: 'kubernetes-icon', dependencies: ['mxgraph.kubernetes.frame', 'mxgraph.kubernetes.node', 'mxgraph.kubernetes.pod'], styleFields: ['fillColor', 'strokeColor', 'prIcon', 'aspect'], exactScope: 'frame in strokeColor, the same frame inset to 94% in fillColor, then the observed prIcon glyph at a 20% inset in strokeColor. An unobserved prIcon draws the tile without a glyph.' },
   { drawioId: 'mxgraph.aws4.resourceicon', path: 'src/main/webapp/shapes/mxAWS4.js', symbol: 'mxShapeAws4ResourceIcon.paintVertexShape', renderer: 'aws4-resource-icon', dependencies: ['mxgraph.aws4.api_gateway', 'mxgraph.aws4.key_management_service', 'mxgraph.aws4.managed_blockchain', 'mxgraph.aws4.systems_manager'], styleFields: ['fillColor', 'strokeColor', 'resIcon', 'aspect'], exactScope: 'fill-only background plus a 10% inset glyph. Unknown resource icons intentionally have no glyph.' },
   { drawioId: 'mxgraph.cisco19.rect', path: 'src/main/webapp/shapes/mxCisco19.js', symbol: 'mxShapeCisco19Rect.paintVertexShape', renderer: 'cisco19-rect', dependencies: ['mxgraph.cisco19.bg1', 'mxgraph.cisco19.l2_switch', 'mxgraph.cisco19.l3_switch', 'mxgraph.cisco19.ips_ids'], styleFields: ['fillColor', 'strokeColor', 'prIcon', 'aspect'], exactScope: 'observed prIcon values only. Draw bg1, then the observed glyph with fillColor=strokeColor.' },
   { drawioId: 'mxgraph.arrows2.stripedarrow', path: 'src/main/webapp/shapes/mxArrows.js', symbol: 'mxShapeArrows2StripedArrow.paintVertexShape', renderer: 'arrows2-striped-arrow', dependencies: [], styleFields: ['fillColor', 'strokeColor', 'strokeWidth', 'dx', 'dy', 'notch'], exactScope: 'same path commands and clamp rules as upstream paintVertexShape.' },

@@ -1,7 +1,7 @@
 {
   "upstream": "https://github.com/jgraph/drawio",
   "commit": "48b181339578e11da7052ebf5b1fba8499418b77",
-  "fetchedAt": "2026-09-11",
+  "fetchedAt": "2026-09-13",
   "license": "Apache-2.0 + stencils/LICENSE restriction",
   "sources": {
     "src/main/webapp/stencils/networks.xml": {
@@ -44,9 +44,25 @@
       "bytes": 1813219,
       "sha256": "cba83882ca362016976e0e0220fc463fb9cbd9beda6b1c3299b2fd9bd28eb051"
     },
+    "src/main/webapp/stencils/kubernetes.xml": {
+      "bytes": 180144,
+      "sha256": "c84a602dbf0b14f3d55c44f5e74a8993d0b5f0424b329f87dc65719f66e2ee40"
+    },
     "src/main/webapp/stencils/cisco_safe/capability.xml": {
       "bytes": 766247,
       "sha256": "c0de6295594fde661d99e3581a5f072957e569aaf502d0972be655267a1e1ef9"
+    },
+    "src/main/webapp/shapes/mockup/mxMockupiOS.js": {
+      "bytes": 204611,
+      "sha256": "e1c73c601d52b141be67c2d3fc726bbe89359305b32ac00953377e224035c58e"
+    },
+    "src/main/webapp/js/grapheditor/Shapes.js": {
+      "bytes": 237131,
+      "sha256": "5a597486b5427323ebb6e72813b8303592458725e11a1bf914076ffc8e64cb5e"
+    },
+    "src/main/webapp/shapes/mxKubernetes.js": {
+      "bytes": 17449,
+      "sha256": "5f0c4c676b2494c6237d10bf763c2113dfecafc10eef2c6819954cd241871cc3"
     },
     "src/main/webapp/shapes/mxAWS4.js": {
       "bytes": 10747,
@@ -95,7 +111,7 @@
       ]
     },
     "references": {
-      "sha256": "3625004299897b998f57c7c3c0853377966ff46dd301ff5548a465629f6a03ff",
+      "sha256": "75b6dce789a3bee5012099585a4797ece0be4f6252818a71ef4cc5c7ba74f8a8",
       "stencils": [
         {
           "drawioId": "mxgraph.aws3.ec2",
@@ -278,6 +294,31 @@
           "name": "lock"
         },
         {
+          "drawioId": "mxgraph.aws4.users",
+          "path": "src/main/webapp/stencils/aws4.xml",
+          "name": "users"
+        },
+        {
+          "drawioId": "mxgraph.flowchart.terminator",
+          "path": "src/main/webapp/stencils/flowchart.xml",
+          "name": "Terminator"
+        },
+        {
+          "drawioId": "mxgraph.kubernetes.frame",
+          "path": "src/main/webapp/stencils/kubernetes.xml",
+          "name": "frame"
+        },
+        {
+          "drawioId": "mxgraph.kubernetes.node",
+          "path": "src/main/webapp/stencils/kubernetes.xml",
+          "name": "node"
+        },
+        {
+          "drawioId": "mxgraph.kubernetes.pod",
+          "path": "src/main/webapp/stencils/kubernetes.xml",
+          "name": "pod"
+        },
+        {
           "drawioId": "mxgraph.cisco_safe.capability.web_application_firewall",
           "path": "src/main/webapp/stencils/cisco_safe/capability.xml",
           "name": "web application firewall"
@@ -435,6 +476,63 @@
       ]
     },
     "exactPorts": [
+      {
+        "drawioId": "mxgraph.ios.iPhone",
+        "path": "src/main/webapp/shapes/mockup/mxMockupiOS.js",
+        "symbol": "mxShapeMockupiPhone.paintVertexShape",
+        "renderer": "mockup-iphone",
+        "dependencies": [],
+        "styleFields": [
+          "fillColor",
+          "bgStyle"
+        ],
+        "exactScope": "the black body, the bezel highlight, the screen for the flat background styles, and the camera, speaker and home button chrome. bgMap and bgStriped draw their flat screen instead of the illustration upstream fills it with."
+      },
+      {
+        "drawioId": "umlActor",
+        "path": "src/main/webapp/js/grapheditor/Shapes.js",
+        "symbol": "UmlActorShape.paintBackground",
+        "renderer": "uml-actor",
+        "dependencies": [],
+        "styleFields": [
+          "fillColor",
+          "strokeColor",
+          "strokeWidth"
+        ],
+        "exactScope": "head ellipse at (w/4, 0, w/2, h/4) filled and stroked, then the body, arms and legs stroked at the same fractions upstream uses."
+      },
+      {
+        "drawioId": "note",
+        "path": "src/main/webapp/js/grapheditor/Shapes.js",
+        "symbol": "NoteShape.paintVertexShape",
+        "renderer": "note",
+        "dependencies": [],
+        "styleFields": [
+          "fillColor",
+          "strokeColor",
+          "strokeWidth",
+          "size"
+        ],
+        "exactScope": "the folded-corner outline with size clamped to 0..min(w, h). The darkOpacity wedge is not drawn because the observed styles leave it at 0."
+      },
+      {
+        "drawioId": "mxgraph.kubernetes.icon",
+        "path": "src/main/webapp/shapes/mxKubernetes.js",
+        "symbol": "mxShapeKubernetesIcon.paintVertexShape",
+        "renderer": "kubernetes-icon",
+        "dependencies": [
+          "mxgraph.kubernetes.frame",
+          "mxgraph.kubernetes.node",
+          "mxgraph.kubernetes.pod"
+        ],
+        "styleFields": [
+          "fillColor",
+          "strokeColor",
+          "prIcon",
+          "aspect"
+        ],
+        "exactScope": "frame in strokeColor, the same frame inset to 94% in fillColor, then the observed prIcon glyph at a 20% inset in strokeColor. An unobserved prIcon draws the tile without a glyph."
+      },
       {
         "drawioId": "mxgraph.aws4.resourceicon",
         "path": "src/main/webapp/shapes/mxAWS4.js",
