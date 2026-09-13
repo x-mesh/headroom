@@ -23,7 +23,9 @@ const NETWORK_STENCILS = Object.freeze({
 });
 const CISCO_RECT_TOKENS = Object.freeze({ l2_switch: 'mxgraph.cisco19.l2_switch', l3_switch: 'mxgraph.cisco19.l3_switch', ips_ids: 'mxgraph.cisco19.ips_ids' });
 
-const warning = (code, elementId = null) => ({ code, ...(elementId ? { elementId } : {}) });
+// `token` carries the style name that could not be drawn. Without it a reader
+// sees a count and cannot tell which shape to look up or fix in the source.
+const warning = (code, elementId = null, token = null) => ({ code, ...(elementId ? { elementId } : {}), ...(token ? { token: String(token).slice(0, 120) } : {}) });
 const error = (code, message) => Object.assign(new Error(message), { code });
 const escapeId = (value, index) => {
   const base = String(value || index).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
@@ -503,7 +505,7 @@ async function pageElements(model, page, registry) {
     const position = locate(cell.sourceId); const styles = styleMap(cell.style);
     const type = styles.group === '1' ? 'group' : styles.container === '1' || styles.swimlane === '1' ? 'container' : 'shape';
     const drawioShape = type === 'group' || type === 'container' ? (visual.drawioShape === 'aws-frame' ? 'aws-frame' : 'container') : visual.drawioShape;
-    if (cell.vertex && (drawioShape === 'vendor-fallback' || drawioShape === 'generic-fallback')) warnings.push(warning('unsupported-vendor-stencil', id));
+    if (cell.vertex && (drawioShape === 'vendor-fallback' || drawioShape === 'generic-fallback')) warnings.push(warning('unsupported-vendor-stencil', id, styles.shape));
     if (cell.vertex) {
       const labelRuns = drawioLabelRuns(cell.rawValue);
       elements.push({ id, sourceId: cell.sourceId, type, text: cell.value, parentSourceId: cell.parentId, geometry: position, paint: visual.paint, drawioShape, drawioOptions: visual.drawioOptions, zIndex: zIndex++, ...(labelRuns.some((line) => line.length) ? { labelRuns } : {}), ...(visual.drawioToken ? { drawioToken: visual.drawioToken } : {}), ...(visual.imageAssetId ? { imageAssetId: visual.imageAssetId } : {}), relative: position.relative });

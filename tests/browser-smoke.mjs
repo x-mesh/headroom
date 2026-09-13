@@ -251,6 +251,17 @@ async function verifyCanvasEditing() {
     [[0, 'shape'], [1, 'device'], [2, 'connector']], '가져온 레이어는 새 페이지 안의 도형·장비·연결선 순서를 보존한다');
   assert.equal(sourceOrder.at(-3)[0] > sourceOrder.at(-4)[0], true, '나중에 적용한 페이지는 기존 가져오기 뒤에 쌓인다');
   assert.equal(await page.locator('.mesh-node.drawio-source-hit').count() > 0, true, 'semantic 장비에는 시각 요소를 중복하지 않는 선택 대상이 남는다');
+  // 그리지 못한 도형은 개수가 아니라 이름으로 알려야 원본에서 고칠 수 있다.
+  const ghostDrawio = `<mxfile><diagram id="ghost" name="유령"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="g" value="없는 도형" style="shape=mxgraph.aws3.server" vertex="1" parent="1"><mxGeometry x="20" y="20" width="40" height="60" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>`;
+  await page.evaluate((source) => {
+    const transfer = new DataTransfer(); transfer.items.add(new File([source], 'ghost.drawio', { type: 'application/vnd.jgraph.mxfile' }));
+    document.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+  }, ghostDrawio);
+  await page.waitForFunction(() => document.querySelector('#editor-panel-heading')?.textContent.includes('미리보기'));
+  assert.match(await page.locator('.drawio-warning').last().textContent(), /mxgraph\.aws3\.server/, '미리보기는 그리지 못한 도형의 이름을 말한다');
+  await page.locator('[data-drawio-cancel]').click();
+  await page.waitForFunction(() => !document.querySelector('#toast')?.classList.contains('visible'), null, { timeout: 8000 });
+
   // 가져온 링크에도 트래픽이 보여야 한다. 선은 draw.io 모양 그대로 두고 그 위에 부하를 얹는다.
   // 용량이 비어 있으면 엔진이 limit-missing 으로 재지 않은 값이라고 답하므로 점도 그리지 않는다.
   const trafficDrawio = `<mxfile><diagram id="traffic" name="트래픽"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="src" value="스위치 A" style="shape=mxgraph.networks.switch" vertex="1" parent="1"><mxGeometry x="40" y="400" width="80" height="60" as="geometry"/></mxCell><mxCell id="dst" value="서버 B" style="shape=mxgraph.networks.server" vertex="1" parent="1"><mxGeometry x="360" y="400" width="80" height="60" as="geometry"/></mxCell><mxCell id="wire" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#123456" edge="1" source="src" target="dst" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>`;

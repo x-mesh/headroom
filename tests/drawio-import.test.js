@@ -376,3 +376,15 @@ test('an iphone mockup draws its body, screen and chrome', async () => {
   assert.equal((svg.match(/<linearGradient /g) || []).length, 2, 'the bezel and the home button each carry their own ramp');
   assert.doesNotMatch(svg, /<script|foreignObject/i);
 });
+
+test('a shape that cannot be drawn names itself in the warning', async () => {
+  const document = await parseDrawioDocument(graph('<mxCell id="ghost" style="shape=mxgraph.aws3.server" vertex="1" parent="1"><mxGeometry x="0" y="0" width="40" height="60" as="geometry"/></mxCell><mxCell id="known" style="shape=mxgraph.networks.switch" vertex="1" parent="1"><mxGeometry x="80" y="0" width="40" height="60" as="geometry"/></mxCell>'));
+  const missing = document.warnings.filter(({ code }) => code === 'unsupported-vendor-stencil');
+  // A count alone cannot be acted on: the reader needs the name to look up.
+  assert.deepEqual(missing.map(({ token }) => token), ['mxgraph.aws3.server']);
+  assert.equal(missing[0].elementId, 'drawio-ghost');
+  // The box it falls back to is the same box draw.io draws for a name it cannot
+  // resolve either, so the drawing does not change - only the report does.
+  assert.equal(document.pages[0].elements[0].drawioShape, 'vendor-fallback');
+  assert.match(renderDrawioPageSvg(document.pages[0]), /<rect x="0" y="0" width="40" height="60" rx="0" fill="#ffffff" stroke="#000000"/);
+});
