@@ -84,7 +84,7 @@ let spatialScene = null;
 let rackScene = null;
 let spatialScenePromise = null;
 let rackScenePromise = null;
-const rackView = { mode: '2d', face: 'front', cables: true, sidebarTab: 'devices', selectedRackId: null, selectedPlacementId: null };
+const rackView = { mode: '2d', face: 'front', cables: true, domains: false, sidebarTab: 'devices', selectedRackId: null, selectedPlacementId: null };
 const RACK_EQUIPMENT = [
   { kind: 'server', name: 'SERVER', label: '서버', uHeight: 2, heights: [1, 2, 4], powerWatts: null },
   { kind: 'switch', name: 'NETWORK SWITCH', label: '네트워크 스위치', uHeight: 1, heights: [1, 2, 4], powerWatts: null },
@@ -625,6 +625,29 @@ function renderRackEquipmentPalette() {
 }
 
 const POWER_BASIS_LABEL = Object.freeze({ nameplate: '명판값', typical: '일반 부하', measured: '실측' });
+// 도메인은 정체성이지 상태가 아니다. 경고와 초과가 쓰는 앰버와 빨강은 쓰지 않는다.
+const POWER_DOMAIN_COLORS = Object.freeze(['#077165', '#3d6ea8', '#7a4c86', '#6b4a2f', '#4a5e6b', '#2f6b5a']);
+
+function powerDomains() {
+  return (topology.failureDomains || []).filter(({ kind }) => kind === 'power')
+    .map((domain, index) => ({ ...domain, color: POWER_DOMAIN_COLORS[index % POWER_DOMAIN_COLORS.length], down: state.disabledDomains.has(domain.id) }));
+}
+
+// 한 장비가 여러 전원 도메인에 걸려 있으면 먼저 선언된 것을 쓴다. 색은 하나만 줄 수 있다.
+function placementDomain(deviceId) {
+  return deviceId ? powerDomains().find(({ deviceIds }) => (deviceIds || []).includes(deviceId)) || null : null;
+}
+
+// 랙 뷰는 지금 주입된 장애까지 반영해야 한다. topology 의 active 만 보면 PDU 를 꺼도 아무 변화가 없다.
+function rackPlacementViews(rack) {
+  return rackPlacements(topology, rack).map((placement) => {
+    const view = placementView(topology, placement);
+    const domain = rackView.domains ? placementDomain(view.deviceId) : null;
+    const scenario = view.deviceId ? current.devices.find(({ id }) => id === view.deviceId) : null;
+    const down = scenario ? scenario.active === false : false;
+    return { ...view, active: view.active && !down, down, domainId: domain?.id || null, domainName: domain?.name || null, domainColor: domain?.color || null };
+  });
+}
 
 function rackWarningThreshold() { return topology.warningThreshold ?? .8; }
 
@@ -664,8 +687,9 @@ function renderRackList() {
 function renderRackElevations() {
   element('rack-2d-canvas').innerHTML = (topology.racks || []).map((rack) => {
     const summary = rackSummary(topology, rack);
+    const views = rackPlacementViews(rack);
     const marks = Array.from({ length: rack.capacityU }, (_, index) => index + 1).filter((unit) => unit === 1 || unit === rack.capacityU || unit % 5 === 0).map((unit) => `<span style="bottom:calc((${unit} - .5) * var(--rack-u))">${unit}U</span>`).join('');
-    const devices = summary.placements.map((view) => `<button type="button" class="rack-device" data-rack-id="${escapeAttribute(rack.id)}" data-rack-placement="${escapeAttribute(view.id)}" data-mapped="${view.mapped}" data-active="${view.active}" aria-pressed="${rack.id === rackView.selectedRackId && view.id === rackView.selectedPlacementId}" style="--rack-start:${view.startU};--rack-height:${view.uHeight}"><strong>${escapeText(view.name)}</strong><span>U${view.startU}–${view.startU + view.uHeight - 1}</span>${view.uHeight > 1 ? `<small>${escapeText(view.model || view.kind)}${view.mapped ? ' · 토폴로지 연결' : ''}</small>` : ''}</button>`).join('');
+    const devices = views.map((view) => `<button type="button" class="rack-device" data-rack-id="${escapeAttribute(rack.id)}" data-rack-placement="${escapeAttribute(view.id)}" data-mapped="${view.mapped}" data-active="${view.active}"${view.domainId ? ` data-domain="${escapeAttribute(view.domainId)}" style="--rack-start:${view.startU};--rack-height:${view.uHeight};--domain-color:${escapeAttribute(view.domainColor)}"` : ` style="--rack-start:${view.startU};--rack-height:${view.uHeight}"`} aria-pressed="${rack.id === rackView.selectedRackId && view.id === rackView.selectedPlacementId}"><strong>${escapeText(view.name)}</strong><span>${view.down ? '정지' : `U${view.startU}–${view.startU + view.uHeight - 1}`}</span>${view.uHeight > 1 ? `<small>${escapeText(view.domainName && rackView.domains ? view.domainName : view.model || view.kind)}${view.mapped && !rackView.domains ? ' · 토폴로지 연결' : ''}</small>` : ''}</button>`).join('');
     return `<section class="rack-elevation-wrap"><header class="rack-elevation-head"><strong>${escapeText(rack.name)}</strong><span>${summary.usedU}/${rack.capacityU}U</span>${rackGauges(rack, rackUsage(topology, rack))}</header><div class="rack-elevation" data-rack-id="${escapeAttribute(rack.id)}" style="--rack-capacity:${rack.capacityU}"><div class="rack-u-labels">${marks}</div>${devices}</div><span class="rack-rail-label">FRONT ELEVATION</span></section>`;
   }).join('');
 }
@@ -678,7 +702,7 @@ async function ensureRackScene() {
 }
 function syncRackScene() {
   if (state.workspace !== 'rack' || rackView.mode !== '3d' || !(topology.racks || []).length) { rackScene?.stop(); return; }
-  ensureRackScene().then((scene) => { if (state.workspace === 'rack' && rackView.mode === '3d') { scene.update({ racks: topology.racks.map((rack) => ({ rack, placements: rackPlacements(topology, rack).map((placement) => placementView(topology, placement)), note: rackLabelNote(rack) })), links: current.links, selectedPlacementId: rackView.selectedPlacementId, showCables: rackView.cables }); scene.setFace(rackView.face); scene.start(); } }).catch(() => {});
+  ensureRackScene().then((scene) => { if (state.workspace === 'rack' && rackView.mode === '3d') { scene.update({ racks: topology.racks.map((rack) => ({ rack, placements: rackPlacementViews(rack), note: rackLabelNote(rack) })), links: current.links, selectedPlacementId: rackView.selectedPlacementId, showCables: rackView.cables }); scene.setFace(rackView.face); scene.start(); } }).catch(() => {});
 }
 
 // 장비가 선언한 기준과 그 값을 같이 고친다. 값만 고치면 랙 기준과 어긋난 채로 남아 합계에서 빠진다.
@@ -710,6 +734,20 @@ function renderRackInspector() {
   target.innerHTML = `<div class="rack-inspector-summary"><span>장비</span><strong>${escapeText(view.name)}</strong><span>연결</span><strong>${view.mapped ? '토폴로지 장비' : '랙 전용'}</strong><span>위치</span><strong>U${view.startU}–${view.startU + view.uHeight - 1}</strong></div><form data-rack-form="placement-edit" data-placement-id="${escapeAttribute(view.id)}">${view.mapped ? `<label>이름<input value="${escapeAttribute(view.name)}" disabled></label>${devicePowerFields(rack, view)}` : `<label>이름<input name="name" maxlength="80" required value="${escapeAttribute(view.name)}"></label><label>모델<input name="model" maxlength="80" value="${escapeAttribute(view.model)}"></label><label>종류<input name="kind" maxlength="80" required value="${escapeAttribute(view.kind)}"></label><label>전력 (W)<input name="powerWatts" type="number" min="0" value="${view.powerWatts ?? ''}"></label>`}<label>시작 U<input name="startU" type="number" min="1" max="${rack.capacityU}" required value="${view.startU}"></label><label>높이 (U)<input name="uHeight" type="number" min="1" max="${rack.capacityU}" required value="${editableHeight}"></label><div class="rack-inspector-actions"><button type="submit">배치 저장</button><button type="button" data-rack-action="delete-placement" data-danger>랙에서 제거</button></div><p class="rack-form-error"></p></form>`;
 }
 
+function renderPowerDomains() {
+  const host = element('rack-power-domains');
+  const domains = powerDomains();
+  host.hidden = !rackView.domains;
+  if (!rackView.domains) { host.innerHTML = ''; return; }
+  const placed = new Set((topology.racks || []).flatMap((rack) => rackPlacements(topology, rack).map(({ deviceId }) => deviceId).filter(Boolean)));
+  host.innerHTML = domains.length
+    ? `<span class="rack-domain-title">전원 도메인</span>${domains.map((domain) => {
+      const inRack = (domain.deviceIds || []).filter((id) => placed.has(id)).length;
+      return `<button type="button" class="rack-domain-chip" data-power-domain="${escapeAttribute(domain.id)}" aria-pressed="${domain.down}" style="--domain-color:${domain.color}"><i></i><strong>${escapeText(domain.name)}</strong><span>랙 안 ${inRack}대 / 전체 ${(domain.deviceIds || []).length}대</span><em>${domain.down ? '복구' : '끄기'}</em></button>`;
+    }).join('')}`
+    : '<p class="panel-note">전원 장애 도메인이 없습니다. 검증 패널의 장애 도메인에서 추가하세요.</p>';
+}
+
 function renderRackWorkspace() {
   renderRackList(); renderRackEquipmentPalette(); const racks = topology.racks || []; const rack = currentRack();
   for (const tab of document.querySelectorAll('[data-rack-sidebar-tab]')) tab.setAttribute('aria-selected', String(tab.dataset.rackSidebarTab === rackView.sidebarTab));
@@ -719,6 +757,8 @@ function renderRackWorkspace() {
   element('rack-3d-controls').hidden = rackView.mode !== '3d';
   for (const button of document.querySelectorAll('[data-rack-face]')) button.setAttribute('aria-pressed', String(button.dataset.rackFace === rackView.face));
   const cableToggle = document.querySelector('[data-rack-cables]'); cableToggle.setAttribute('aria-pressed', String(rackView.cables)); cableToggle.textContent = `케이블 ${rackView.cables ? '켬' : '끔'}`;
+  document.querySelector('[data-rack-domains]').setAttribute('aria-pressed', String(rackView.domains));
+  renderPowerDomains();
   element('rack-cable-note').textContent = rackView.cables ? '토폴로지 논리 링크 · 실제 배선 아님' : '케이블 표시 끔';
   const total = racks.reduce((sum, item) => sum + rackPlacements(topology, item).length, 0);
   element('rack-workspace-summary').textContent = racks.length ? `랙 ${racks.length}개 · 배치 장비 ${total}대 · 토폴로지와 독립 저장` : '랙을 추가해 시작하세요.';
@@ -4005,6 +4045,9 @@ element('rack-workspace').addEventListener('click', (event) => {
   const face = event.target.closest('[data-rack-face]');
   if (face) { rackView.face = face.dataset.rackFace; renderRackWorkspace(); return; }
   if (event.target.closest('[data-rack-cables]')) { rackView.cables = !rackView.cables; renderRackWorkspace(); return; }
+  if (event.target.closest('[data-rack-domains]')) { rackView.domains = !rackView.domains; renderRackWorkspace(); return; }
+  const domainChip = event.target.closest('[data-power-domain]');
+  if (domainChip) { toggleFailure('domain', domainChip.dataset.powerDomain); return; }
   const action = event.target.closest('[data-rack-action]')?.dataset.rackAction;
   if (!action) return;
   const rack = currentRack();
