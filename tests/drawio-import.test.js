@@ -103,10 +103,20 @@ test('one service keeps one kind whichever stencil set spells it', () => {
   assert.equal(kindOf('mxgraph.aws3d.customergateway'), 'router');
 });
 
+test('a network ACL filters packets at the subnet edge, so it counts as a firewall', () => {
+  const kindOf = (token) => classifyDrawioElement({ type: 'shape', rawStyle: `shape=${token}` }).suggestedDeviceKind;
+  // draw.io 는 "controllist" 로 붙여 적고, aws4 는 끊어 적는다.
+  for (const token of ['mxgraph.aws3.network_access_controllist', 'mxgraph.aws4.network_access_control_list', 'mxgraph.aws4.nacl']) {
+    assert.equal(kindOf(token), 'firewall', token);
+  }
+  // 이름에 access control 이 들어간다고 다 패킷을 거르지는 않는다. Azure 쪽은 인증 서비스다.
+  assert.equal(kindOf('mxgraph.azure.access_control'), null);
+});
+
 test('a drawing of people or a policy is not a device', () => {
   // 통과 대역이 없는 것은 장비가 아니다. 사람·건물 그림, 정책 표시, 주소, 영역.
   for (const token of ['mxgraph.aws4.illustration_users', 'mxgraph.aws4.illustration_office_building', 'mxgraph.aws3.role',
-    'mxgraph.aws3.network_access_controllist', 'mxgraph.aws4.peering', 'mxgraph.aws3.vpc_peering', 'mxgraph.aws4.auto_scaling',
+    'mxgraph.aws4.peering', 'mxgraph.aws3.vpc_peering', 'mxgraph.aws4.auto_scaling',
     'mxgraph.aws4.elastic_ip_address', 'mxgraph.aws3.corporate_data_center']) {
     assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: `shape=${token}` }).suggestedDeviceKind, null, token);
   }
