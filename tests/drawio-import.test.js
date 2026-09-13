@@ -77,7 +77,7 @@ test('network stencil tokens keep drawio underscore names in the exact registry'
 
 test('reference XML stencils use the generated upstream registry and stay exact', async () => {
   const tokens = Object.keys(DRAWIO_STENCILS);
-  assert.equal(tokens.length, 72);
+  assert.equal(tokens.length, 86);
   for (const token of tokens) assert.match(DRAWIO_STENCILS[token].body, /<(?:path|rect|ellipse)\b/);
   const cells = tokens.map((token, index) => `<mxCell id="s${index}" style="shape=${token}" vertex="1" parent="1"><mxGeometry x="${index * 20}" y="0" width="16" height="16" as="geometry"/></mxCell>`).join('');
   const document = await parseDrawioDocument(graph(cells));
@@ -419,4 +419,58 @@ test('a stencil payload that is not the drawn dialect falls back to the box', as
     const document = await parseDrawioDocument(graph(`<mxCell id="s" style="${style}" vertex="1" parent="1"><mxGeometry x="0" y="0" width="40" height="40" as="geometry"/></mxCell>`));
     assert.notEqual(document.pages[0].elements[0].drawioShape, 'stencil-inline');
   }
+});
+
+test('a fixed connection point keeps the offset its style names', async () => {
+  // exitDx/exitDy and entryDx/entryDy move the point off the fraction, and a
+  // non-orthogonal edge has to honour them the same way an orthogonal one does.
+  const body = (style) => `<mxCell id="a" style="shape=rect" vertex="1" parent="1"><mxGeometry x="0" y="0" width="50" height="50" as="geometry"/></mxCell><mxCell id="b" style="shape=rect" vertex="1" parent="1"><mxGeometry x="200" y="200" width="50" height="50" as="geometry"/></mxCell><mxCell id="e" style="${style}" edge="1" source="a" target="b" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>`;
+  const draw = async (style) => renderDrawioPageSvg((await parseDrawioDocument(graph(body(style)))).pages[0]).match(/class="drawio-edge-line" d="([^"]*)"/)[1];
+  const plain = await draw('endArrow=none;exitX=1;exitY=0;entryX=0;entryY=1');
+  const offset = await draw('endArrow=none;exitX=1;exitY=0;exitDx=6;exitDy=44;entryX=0;entryY=1;entryDx=44;entryDy=6');
+  assert.equal(plain, 'M 50 0 L 200 250');
+  assert.equal(offset, 'M 56 44 L 244 256');
+});
+
+test('a stored terminal point does not tilt a run between two shapes', async () => {
+  // The file keeps the points from before the shapes moved. Aiming at them
+  // sloped a run that draw.io draws flat.
+  const source = graph('<mxCell id="a" style="shape=rect" vertex="1" parent="1"><mxGeometry x="90" y="687" width="50" height="60" as="geometry"/></mxCell><mxCell id="b" style="shape=rect" vertex="1" parent="1"><mxGeometry x="250" y="691" width="49" height="52" as="geometry"/></mxCell><mxCell id="e" style="endArrow=none;exitX=1;exitY=0.5" edge="1" source="a" target="b" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="125" y="692" as="sourcePoint"/><mxPoint x="125" y="632" as="targetPoint"/></mxGeometry></mxCell>');
+  const path = renderDrawioPageSvg((await parseDrawioDocument(source)).pages[0]).match(/class="drawio-edge-line" d="([^"]*)"/)[1];
+  assert.equal(path, 'M 140 717 L 250 717');
+});
+
+test('a label reads the way draw.io writes it, entities and all', async () => {
+  const document = await parseDrawioDocument(graph('<mxCell id="t" value="Web-admin&amp;nbsp;name" style="shape=rect" vertex="1" parent="1"><mxGeometry x="0" y="0" width="80" height="40" as="geometry"/></mxCell>'));
+  // Left undecoded the six letters of the entity print inside the label.
+  assert.equal(document.pages[0].elements[0].text, 'Web-admin\u00a0name');
+});
+
+test('a label placed above its shape is drawn above it', async () => {
+  const draw = async (style) => {
+    const source = graph(`<mxCell id="s" value="Public subnet" style="${style}" vertex="1" parent="1"><mxGeometry x="100" y="200" width="120" height="100" as="geometry"/></mxCell>`);
+    return Number(renderDrawioPageSvg((await parseDrawioDocument(source)).pages[0]).match(/<text x="[^"]*" y="([^"]*)"/)[1]);
+  };
+  const above = await draw('shape=rect;verticalLabelPosition=top;verticalAlign=bottom');
+  const below = await draw('shape=rect;verticalLabelPosition=bottom;verticalAlign=top');
+  assert.ok(above < 200, `a top label sits above the shape, got ${above}`);
+  assert.ok(below > 300, `a bottom label sits below the shape, got ${below}`);
+});
+
+test('an edge label rides its edge instead of collapsing to the origin', async () => {
+  const source = graph('<mxCell id="a" style="shape=rect" vertex="1" parent="1"><mxGeometry x="0" y="0" width="40" height="40" as="geometry"/></mxCell><mxCell id="b" style="shape=rect" vertex="1" parent="1"><mxGeometry x="400" y="200" width="40" height="40" as="geometry"/></mxCell><mxCell id="e" style="endArrow=none" edge="1" source="a" target="b" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell><mxCell id="lbl" value="SYNC" style="text;html=1" vertex="1" connectable="0" parent="e"><mxGeometry x="8.33" y="-150" relative="1" as="geometry"/></mxCell>');
+  const label = (await parseDrawioDocument(source)).pages[0].elements.find((item) => item.text === 'SYNC');
+  // The shape centres are (20, 20) and (420, 220), so the label centres on (220, 120).
+  assert.equal(label.geometry.x + label.geometry.width / 2, 220);
+  assert.equal(label.geometry.y + label.geometry.height / 2, 120);
+});
+
+test('an edge with no cell at either end anchors on its own stored points', async () => {
+  const source = graph('<mxCell id="e" style="endArrow=classic" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="115" y="664" as="sourcePoint"/><mxPoint x="115" y="604" as="targetPoint"/></mxGeometry></mxCell>');
+  const applied = applyDrawioImport({ devices: [], links: [], demands: [] }, createDrawioPreview(await parseDrawioDocument(source)));
+  const anchors = applied.topology.diagram.shapes.filter((shape) => shape.width === 1 && shape.height === 1);
+  // Reading the waypoint list instead put both ends at the origin, and the
+  // canvas then stretched from there to the diagram.
+  assert.deepEqual(anchors.map(({ x, y }) => [x, y]), [[115, 664], [115, 604]]);
+  assert.equal(anchors.some(({ x, y }) => x === 0 && y === 0), false);
 });

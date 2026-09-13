@@ -44,8 +44,10 @@ function attributes(source) {
 }
 
 function decodeEntities(value) {
-  return String(value || '').replace(/&(amp|lt|gt|quot|apos|#(?:x[0-9a-f]+|[0-9]+));/gi, (token, entity) => {
-    const named = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+  // draw.io writes labels as HTML, so a non-breaking space arrives named. Left
+  // undecoded it prints as the six letters of the entity.
+  return String(value || '').replace(/&(amp|lt|gt|quot|apos|nbsp|#(?:x[0-9a-f]+|[0-9]+));/gi, (token, entity) => {
+    const named = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0' };
     if (named[entity.toLowerCase()] != null) return named[entity.toLowerCase()];
     const codePoint = entity[1].toLowerCase() === 'x' ? Number.parseInt(entity.slice(2), 16) : Number.parseInt(entity.slice(1), 10);
     return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : token;
@@ -310,7 +312,7 @@ function safeOptions(map) {
     ...(fontFamily ? { fontFamily } : {}),
     ...(map.textDirection === 'vertical' ? { textDirection: 'vertical' } : {}),
     ...(map.labelBackgroundColor === '#ffffff' || map.labelBackgroundColor === '#fff' ? { labelBackgroundColor: '#ffffff' } : {}),
-    ...(map.verticalLabelPosition === 'bottom' ? { verticalLabelPosition: 'bottom' } : {}),
+    ...(map.verticalLabelPosition === 'bottom' || map.verticalLabelPosition === 'top' ? { verticalLabelPosition: map.verticalLabelPosition } : {}),
     ...(map.autosize === '1' ? { autosize: true } : {}),
     ...(dimension(map.spacingLeft) != null ? { spacingLeft: dimension(map.spacingLeft) } : {}),
     ...(dimension(map.spacingRight) != null ? { spacingRight: dimension(map.spacingRight) } : {}),
@@ -545,11 +547,34 @@ async function pageElements(model, page, registry) {
     const cell = cells.get(id); if (!cell) return { x: 0, y: 0 };
     const parent = cell.parentId && cells.has(cell.parentId) ? locate(cell.parentId, [...chain, id]) : { x: 0, y: 0 };
     const relative = cell.geometry.relative === '1';
-    const x = relative ? parent.x + number(cell.geometry.x) * (number(cells.get(cell.parentId)?.geometry.width, 0)) : parent.x + number(cell.geometry.x);
-    const y = relative ? parent.y + number(cell.geometry.y) * (number(cells.get(cell.parentId)?.geometry.height, 0)) : parent.y + number(cell.geometry.y);
+    const owner = cell.parentId ? cells.get(cell.parentId) : null;
+    // A relative child of an edge is that edge's label: its x rides the line and
+    // its y steps off it, so anchor on the edge instead of on a box that has no
+    // width. Read absolutely it lands at the origin and drags the page with it.
+    const edgeAnchorPoint = relative && owner?.edge ? edgeMidpoint(owner, locate) : null;
+    const x = edgeAnchorPoint ? edgeAnchorPoint.x - number(cell.geometry.width, 160) / 2
+      : relative ? parent.x + number(cell.geometry.x) * (number(owner?.geometry.width, 0)) : parent.x + number(cell.geometry.x);
+    const y = edgeAnchorPoint ? edgeAnchorPoint.y - number(cell.geometry.height, 80) / 2
+      : relative ? parent.y + number(cell.geometry.y) * (number(owner?.geometry.height, 0)) : parent.y + number(cell.geometry.y);
     const result = { x, y, width: Math.max(1, number(cell.geometry.width, 160)), height: Math.max(1, number(cell.geometry.height, 80)), relative };
     absolute.set(id, result); return result;
   }
+  // Where the parent edge runs: its own stored endpoints when it has them, and
+  // the centres of the cells it joins when it does not.
+  function edgeMidpoint(edge, resolve) {
+    const ends = [];
+    for (const [point, terminal] of [[edge.edgeGeometry?.sourcePoint, edge.source], [edge.edgeGeometry?.targetPoint, edge.target]]) {
+      const shape = terminal && cells.has(terminal) ? resolve(terminal, []) : null;
+      if (shape) ends.push({ x: shape.x + shape.width / 2, y: shape.y + shape.height / 2 });
+      else if (point && Number.isFinite(number(point.x)) && Number.isFinite(number(point.y))) ends.push({ x: number(point.x), y: number(point.y) });
+    }
+    if (!ends.length) return null;
+    const waypoints = edge.edgeGeometry?.waypoints || [];
+    const along = waypoints.length ? [ends[0], ...waypoints, ends.at(-1)].filter(Boolean) : ends;
+    const middle = along[Math.floor(along.length / 2)] || along[0];
+    return along.length === 2 ? { x: (along[0].x + along[1].x) / 2, y: (along[0].y + along[1].y) / 2 } : middle;
+  }
+
   const elements = []; let serial = 0; let zIndex = 0;
   for (const cell of cells.values()) {
     if (!cell.vertex && !cell.edge) continue;
@@ -644,7 +669,9 @@ function labelMarkup(element, paint) {
   // The SVG text baseline sits about 9px below the top of a 12px draw.io HTML
   // label. Keep the label anchor in the source coordinate system.
   const baselineOffset = 1;
-  const base = (options.verticalLabelPosition === 'bottom' || defaultBelow ? y + height + fontSize + 2 + top : paint.verticalAlign === 'top' ? y + fontSize + 2 + top : paint.verticalAlign === 'bottom' ? y + height - lineHeight * (lines.length - 1) - 2 - bottom : y + height / 2 - lineHeight * (lines.length - 1) / 2 + (top - bottom) / 2) + baselineOffset;
+  // A label placed above sits clear of the shape, the same distance the bottom
+  // one sits below it.
+  const base = (options.verticalLabelPosition === 'top' ? y - 2 - bottom - lineHeight * (lines.length - 1) : options.verticalLabelPosition === 'bottom' || defaultBelow ? y + height + fontSize + 2 + top : paint.verticalAlign === 'top' ? y + fontSize + 2 + top : paint.verticalAlign === 'bottom' ? y + height - lineHeight * (lines.length - 1) - 2 - bottom : y + height / 2 - lineHeight * (lines.length - 1) / 2 + (top - bottom) / 2) + baselineOffset;
   const background = options.labelBackgroundColor ? `<rect x="${svgNumber(textX - Math.max(12, width * .22))}" y="${svgNumber(base - lineHeight)}" width="${svgNumber(Math.max(24, width * .44))}" height="${svgNumber(lineHeight * lines.length)}" fill="${options.labelBackgroundColor}"/>` : '';
   const rotate = options.textDirection === 'vertical' ? ` transform="rotate(-90 ${svgNumber(textX)} ${svgNumber(base)})"` : '';
   const markup = lines.map((line, index) => `<tspan x="${svgNumber(textX)}" dy="${index ? svgNumber(lineHeight) : 0}">${line.map((run) => `<tspan fill="${svgColor(run.color, svgColor(paint.textColor, '#000000'))}"${run.fontFamily ? ` font-family="${run.fontFamily}"` : ''}${run.fontSize ? ` font-size="${run.fontSize}"` : ''}${run.fontWeight ? ` font-weight="${run.fontWeight}"` : ''}${run.fontStyle ? ` font-style="${run.fontStyle}"` : ''}${run.textDecoration ? ` text-decoration="${run.textDecoration}"` : ''}>${svgText(run.text)}</tspan>`).join('')}</tspan>`).join('');
@@ -884,13 +911,14 @@ function mxOrthogonalRoute(edge, sourceShape, targetShape) {
   return settled.length >= 2 ? settled : null;
 }
 
-function edgeAnchor(shape, optionX, optionY, toward, explicit, perimeterSpacing = 0) {
+function edgeAnchor(shape, optionX, optionY, toward, explicit, perimeterSpacing = 0, offsetX = 0, offsetY = 0) {
   // mxGraphView.getFixedTerminalPoint keeps a stored terminal point only for an
   // end with no cell. A connected end goes on the perimeter, because the stored
   // point goes stale as soon as the shape moves.
   if (!shape) return explicit || null;
   const { x, y, width, height } = shape.geometry;
-  if (Number.isFinite(optionX) && Number.isFinite(optionY)) return { x: x + width * optionX, y: y + height * optionY };
+  // exitDx/entryDx move a fixed connection point off the fraction it names.
+  if (Number.isFinite(optionX) && Number.isFinite(optionY)) return { x: x + width * optionX + (offsetX || 0), y: y + height * optionY + (offsetY || 0) };
   const center = { x: x + width / 2, y: y + height / 2 };
   if (!toward) return center;
   const dx = toward.x - center.x; const dy = toward.y - center.y;
@@ -901,8 +929,8 @@ function edgeAnchor(shape, optionX, optionY, toward, explicit, perimeterSpacing 
   return { x: anchor.x + (anchor.x - center.x) / length * perimeterSpacing, y: anchor.y + (anchor.y - center.y) / length * perimeterSpacing };
 }
 
-function orthogonalEdgeAnchor(shape, optionX, optionY, toward, explicit, perimeterSpacing = 0) {
-  if (!shape || Number.isFinite(optionX) || Number.isFinite(optionY)) return edgeAnchor(shape, optionX, optionY, toward, explicit, perimeterSpacing);
+function orthogonalEdgeAnchor(shape, optionX, optionY, toward, explicit, perimeterSpacing = 0, offsetX = 0, offsetY = 0) {
+  if (!shape || Number.isFinite(optionX) || Number.isFinite(optionY)) return edgeAnchor(shape, optionX, optionY, toward, explicit, perimeterSpacing, offsetX, offsetY);
   const { x, y, width, height } = shape.geometry; const center = { x: x + width / 2, y: y + height / 2 };
   if (!toward) return center;
   const dx = toward.x - center.x; const dy = toward.y - center.y;
@@ -966,15 +994,17 @@ function edgeRoute(edge, sourceShape, targetShape) {
 
 function plotEdgeRoute(edge, sourceShape, targetShape) {
   const options = edge.drawioOptions || {}; const geometry = edge.geometry || {}; const waypoints = geometry.waypoints || edge.points || [];
-  const sourceHint = waypoints[0] || geometry.targetPoint || (targetShape ? elementCenter(targetShape) : null);
-  const targetHint = waypoints.at(-1) || geometry.sourcePoint || (sourceShape ? elementCenter(sourceShape) : null);
+  // A stored terminal point is only a hint for an end with no cell. With a cell
+  // present it is stale the moment the shape moves, and it tilts the whole run.
+  const sourceHint = waypoints[0] || (targetShape ? elementCenter(targetShape) : geometry.targetPoint) || null;
+  const targetHint = waypoints.at(-1) || (sourceShape ? elementCenter(sourceShape) : geometry.sourcePoint) || null;
   if (options.routeMode === 'orthogonal' && (sourceShape || geometry.sourcePoint) && (targetShape || geometry.targetPoint)) {
     const routed = mxOrthogonalRoute(edge, sourceShape, targetShape);
     if (routed) return { mode: 'orthogonal', points: compactRoute(routed) };
   }
   const anchoring = options.routeMode === 'orthogonal' || options.routeMode === 'elbow' ? orthogonalEdgeAnchor : edgeAnchor;
-  const source = anchoring(sourceShape, options.exitX, options.exitY, sourceHint, geometry.sourcePoint);
-  const target = anchoring(targetShape, options.entryX, options.entryY, targetHint, geometry.targetPoint, options.targetPerimeterSpacing);
+  const source = anchoring(sourceShape, options.exitX, options.exitY, sourceHint, geometry.sourcePoint, 0, options.exitDx, options.exitDy);
+  const target = anchoring(targetShape, options.entryX, options.entryY, targetHint, geometry.targetPoint, options.targetPerimeterSpacing, options.entryDx, options.entryDy);
   if (!source || !target) return { mode: 'line', points: compactRoute([source, ...waypoints, target].filter(Boolean)) };
   const base = compactRoute([source, ...waypoints, target]);
   if (base.length < 2) return { mode: 'line', points: base };
@@ -1267,7 +1297,12 @@ export function applyDrawioImport(topology, preview, decisions = preview.decisio
     const endpoints = [source, target];
     for (let index = 0; index < endpoints.length; index += 1) if (!endpoints[index]) {
       const anchorId = uniqueId(ids, `anchor-${edge.id}-${index + 1}`);
-      const point = edge.points[index] || { x: 0, y: 0 };
+      // An end with no cell keeps its own stored point. Reading the waypoint list
+      // here left an edge with none anchored at the origin, which dragged the
+      // whole canvas out to meet it.
+      const stored = index === 0 ? edge.geometry?.sourcePoint : edge.geometry?.targetPoint;
+      const waypoint = edge.points?.length ? edge.points[index === 0 ? 0 : edge.points.length - 1] : null;
+      const point = stored || waypoint || { x: 0, y: 0 };
       next.diagram.shapes.push({ id: anchorId, kind: 'text', text: '', x: point.x, y: point.y, width: 1, height: 1, opacity: 0, unmapped: true }); endpoints[index] = anchorId;
     }
     if (endpoints[0] === endpoints[1]) { warnings.push(warning('self-edge-annotation', edge.id)); continue; }
