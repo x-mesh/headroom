@@ -15,7 +15,7 @@ const CABINET = Object.freeze({ width: FRAME_WIDTH, depth: FRAME_DEPTH });
 
 const COLORS = Object.freeze({
   frame: 0x24382f, crown: 0x2d4a41, plinth: 0x0f1a17, tray: 0x3c5850,
-  selected: 0xb8e737, warn: 0xd28a22, over: 0xb83c34, unknown: 0x8b9a94,
+  selected: 0xb8e737, ok: 0x4f7100, warn: 0xd28a22, over: 0xb83c34, unknown: 0x8b9a94, blocked: 0x3a4a45,
   cable: [0x25a98f, 0x8dbd32, 0x5b7f75], warningCable: 0xd28a22, downCable: 0xb83c34,
 });
 const PORT_KINDS = new Set(['switch', 'hub', 'router', 'modem', 'wireless', 'firewall', 'ips', 'waf', 'vpn', 'sslvpn', 'lb']);
@@ -493,7 +493,7 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
   // 랙마다 전면 U 구간을 선분으로 두고 광선과의 최단점을 찾는다. 평면 교차와 달리 옆에서 본
   // 각도에서도 답이 나오고, 선분 밖은 자동으로 양 끝 U로 잘린다.
   const dropSpan = [new THREE.Vector3(), new THREE.Vector3()]; const dropPoint = new THREE.Vector3();
-  let dropZones = []; let preview = null;
+  let dropZones = []; let preview = null; let candidates = [];
   let dragging = null; let active = false; let frame = 0; let reduce = reducedMotion; let pickables = []; let face = 'front';
   let rackCount = 0; let cableCount = 0; let patchCableCount = 0; let trayBundleCount = 0; let framedFor = '';
   function placeCamera() {
@@ -504,7 +504,7 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
   function resize() { const width = Math.max(1, host.clientWidth); const height = Math.max(1, host.clientHeight); renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix(); }
   function renderFrame() { if (!active) return; placeCamera(); renderer.render(scene, camera); frame = requestAnimationFrame(renderFrame); }
   function disposeObject(object) { object.traverse((child) => { child.geometry?.dispose(); const materials = Array.isArray(child.material) ? child.material : child.material ? [child.material] : []; for (const material of materials) { for (const value of Object.values(material)) if (value?.isTexture) value.dispose(); material.dispose(); } }); }
-  function clear() { for (const child of [...world.children].slice(2)) { world.remove(child); disposeObject(child); } pickables = []; dropZones = []; preview = null; }
+  function clear() { for (const child of [...world.children].slice(2)) { world.remove(child); disposeObject(child); } pickables = []; dropZones = []; preview = null; candidates = []; }
   function update({ racks, links = [], selectedPlacementId, showCables = false }) {
     clear(); const spacing = FRAME_WIDTH + .5; const center = (racks.length - 1) * spacing / 2; const positions = new Map(); let tallest = 0;
     racks.forEach(({ rack, placements, note }, index) => {
@@ -549,6 +549,24 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
     }
     const hoveredU = Math.min(best.zone.capacityU, Math.max(1, Math.floor((best.y - best.zone.baseY) / U) + 1));
     return { rackId: best.zone.rackId, hoveredU };
+  }
+  function setDropCandidates(list) {
+    for (const pad of candidates) pad.visible = false;
+    if (!list) return;
+    list.forEach((item, index) => {
+      const zone = dropZones.find(({ rackId }) => rackId === item.rackId);
+      if (!zone) return;
+      let pad = candidates[index];
+      if (!pad) {
+        pad = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: COLORS.ok, transparent: true, opacity: .2, depthWrite: false }));
+        pad.rotation.x = -Math.PI / 2; world.add(pad); candidates[index] = pad;
+      }
+      pad.material.color.setHex(COLORS[item.status] ?? COLORS.ok);
+      pad.material.opacity = item.status === 'blocked' ? .12 : .24;
+      pad.scale.set(FRAME_WIDTH + .4, FRAME_DEPTH + .4, 1);
+      pad.position.set(zone.x, .03, FRAME_Z);
+      pad.visible = true;
+    });
   }
   function setDropPreview(target) {
     const zone = target ? dropZones.find(({ rackId }) => rackId === target.rackId) : null;
@@ -598,7 +616,7 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
   canvas.addEventListener('wheel', (event) => { event.preventDefault(); view.distance = THREE.MathUtils.clamp(view.distance * Math.exp(event.deltaY * .001), 9, 90); }, { passive: false });
   const observer = new ResizeObserver(resize); observer.observe(host); resize();
   return {
-    update, dropTarget, setDropPreview, placementAt: (clientX, clientY) => hitPlacement(clientX, clientY),
+    update, dropTarget, setDropPreview, setDropCandidates, placementAt: (clientX, clientY) => hitPlacement(clientX, clientY),
     setFace(next) { if (!['front', 'rear'].includes(next) || face === next) return; face = next; view.yaw = face === 'rear' ? Math.PI - .48 : -.48; },
     start() { if (active) return; active = true; resize(); frame = requestAnimationFrame(renderFrame); },
     stop() { active = false; cancelAnimationFrame(frame); },

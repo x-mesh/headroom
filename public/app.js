@@ -890,12 +890,41 @@ function rackPlacementDrag(rack, placement, node, pointerId, clientX, clientY) {
     pointerId, item: node, startX: clientX, startY: clientY, ghost: null };
 }
 
+function rackDropCandidates(drag) {
+  const threshold = rackWarningThreshold();
+  return (topology.racks || []).map((rack) => {
+    const ignoreId = drag.placementId && drag.fromRackId === rack.id ? drag.placementId : null;
+    const startU = nearestFreeStartU(topology, rack, drag.uHeight, 1, ignoreId);
+    const usage = rackUsage(topology, rack, ignoreId ? null : { deviceId: drag.deviceId, powerWatts: drag.powerWatts, uHeight: drag.uHeight, name: drag.name });
+    const status = startU == null ? 'blocked'
+      : !usage.powerKnown || usage.powerBudgetWatts == null ? 'unknown'
+        : usage.powerRatio > 1 ? 'over' : usage.powerRatio >= threshold ? 'warn' : 'ok';
+    return { rackId: rack.id, status };
+  });
+}
+
+function showRackDropCandidates(drag) {
+  const candidates = rackDropCandidates(drag);
+  for (const node of document.querySelectorAll('.rack-elevation-wrap')) {
+    const id = node.querySelector('.rack-elevation')?.dataset.rackId;
+    const match = candidates.find(({ rackId }) => rackId === id);
+    if (match) node.dataset.candidate = match.status; else delete node.dataset.candidate;
+  }
+  rackScene?.setDropCandidates(candidates);
+}
+
+function clearRackDropCandidates() {
+  for (const node of document.querySelectorAll('.rack-elevation-wrap')) delete node.dataset.candidate;
+  rackScene?.setDropCandidates(null);
+}
+
 function advanceRackDrag(clientX, clientY) {
   if (!rackDrag) return;
   if (!rackDrag.ghost && Math.hypot(clientX - rackDrag.startX, clientY - rackDrag.startY) > PALETTE_DRAG_THRESHOLD) {
     rackDrag.ghost = document.createElement('div'); rackDrag.ghost.className = 'rack-palette-ghost';
     rackDrag.ghost.innerHTML = `<strong>${escapeText(rackDrag.name)}</strong><span>${rackDrag.uHeight}U</span><em></em>`;
     document.body.append(rackDrag.ghost); rackDrag.item?.classList.add('dragging');
+    showRackDropCandidates(rackDrag);
   }
   if (!rackDrag.ghost) return;
   rackDrag.ghost.style.transform = `translate(${clientX}px, ${clientY}px) translate(-50%, -50%)`;
@@ -918,6 +947,7 @@ function cancelRackDrag() {
   if (rackDragPreviewFrame) cancelAnimationFrame(rackDragPreviewFrame);
   rackDragPreviewFrame = null;
   drag?.ghost?.remove(); drag?.item?.classList.remove('dragging');
+  clearRackDropCandidates();
   if (drag?.item?.hasPointerCapture?.(drag.pointerId)) drag.item.releasePointerCapture(drag.pointerId);
   clearRackDropPreview();
   return drag;
