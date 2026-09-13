@@ -776,7 +776,8 @@ function rackExtraWatts(topology, rack, extra) {
 export function evaluateRacks(topology) {
   return (topology.racks || []).map((rack) => {
     const usage = rackUsage(topology, rack);
-    return { ...rack, powerWatts: usage.powerWatts, usedU: usage.usedU, powerHeadroomWatts: usage.powerHeadroomWatts, remainingU: usage.remainingU, status: usage.status };
+    return { ...rack, powerWatts: usage.powerWatts, usedU: usage.usedU, powerHeadroomWatts: usage.powerHeadroomWatts, remainingU: usage.remainingU,
+      powerRatio: usage.powerRatio, spaceRatio: usage.spaceRatio, unknownPower: usage.unknownPower, status: usage.status };
   });
 }
 
