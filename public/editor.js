@@ -377,6 +377,32 @@ export function addLink(topology, input) {
   return link;
 }
 
+// 가져온 연결선은 그림일 뿐이라 계산에 들어가지 않는다. 양 끝이 장비가 되면 트래픽을 나르는
+// 링크로 바꿀 수 있다. 용량은 그림에 없으므로 비워 둔다 — 임포트가 만드는 링크와 같은 상태이고,
+// 여기서 기본값을 지어내면 재지 않은 숫자가 계산에 섞인다.
+export function promoteConnector(topology, connectorId) {
+  const connectors = topology.diagram?.connectors || [];
+  const connector = connectors.find(({ id }) => id === connectorId);
+  if (!connector) throw new Error(`Connector ${connectorId} does not exist`);
+  const devices = deviceIds(topology);
+  if (!devices.has(connector.source) || !devices.has(connector.target)) throw new Error('A link requires a device at both ends');
+  if (connector.source === connector.target) throw new Error('A link requires two different devices');
+  const id = requireId(`link-${String(connectorId).replace(/^connector-/, '')}`, 'Link');
+  if (linkIds(topology).has(id)) throw new Error(`Link ${id} already exists`);
+  const link = { id, source: connector.source, target: connector.target, capacity: { forwarding_bps: null }, enabled: true };
+  // draw.io 에서 온 연결선만 그 외형을 들고 간다. 손으로 그린 연결선은 앱의 링크 모양을 쓴다.
+  if (Number.isInteger(connector.zIndex)) {
+    link.drawioVisual = { zIndex: connector.zIndex,
+      paint: { ...(connector.stroke ? { stroke: connector.stroke } : {}), ...(connector.strokeWidth ? { strokeWidth: connector.strokeWidth } : {}), ...(connector.dashed ? { lineStyle: 'dashed' } : {}) },
+      ...(connector.drawioOptions ? { drawioOptions: connector.drawioOptions } : {}),
+      ...(connector.drawioGeometry ? { geometry: connector.drawioGeometry } : {}),
+      ...(connector.waypoints?.length ? { waypoints: connector.waypoints } : {}) };
+  }
+  topology.links.push(link);
+  topology.diagram.connectors = connectors.filter(({ id: item }) => item !== connectorId);
+  return link;
+}
+
 export function updateLink(topology, id, patch) {
   const link = topology.links.find((item) => item.id === id);
   if (!link) throw new Error(`Link ${id} does not exist`);

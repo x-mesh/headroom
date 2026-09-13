@@ -1,6 +1,6 @@
 import { axisCatalog, behaviorCatalog, cloneTopology, failureDomainKinds } from './data.js';
 import { calculateScenario, calculateSurvivalMultiplier, compareScenarios, createExport, createFailureDomainSweepTask, createSingleFaultSweepTask, createSurvivalMultiplierTask, ENGINE_VERSION, sweepFailureDomains, sweepSingleFaults } from './engine.js';
-import { acceptEvidence, addDemand, addDevice, addLink, applySpec, clearEvidenceAcceptance, moveDevice, normalizeId, removeDemand, removeDevice, removeLink, setLimitOverride, setWorkloadConditions, updateDemand, updateDevice, updateLink } from './editor.js';
+import { acceptEvidence, addDemand, addDevice, addLink, applySpec, clearEvidenceAcceptance, moveDevice, normalizeId, promoteConnector, removeDemand, removeDevice, removeLink, setLimitOverride, setWorkloadConditions, updateDemand, updateDevice, updateLink } from './editor.js';
 import { importDeviceDefinition } from './device-import.js';
 import { applyMeasuredLimits, applyObservedLoad, buildObservedLoadValidationReport, compareTopologyFingerprint, fingerprintMatches, importMeasuredLimits, importObservedLoad, importZabbixObservedLoad, OBSERVED_LOAD_STALE_AFTER_DAYS, observedLoadIsStale } from './measured-import.js';
 import { parseProject, serializeProject } from './project.js';
@@ -1770,14 +1770,15 @@ function renderTopology() {
   };
 
   element('link-layer').innerHTML = groupMarkup + (topology.synthetic ? '<text class="synthetic-marker" x="18" y="30">SYNTHETIC TOPOLOGY</text>' : '') + current.links.map((link) => {
-    if (hasDrawioImport && link.drawioVisual) {
-      const geometry = escapeAttribute(linkPath(routes.get(link.id), routeView.mode));
-      return `<g class="link-group" data-link-id="${escapeAttribute(link.id)}"><path class="link-hit" d="${geometry}" tabindex="0" role="button" aria-label="${escapeAttribute(`${resourceName(link)} 링크 검사`)}"></path></g>`;
-    }
+    // 가져온 링크는 draw.io 선 자체가 그려지므로 기본 선은 다시 긋지 않는다. 부하 표시와 패킷
+    // 점은 그 선 위에 얹어야 하므로, 앱이 계산한 경로가 아니라 draw.io 가 낸 경로를 쓴다.
+    // 두 레이어는 viewBox 가 같아 좌표를 변환할 필요가 없다.
+    const importedPoints = hasDrawioImport && link.drawioVisual ? importedEdgeContext.get(link.id)?.route?.points : null;
+    const imported = importedPoints?.length >= 2 ? importedPoints : null;
     const onSeveredPath = !link.severed && severedPathLinks.has(link.id);
     const status = detailView.level === 'off' && !onSeveredPath && !link.severed ? 'healthy' : linkStatus(link);
-    const spot = labelSpots.get(link.id);
-    const geometryRaw = linkPath(routes.get(link.id), routeView.mode);
+    const spot = imported ? imported[Math.floor(imported.length / 2)] : labelSpots.get(link.id);
+    const geometryRaw = imported ? imported.map(({ x, y }, index) => `${index ? 'L' : 'M'} ${x} ${y}`).join(' ') : linkPath(routes.get(link.id), routeView.mode);
     const geometry = escapeAttribute(geometryRaw);
     const linkLength = pathLength(geometryRaw);
     const utilization = link.axes.forwarding_bps?.utilization;
@@ -1801,11 +1802,11 @@ function renderTopology() {
     const packetDots = packetStream('forward') + packetStream('reverse');
     return `<g class="link-group" data-link-id="${escapeAttribute(link.id)}">
       ${selectionHas('link', link.id) ? `<path class="link-selection" d="${geometry}"></path>` : ''}
-      <path class="link ${status}" d="${geometry}"></path>
+      ${imported ? '' : `<path class="link ${status}" d="${geometry}"></path>`}
       <path class="link-hit" d="${geometry}" tabindex="0" role="button" aria-label="${escapeAttribute(`${resourceName(link)} 링크 검사${link.severed ? ' · 끊김' : onSeveredPath ? ' · 경로 단절' : ''}`)}"></path>
       ${packetDots}
       ${spot ? `<text class="link-label"${link.severed ? '' : ` data-live-util="${utilization ?? ''}" data-live-seed="${link.id}" data-live-source-type="${escapeAttribute(link.sourceInfo?.type || 'datasheet')}"`} x="${spot.x}" y="${spot.y}" text-anchor="middle">${link.severed ? 'DOWN' : formatPercent(utilization)}</text>` : ''}
-      ${selectionHas('link', link.id) ? bendHandles(link) : ''}
+      ${!imported && selectionHas('link', link.id) ? bendHandles(link) : ''}
     </g>`;
   }).join('') + diagramConnectors + (hasDrawioImport ? '' : groupLabels);
   fitGroupTags();
@@ -2035,6 +2036,18 @@ function renderGroupEditor(group) {
   </form>`;
 }
 
+// 연결선은 계산에 들어가지 않는다. 양 끝이 장비면 링크로 바꿀 수 있고, 아니면 무엇이 막고
+// 있는지 그 자리에서 말해 준다 — 도형을 장비로 매핑하면 이 버튼이 열린다.
+function connectorPromotionMarkup(connector) {
+  const isDevice = (id) => topology.devices.some((device) => device.id === id);
+  if (isDevice(connector.source) && isDevice(connector.target) && connector.source !== connector.target) {
+    return `<div class="form-actions"><button type="button" data-promote-connector="${escapeAttribute(connector.id)}">트래픽 링크로 바꾸기</button></div>
+      <p class="editor-hint">용량은 그림에 없으므로 비워 둡니다. 링크를 선택해 채우세요.</p>`;
+  }
+  const ends = ['source', 'target'].filter((side) => !isDevice(connector[side]));
+  return `<p class="editor-hint">${ends.length === 2 ? '양 끝' : ends[0] === 'source' ? '출발 쪽' : '도착 쪽'}이 아직 장비가 아닙니다. 가져온 도형을 선택해 장비로 매핑하면 이 연결선을 링크로 바꿀 수 있습니다.</p>`;
+}
+
 function renderConnectorEditor(connector) {
   const arrowOptions = [['none', '없음'], ['classic', '삼각형'], ['open', '열림'], ['block', '블록']];
   return `<form class="shape-editor${connector.locked ? ' locked' : ''}" data-resource-form="connector" data-resource-id="${escapeAttribute(connector.id)}">
@@ -2048,7 +2061,9 @@ function renderConnectorEditor(connector) {
       <label><span>시작 화살표</span><select name="startArrow">${arrowOptions.map(([value, label]) => `<option value="${value}"${(connector.startArrow || 'none') === value ? ' selected' : ''}>${label}</option>`).join('')}</select></label>
       <label><span>끝 화살표</span><select name="endArrow">${arrowOptions.map(([value, label]) => `<option value="${value}"${(connector.endArrow || 'none') === value ? ' selected' : ''}>${label}</option>`).join('')}</select></label>
     </div><label class="shape-lock"><input name="dashed" type="checkbox"${connector.dashed === false ? '' : ' checked'}><span>점선</span></label>
-    <p class="shape-editor-error editor-error" role="alert"></p><div class="form-actions"><button type="submit">연결선 저장</button></div>
+    <p class="shape-editor-error editor-error" role="alert"></p>
+    ${connectorPromotionMarkup(connector)}
+    <div class="form-actions"><button type="submit">연결선 저장</button></div>
   </form>`;
 }
 
@@ -2236,10 +2251,10 @@ function renderDeviceEditor(resource) {
 
 function renderLinkEditor(resource) {
   return `<form class="inspector-editor" data-resource-form="link" data-resource-id="${resource.id}">
-    <h3>링크 편집</h3><label>방향별 용량 (bps)<input name="capacityBps" type="number" min="1" step="any" required value="${resource.capacity.forwarding_bps}"></label>
+    <h3>링크 편집</h3><label>방향별 용량 (bps)<input name="capacityBps" type="number" min="1" step="any" required value="${resource.capacity.forwarding_bps ?? ''}" placeholder="가져온 링크는 비어 있습니다"></label>
     ${resource.capacityByDirection ? ['forward', 'reverse'].map((direction) => `<label>${direction === 'forward' ? '정방향' : '역방향'}만 다르게 (bps)<input name="${direction}Bps" type="number" min="1" step="any"
       value="${resource.capacityByDirection[direction]?.forwarding_bps ?? ''}" placeholder="비우면 위 값을 씁니다"></label>`).join('') : ''}
-    <div class="inspector-editor-actions"><button type="submit">적용</button><button type="button" data-delete-resource="link">링크 삭제</button></div><p class="editor-error"></p>
+    <div class="inspector-editor-actions"><button type="submit">적용</button><button type="button" data-demand-link="${escapeAttribute(resource.id)}">이 링크로 수요 추가</button><button type="button" data-delete-resource="link">링크 삭제</button></div><p class="editor-error"></p>
   </form>`;
 }
 
@@ -3201,11 +3216,12 @@ function renderDeviceLimitFields(form) {
   fields.innerHTML = deviceLimitFields(form.querySelector('select[name="kind"]').value, { ...(form._deviceTemplate?.limits || {}), ...kept });
 }
 
-function openDemandForm(targetId = null) {
+function openDemandForm(targetId = null, sourceId = null) {
   if (topology.devices.length < 2) { showToast('수요를 만들려면 장비가 두 대 이상 있어야 합니다.'); return; }
   // 노드에서 열면 그 장비가 목적지다. 출발지는 목적지와 달라야 하므로 겹치지 않는 첫 장비를 고른다.
+  // 링크에서 열면 그 링크의 두 끝이 그대로 출발지와 목적지가 된다.
   const target = topology.devices.some(({ id }) => id === targetId) ? targetId : topology.devices[1]?.id;
-  const from = topology.devices.find(({ id }) => id !== target)?.id;
+  const from = topology.devices.some(({ id }) => id === sourceId) && sourceId !== target ? sourceId : topology.devices.find(({ id }) => id !== target)?.id;
   openEditorPanel('트래픽 수요 추가', `<p class="editor-hint">출발지와 목적지 사이의 최단 ECMP 경로를 모두 찾아 계산합니다. 목적지가 로드밸런서 뒤에 있으면 같은 종류의 서버를 한 풀로 묶어 나눠 보냅니다.</p><form class="editor-form" data-editor-form="demand">
     <label>이름<input name="name" maxlength="80" required></label><label>출발지<select name="source">${deviceOptions(from)}</select></label><label>목적지<select name="target">${deviceOptions(target)}</select></label>
     <label>처리량 (bps)<input name="forwarding_bps" type="number" min="0" step="any" value="1000000000" required></label><label>패킷 처리량 (pps)<input name="forwarding_pps" type="number" min="0" step="any" value="100000"></label>
@@ -4325,6 +4341,17 @@ element('inspector-content').addEventListener('keydown', (event) => {
 element('inspector-content').addEventListener('click', (event) => {
   const demandTarget = event.target.closest('[data-demand-target]')?.dataset.demandTarget;
   if (demandTarget) { openDemandForm(demandTarget); return; }
+  const demandLink = event.target.closest('[data-demand-link]')?.dataset.demandLink;
+  if (demandLink) { const link = topology.links.find(({ id }) => id === demandLink); if (link) openDemandForm(link.target, link.source); return; }
+  const promote = event.target.closest('[data-promote-connector]')?.dataset.promoteConnector;
+  if (promote) {
+    try {
+      const link = promoteConnector(topology, promote);
+      state.selection = [{ type: 'link', id: link.id }]; state.selectedId = link.id;
+      commitTopology('연결선을 트래픽 링크로 바꿨습니다. 용량을 채우세요.');
+    } catch (error) { showToast(error.message); }
+    return;
+  }
   const accept = event.target.closest('[data-evidence-accept]');
   const release = event.target.closest('[data-evidence-release]');
   if (!accept && !release) return;
