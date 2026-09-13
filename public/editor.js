@@ -204,6 +204,29 @@ export function applySpec(topology, id, spec) {
   return applyEffectiveLimits(device);
 }
 
+const DEVICE_POWER_FIELDS = Object.freeze({ nameplate: 'maximumDrawWatts', typical: 'typicalDrawWatts', measured: 'measuredDrawWatts' });
+
+/**
+ * 장비가 선언한 전력 기준과 그 기준의 값을 직접 입력한다. 값을 비우면 그 필드를 지워 미확인으로
+ * 되돌린다. 손으로 고친 순간 이 물리 사양은 더 이상 데이터시트가 아니므로 출처도 같이 바꾼다.
+ */
+export function setDevicePower(topology, id, { basis, watts }) {
+  const device = topology.devices.find((item) => item.id === id);
+  if (!device) throw new Error(`Device ${id} does not exist`);
+  const field = DEVICE_POWER_FIELDS[basis];
+  if (!field) throw new Error('전력 기준이 올바르지 않습니다.');
+  const raw = typeof watts === 'string' ? watts.trim() : watts;
+  const value = raw === '' || raw == null ? null : Number(raw);
+  if (value != null && (!Number.isFinite(value) || value < 0)) throw new Error('전력은 0 이상이어야 합니다.');
+  if (device.spec) device.spec.physical = { ...device.spec.physical };
+  else device.metadata = { ...device.metadata };
+  const target = device.spec ? device.spec.physical : device.metadata;
+  target.powerBasis = basis;
+  if (value == null) delete target[field]; else target[field] = value;
+  if (value != null) target.source = { label: '직접 입력', locator: '랙 인스펙터' };
+  return device;
+}
+
 /** 축 하나를 보정한다. null 이나 빈 값이면 데이터시트 값으로 되돌린다. */
 // 가져온 장비는 용량이 비어 있어 계산에 들어가지 못한다. 한 대씩 고르는 대신 같은
 // 종류에 한 번에 붙인다. 이미 spec 이 있는 장비는 건드리지 않는다 — 손으로 고른 모델을

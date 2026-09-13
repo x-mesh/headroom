@@ -1,3 +1,5 @@
+import { rackUsage } from './engine.js';
+
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 function physical(device) { return device?.spec?.physical ?? device?.metadata ?? null; }
@@ -168,12 +170,6 @@ export function removeMissingRackMappings(topology) {
 export function rackSummary(topology, rack) {
   const placements = rackPlacements(topology, rack).map((placement) => placementView(topology, placement));
   const usedU = placements.reduce((sum, placement) => sum + placement.uHeight, 0);
-  const watts = placements.map((placement) => {
-    if (!placement.mapped) return placement.powerWatts;
-    const device = topology.devices.find(({ id }) => id === placement.deviceId);
-    const data = physical(device);
-    return ({ nameplate: data?.maximumDrawWatts, typical: data?.typicalDrawWatts, measured: data?.measuredDrawWatts })[rack.powerBasis];
-  });
-  const powerWatts = watts.length && watts.every((value) => Number.isFinite(value) && value >= 0) ? watts.reduce((sum, value) => sum + value, 0) : null;
-  return { placements, usedU, remainingU: rack.capacityU - usedU, powerWatts, powerHeadroomWatts: powerWatts == null ? null : rack.powerBudgetWatts - powerWatts };
+  const usage = rackUsage(topology, rack);
+  return { placements, usedU, remainingU: rack.capacityU - usedU, powerWatts: usage.powerWatts, powerHeadroomWatts: usage.powerHeadroomWatts, usage };
 }
