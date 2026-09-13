@@ -44,6 +44,10 @@
       "bytes": 1813219,
       "sha256": "cba83882ca362016976e0e0220fc463fb9cbd9beda6b1c3299b2fd9bd28eb051"
     },
+    "src/main/webapp/stencils/mscae/system_center.xml": {
+      "bytes": 36203,
+      "sha256": "239321a69b17774990f26853b07fb99bbbae1831052137e4e48acea42487c3a5"
+    },
     "src/main/webapp/stencils/kubernetes.xml": {
       "bytes": 180144,
       "sha256": "c84a602dbf0b14f3d55c44f5e74a8993d0b5f0424b329f87dc65719f66e2ee40"
@@ -111,7 +115,7 @@
       ]
     },
     "references": {
-      "sha256": "75b6dce789a3bee5012099585a4797ece0be4f6252818a71ef4cc5c7ba74f8a8",
+      "sha256": "e8b65365d5cb4ea471c3a8c47f1bbb47d61ecf80b233b92d8fb857a313bce9a9",
       "stencils": [
         {
           "drawioId": "mxgraph.aws3.ec2",
@@ -292,6 +296,76 @@
           "drawioId": "mxgraph.cisco19.lock",
           "path": "src/main/webapp/stencils/cisco19.xml",
           "name": "lock"
+        },
+        {
+          "drawioId": "mxgraph.aws4.ec2_image_builder",
+          "path": "src/main/webapp/stencils/aws4.xml",
+          "name": "ec2 image builder"
+        },
+        {
+          "drawioId": "mxgraph.aws3.route_53",
+          "path": "src/main/webapp/stencils/aws3.xml",
+          "name": "Route 53"
+        },
+        {
+          "drawioId": "mxgraph.aws3.cloudfront",
+          "path": "src/main/webapp/stencils/aws3.xml",
+          "name": "CloudFront"
+        },
+        {
+          "drawioId": "mxgraph.aws3.s3",
+          "path": "src/main/webapp/stencils/aws3.xml",
+          "name": "S3"
+        },
+        {
+          "drawioId": "mxgraph.aws3.virtual_private_cloud",
+          "path": "src/main/webapp/stencils/aws3.xml",
+          "name": "Virtual Private Cloud"
+        },
+        {
+          "drawioId": "mxgraph.aws3.redis",
+          "path": "src/main/webapp/stencils/aws3.xml",
+          "name": "Redis"
+        },
+        {
+          "drawioId": "mxgraph.aws3.mysql_db_instance_2",
+          "path": "src/main/webapp/stencils/aws3.xml",
+          "name": "MySQL DB Instance 2"
+        },
+        {
+          "drawioId": "mxgraph.aws3.codedeploy",
+          "path": "src/main/webapp/stencils/aws3.xml",
+          "name": "CodeDeploy"
+        },
+        {
+          "drawioId": "mxgraph.aws3.ecr_registry",
+          "path": "src/main/webapp/stencils/aws3.xml",
+          "name": "ECR Registry"
+        },
+        {
+          "drawioId": "mxgraph.aws3.athena",
+          "path": "src/main/webapp/stencils/aws3.xml",
+          "name": "Athena"
+        },
+        {
+          "drawioId": "mxgraph.aws3.auto_scaling",
+          "path": "src/main/webapp/stencils/aws3.xml",
+          "name": "Auto Scaling"
+        },
+        {
+          "drawioId": "mxgraph.aws3.direct_connect",
+          "path": "src/main/webapp/stencils/aws3.xml",
+          "name": "Direct Connect"
+        },
+        {
+          "drawioId": "mxgraph.aws3.corporate_data_center",
+          "path": "src/main/webapp/stencils/aws3.xml",
+          "name": "Corporate Data Center"
+        },
+        {
+          "drawioId": "mxgraph.mscae.system_center.admin_console",
+          "path": "src/main/webapp/stencils/mscae/system_center.xml",
+          "name": "Admin Console"
         },
         {
           "drawioId": "mxgraph.aws4.users",
