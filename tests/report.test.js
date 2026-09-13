@@ -94,3 +94,34 @@ test('keeps synthetic nameplate rack values and display names in the report', ()
   assert.match(renderReportMarkdown(report), /PDU-3 SPINE 공용 전원/);
   assert.doesNotMatch(renderReportMarkdown(report), /pdu-3/);
 });
+
+test('reports rack power and space, and says which device leaves a rack unknown', () => {
+  const topology = cloneTopology();
+  const baseline = calculateScenario(topology);
+  const model = buildReportModel(topology, baseline, baseline);
+  const security = model.racks.find(({ id }) => id === 'security-budget');
+  assert.equal(security.statusLabel, '통과');
+  assert.equal(security.power, '360 / 400 W · 90%');
+  assert.equal(security.space, '2 / 3U · 67%');
+  assert.equal(security.basisLabel, '일반 부하');
+  // 경고선을 넘었는데 판정은 통과다. 그 사실을 비고로 남겨야 읽는 사람이 놓치지 않는다.
+  assert.equal(security.note, '경고선 80% 초과');
+
+  // 사양 없는 장비 한 대가 랙 합계를 미확인으로 만든다. 보고서는 그 이름을 밝힌다.
+  topology.racks[1].deviceIds.push('spine-a');
+  const unknownModel = buildReportModel(topology, calculateScenario(topology), baseline);
+  const rack04 = unknownModel.racks.find(({ id }) => id === 'rack-04-budget');
+  assert.equal(rack04.statusLabel, '미확인');
+  assert.equal(rack04.power, '미확인');
+  assert.match(rack04.note, /전력 미확인: SPINE A/);
+
+  const markdown = renderReportMarkdown(unknownModel);
+  const html = renderReportHtml(unknownModel);
+  const json = JSON.parse(renderReportJson(unknownModel));
+  for (const output of [markdown, html]) {
+    for (const value of ['랙 수용량', 'SECURITY', '경고선 80% 초과', '전력 미확인: SPINE A']) {
+      assert.ok(output.includes(value), `${value}가 보고서에 없습니다.`);
+    }
+  }
+  assert.equal(json.racks.find(({ id }) => id === 'rack-04-budget').status, 'unknown');
+});

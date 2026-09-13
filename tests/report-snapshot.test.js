@@ -63,7 +63,7 @@ test('keeps the golden fault verdict aligned across Markdown, HTML, and JSON rep
       'P95', contract.observedLoad.asOf, '관측 시점이 7일을 넘었습니다',
       '조건 일치', 'MAPE', contract.namedService.scenario, contract.namedService.service,
       contract.namedService.status, contract.namedService.cause, contract.namedService.baselineChange,
-      'N-1 생존 배수', '장애 도메인 스윕', '도메인 N-1', '도메인 N-2',
+      'N-1 생존 배수', '장애 도메인 스윕', '도메인 N-1', '도메인 N-2', '랙 수용량', '전력 기준',
     ]) assert.ok(output.includes(value), `${value}가 보고서에 없습니다.`);
   }
   assert.match(markdown, /- 활성 장애: 1개/);

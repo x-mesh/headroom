@@ -9,6 +9,8 @@ const SERVICE_STATUS = Object.freeze({ pass: '통과', fail: '실패', unknown: 
 const SERVICE_RANK = Object.freeze({ pass: 0, unknown: 1, fail: 2, invalid: 3 });
 const FAILURE_VERDICT = Object.freeze({ severs: '서비스 단절', overloads: '용량 부족', absorbs: '견딤', unknown: '미확인' });
 const SURVIVAL_STATUS = Object.freeze({ survives: '견딤', severed: '단절', 'capacity-insufficient': '현재 부하 미달', unavailable: '계산 불가', calculating: '계산 중' });
+const RACK_STATUS = Object.freeze({ pass: '통과', fail: '예산 초과', unknown: '미확인' });
+const RACK_BASIS = Object.freeze({ nameplate: '명판값', typical: '일반 부하', measured: '실측' });
 
 function number(value, unit) {
   if (!Number.isFinite(value)) return '미확인';
@@ -112,6 +114,23 @@ function reportResilience(topology, analysis = {}) {
   };
 }
 
+function reportRacks(topology, scenario) {
+  const threshold = topology.warningThreshold ?? .8;
+  return (scenario.racks || []).map((rack) => {
+    const powerKnown = rack.powerWatts != null && rack.powerRatio != null;
+    const spaceKnown = rack.usedU != null && rack.spaceRatio != null;
+    return {
+      id: rack.id, name: rack.name || rack.id, status: rack.status, statusLabel: RACK_STATUS[rack.status] || rack.status,
+      basisLabel: RACK_BASIS[rack.powerBasis] || rack.powerBasis,
+      power: powerKnown ? Math.round(rack.powerWatts) + ' / ' + rack.powerBudgetWatts + ' W · ' + percent(rack.powerRatio) : '미확인',
+      space: spaceKnown ? rack.usedU + ' / ' + rack.capacityU + 'U · ' + percent(rack.spaceRatio) : '미확인',
+      // 미확인은 여유가 아니다. 무엇이 비어서 합계를 못 내는지 이름으로 남긴다.
+      note: rack.unknownPower?.length ? '전력 미확인: ' + rack.unknownPower.join(', ')
+        : powerKnown && rack.powerRatio >= threshold && rack.status !== 'fail' ? '경고선 ' + percent(threshold) + ' 초과' : '',
+    };
+  });
+}
+
 export function buildReportModel(topology, scenario, baseline, namedScenarios = [], options = {}, analysis = {}) {
   const summary = scenario.summary;
   const evaluation = EVALUATION[summary.evaluationStatus] || summary.evaluationStatus;
@@ -127,7 +146,7 @@ export function buildReportModel(topology, scenario, baseline, namedScenarios = 
       unreachableDelta: summary.unreachableCount - baseline.summary.unreachableCount, overloadedDelta: summary.overloadedCount - baseline.summary.overloadedCount },
     services: buildServiceVerdicts(topology, scenario, baseline),
     namedScenarios: buildNamedScenarioServiceVerdicts(topology, baseline, namedScenarios),
-    observedLoadValidation: buildObservedLoadValidationReport(topology, options), resilience: reportResilience(topology, analysis), binding, constraints };
+    observedLoadValidation: buildObservedLoadValidationReport(topology, options), resilience: reportResilience(topology, analysis), racks: reportRacks(topology, scenario), binding, constraints };
 }
 
 function escape(value) { return String(value).replace(/[&<>\"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char]); }
@@ -173,15 +192,19 @@ export function renderReportMarkdown(model) {
   const scenarioRows = model.namedScenarios.flatMap((scenario) => scenario.services.map((service) => '| ' + scenario.name + ' | ' + service.name + ' | ' + service.statusLabel + ' | ' + service.cause + ' | ' + service.baselineChange + ' |')).join('\n');
   const observed = model.scenario.observedLoad ? '- 관측 부하: ' + model.scenario.observedLoad.aggregate.toUpperCase() + ' · ' + model.scenario.observedLoad.asOf + (model.scenario.observedLoad.source === 'zabbix' ? ' · Zabbix' : '') + (model.scenario.observedLoad.stale ? ' · 경고: 관측 시점이 ' + model.scenario.observedLoad.staleAfterDays + '일을 넘었습니다.' : '') + '\n' : '';
   const scenarios = scenarioRows ? '\n## 저장 시나리오 서비스 판정\n\n| 시나리오 | 서비스 | 판정 | 원인 | 기준선 비교 |\n| --- | --- | --- | --- | --- |\n' + scenarioRows + '\n' : '';
-  return '# Rack Mesh 분석 보고서\n\n' + model.firstLine + '\n\n- 판정: ' + model.evaluation + '\n- 배율: ' + model.scenario.scale.toFixed(2) + '×\n- 활성 장애: ' + model.scenario.activeFaults + '개\n' + observed + resilienceMarkdown(model.resilience) + '\n## 축별 근거와 판정\n\n| 자원 | 축 | 상태 | 부하 | 한계 | 출처 | 적용 판정 |\n| --- | --- | --- | ---: | ---: | --- | --- |\n' + rows + '\n' + observedValidationMarkdown(model.observedLoadValidation) + scenarios;
+  const rackRows = model.racks.map((rack) => '| ' + rack.name + ' | ' + rack.statusLabel + ' | ' + rack.power + ' | ' + rack.space + ' | ' + rack.basisLabel + ' | ' + (rack.note || '—') + ' |').join('\n');
+  const racks = rackRows ? '\n## 랙 수용량\n\n| 랙 | 판정 | 전력 | 공간 | 전력 기준 | 비고 |\n| --- | --- | ---: | ---: | --- | --- |\n' + rackRows + '\n' : '';
+  return '# Rack Mesh 분석 보고서\n\n' + model.firstLine + '\n\n- 판정: ' + model.evaluation + '\n- 배율: ' + model.scenario.scale.toFixed(2) + '×\n- 활성 장애: ' + model.scenario.activeFaults + '개\n' + observed + resilienceMarkdown(model.resilience) + '\n## 축별 근거와 판정\n\n| 자원 | 축 | 상태 | 부하 | 한계 | 출처 | 적용 판정 |\n| --- | --- | --- | ---: | ---: | --- | --- |\n' + rows + '\n' + observedValidationMarkdown(model.observedLoadValidation) + racks + scenarios;
 }
 
 export function renderReportHtml(model) {
   const rows = model.constraints.map((item) => '<tr><td>' + escape(item.resourceName) + '</td><td>' + escape(item.axisLabel) + '</td><td>' + escape(item.statusLabel) + '</td><td>' + escape(item.load) + '</td><td>' + escape(item.limit) + '</td><td>' + escape(item.source.label) + '</td><td>' + escape(item.applicability || '—') + '</td></tr>').join('');
   const scenarioRows = model.namedScenarios.flatMap((scenario) => scenario.services.map((service) => '<tr><td>' + escape(scenario.name) + '</td><td>' + escape(service.name) + '</td><td>' + escape(service.statusLabel) + '</td><td>' + escape(service.cause) + '</td><td>' + escape(service.baselineChange) + '</td></tr>')).join('');
   const scenarios = scenarioRows ? '<h2>저장 시나리오 서비스 판정</h2><table><thead><tr><th>시나리오</th><th>서비스</th><th>판정</th><th>원인</th><th>기준선 비교</th></tr></thead><tbody>' + scenarioRows + '</tbody></table>' : '';
+  const rackRows = model.racks.map((rack) => '<tr><td>' + escape(rack.name) + '</td><td>' + escape(rack.statusLabel) + '</td><td>' + escape(rack.power) + '</td><td>' + escape(rack.space) + '</td><td>' + escape(rack.basisLabel) + '</td><td>' + escape(rack.note || '—') + '</td></tr>').join('');
+  const racks = rackRows ? '<h2>랙 수용량</h2><table><thead><tr><th>랙</th><th>판정</th><th>전력</th><th>공간</th><th>전력 기준</th><th>비고</th></tr></thead><tbody>' + rackRows + '</tbody></table>' : '';
   const observed = model.scenario.observedLoad ? '<p>관측 부하: ' + escape(model.scenario.observedLoad.aggregate.toUpperCase()) + ' · ' + escape(model.scenario.observedLoad.asOf) + (model.scenario.observedLoad.source === 'zabbix' ? ' · Zabbix' : '') + (model.scenario.observedLoad.stale ? ' · 경고: 관측 시점이 ' + escape(model.scenario.observedLoad.staleAfterDays) + '일을 넘었습니다.' : '') + '</p>' : '';
-  return '<!doctype html><html lang="ko"><meta charset="utf-8"><title>Rack Mesh 분석 보고서</title><body><h1>Rack Mesh 분석 보고서</h1><p>' + escape(model.firstLine) + '</p><dl><dt>판정</dt><dd>' + escape(model.evaluation) + '</dd><dt>배율</dt><dd>' + escape(model.scenario.scale.toFixed(2)) + '×</dd><dt>활성 장애</dt><dd>' + escape(model.scenario.activeFaults) + '개</dd></dl>' + observed + resilienceHtml(model.resilience) + '<h2>축별 근거와 판정</h2><table><thead><tr><th>자원</th><th>축</th><th>상태</th><th>부하</th><th>한계</th><th>출처</th><th>적용 판정</th></tr></thead><tbody>' + rows + '</tbody></table>' + observedValidationHtml(model.observedLoadValidation) + scenarios + '</body></html>';
+  return '<!doctype html><html lang="ko"><meta charset="utf-8"><title>Rack Mesh 분석 보고서</title><body><h1>Rack Mesh 분석 보고서</h1><p>' + escape(model.firstLine) + '</p><dl><dt>판정</dt><dd>' + escape(model.evaluation) + '</dd><dt>배율</dt><dd>' + escape(model.scenario.scale.toFixed(2)) + '×</dd><dt>활성 장애</dt><dd>' + escape(model.scenario.activeFaults) + '개</dd></dl>' + observed + resilienceHtml(model.resilience) + '<h2>축별 근거와 판정</h2><table><thead><tr><th>자원</th><th>축</th><th>상태</th><th>부하</th><th>한계</th><th>출처</th><th>적용 판정</th></tr></thead><tbody>' + rows + '</tbody></table>' + observedValidationHtml(model.observedLoadValidation) + racks + scenarios + '</body></html>';
 }
 
 export function renderReportJson(model) { return JSON.stringify(model, null, 2); }
