@@ -251,6 +251,49 @@ async function verifyCanvasEditing() {
     [[0, 'shape'], [1, 'device'], [2, 'connector']], '가져온 레이어는 새 페이지 안의 도형·장비·연결선 순서를 보존한다');
   assert.equal(sourceOrder.at(-3)[0] > sourceOrder.at(-4)[0], true, '나중에 적용한 페이지는 기존 가져오기 뒤에 쌓인다');
   assert.equal(await page.locator('.mesh-node.drawio-source-hit').count() > 0, true, 'semantic 장비에는 시각 요소를 중복하지 않는 선택 대상이 남는다');
+  // 가져온 링크에도 트래픽이 보여야 한다. 선은 draw.io 모양 그대로 두고 그 위에 부하를 얹는다.
+  // 용량이 비어 있으면 엔진이 limit-missing 으로 재지 않은 값이라고 답하므로 점도 그리지 않는다.
+  const trafficDrawio = `<mxfile><diagram id="traffic" name="트래픽"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="src" value="스위치 A" style="shape=mxgraph.networks.switch" vertex="1" parent="1"><mxGeometry x="40" y="400" width="80" height="60" as="geometry"/></mxCell><mxCell id="dst" value="서버 B" style="shape=mxgraph.networks.server" vertex="1" parent="1"><mxGeometry x="360" y="400" width="80" height="60" as="geometry"/></mxCell><mxCell id="wire" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#123456" edge="1" source="src" target="dst" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>`;
+  await page.evaluate((source) => {
+    const transfer = new DataTransfer(); transfer.items.add(new File([source], 'traffic.drawio', { type: 'application/vnd.jgraph.mxfile' }));
+    document.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+  }, trafficDrawio);
+  await page.waitForFunction(() => document.querySelector('#editor-panel-heading')?.textContent.includes('미리보기'));
+  await page.locator('[data-drawio-accept-high]').click();
+  await page.locator('[data-drawio-apply]').click();
+  await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 2);
+  assert.equal(await page.locator('#drawio-import-layer [data-drawio-role="link"]').count(), 1, '장비 두 대를 잇는 선은 주석이 아니라 링크로 들어온다');
+  assert.equal(await page.locator('.packet-dot').count(), 0, '용량을 모르는 링크에는 움직이는 점을 그리지 않는다');
+
+  const importedHit = await page.evaluate(() => {
+    for (const hit of document.querySelectorAll('.link-hit')) {
+      const box = hit.getBoundingClientRect();
+      for (let t = 0.3; t <= 0.7; t += 0.1) {
+        const x = box.left + box.width * t; const y = box.top + box.height * 0.5;
+        if (document.elementFromPoint(x, y) === hit) return { x, y };
+      }
+    }
+    return null;
+  });
+  assert.ok(importedHit, '가져온 링크의 클릭 영역은 그려진 선 위에 있다');
+  await page.mouse.click(importedHit.x, importedHit.y);
+  await page.waitForSelector('[data-resource-form="link"]');
+  assert.equal(await page.locator('[data-resource-form="link"] input[name="capacityBps"]').inputValue(), '', '가져온 링크의 용량 칸은 null 이 아니라 비어 있다');
+  await page.locator('[data-resource-form="link"] input[name="capacityBps"]').fill('10000000000');
+  await page.locator('[data-resource-form="link"] button[type="submit"]').click();
+  await page.waitForFunction(() => !document.querySelector('#toast')?.classList.contains('visible'), null, { timeout: 8000 });
+
+  await page.mouse.click(importedHit.x, importedHit.y);
+  await page.waitForSelector('[data-demand-link]');
+  await page.locator('[data-demand-link]').click();
+  await page.waitForSelector('[data-editor-form="demand"]');
+  // 수요 이름은 그대로 id 가 되므로 여기서는 id 로 쓸 수 있는 이름을 넣는다.
+  await page.locator('[data-editor-form="demand"] input[name="name"]').fill('imported-demand');
+  await page.locator('[data-editor-form="demand"] button[type="submit"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('.packet-dot').length > 0, null, { timeout: 8000 });
+  assert.ok(await page.locator('.link-group .packet-dot').count() > 0, '가져온 링크 위에 트래픽이 흐른다');
+  assert.equal(await page.locator('#drawio-import-layer [data-drawio-role="link"]').count(), 1, '트래픽을 얹어도 draw.io 선은 그대로 한 번만 그린다');
+
   // 토스트는 화면 하단에 고정이라 아래쪽 노드를 덮는다. 다음 클릭 전에 걷히기를 기다린다.
   await page.waitForFunction(() => !document.querySelector('#toast')?.classList.contains('visible'), null, { timeout: 8000 });
   await page.close();

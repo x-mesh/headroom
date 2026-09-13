@@ -77,7 +77,7 @@ test('network stencil tokens keep drawio underscore names in the exact registry'
 
 test('reference XML stencils use the generated upstream registry and stay exact', async () => {
   const tokens = Object.keys(DRAWIO_STENCILS);
-  assert.equal(tokens.length, 67);
+  assert.equal(tokens.length, 72);
   for (const token of tokens) assert.match(DRAWIO_STENCILS[token].body, /<(?:path|rect|ellipse)\b/);
   const cells = tokens.map((token, index) => `<mxCell id="s${index}" style="shape=${token}" vertex="1" parent="1"><mxGeometry x="${index * 20}" y="0" width="16" height="16" as="geometry"/></mxCell>`).join('');
   const document = await parseDrawioDocument(graph(cells));
@@ -306,4 +306,73 @@ test('jump arc has no arc when no earlier edge crosses it and preserves target p
   const edge = document.pages[0].elements.find((item) => item.type === 'edge');
   assert.equal(edge.drawioOptions.targetPerimeterSpacing, 1);
   assert.doesNotMatch(renderDrawioPageSvg(document.pages[0]), / A /);
+});
+
+test('a kubernetes icon draws its tile and the glyph prIcon names', async () => {
+  const cell = (id, prIcon, x) => `<mxCell id="${id}" value="${prIcon}" style="shape=mxgraph.kubernetes.icon;prIcon=${prIcon};fillColor=#2875E2;strokeColor=#ffffff" vertex="1" parent="1"><mxGeometry x="${x}" y="0" width="50" height="48" as="geometry"/></mxCell>`;
+  const document = await parseDrawioDocument(graph(`${cell('a', 'pod', 0)}${cell('b', 'node', 80)}${cell('c', 'etcd', 160)}`));
+  const shapes = document.pages[0].elements;
+  assert.deepEqual(shapes.map(({ drawioShape }) => drawioShape), Array(3).fill('port:mxgraph.kubernetes.icon'));
+  assert.deepEqual(shapes.map(({ drawioOptions }) => drawioOptions.prIcon), ['pod', 'node', 'etcd']);
+  const svg = renderDrawioPageSvg(document.pages[0]);
+  const count = (token) => (svg.match(new RegExp(`data-drawio-stencil="${token.replaceAll('.', '\\.')}"`, 'g')) || []).length;
+  // mxKubernetes.js draws the frame twice per icon: the border, then the body.
+  assert.equal(count('mxgraph.kubernetes.frame'), 6);
+  assert.equal(count('mxgraph.kubernetes.pod'), 1);
+  assert.equal(count('mxgraph.kubernetes.node'), 1);
+  // Only the observed glyphs are vendored, so an unlisted prIcon keeps the tile
+  // and draws no glyph rather than substituting a similar one.
+  assert.equal(count('mxgraph.kubernetes.etcd'), 0);
+  assert.doesNotMatch(svg, /<script|foreignObject/i);
+});
+
+test('a curved edge bends through every waypoint instead of past them', async () => {
+  const source = graph(`<mxCell id="a" style="shape=rect" vertex="1" parent="1"><mxGeometry x="0" y="0" width="60" height="40" as="geometry"/></mxCell><mxCell id="b" style="shape=rect" vertex="1" parent="1"><mxGeometry x="300" y="200" width="60" height="40" as="geometry"/></mxCell><mxCell id="e" style="curved=1;endArrow=none" edge="1" source="a" target="b" parent="1"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="120" y="40"/><mxPoint x="200" y="180"/></Array></mxGeometry></mxCell>`);
+  const svg = renderDrawioPageSvg((await parseDrawioDocument(source)).pages[0]);
+  // mxPolyline.paintCurvedLine: each waypoint is a control point and the curve
+  // passes through the midpoint between it and the next one.
+  assert.equal(svg.match(/class="drawio-edge-line" d="([^"]*)"/)[1], 'M 60 26.67 Q 120 40 160 110 Q 200 180 300 210.77');
+});
+
+test('a stencil name written without its underscores still finds the stencil', async () => {
+  const document = await parseDrawioDocument(graph('<mxCell id="x" style="shape=mxgraph.aws4.applicationloadbalancer" vertex="1" parent="1"><mxGeometry x="0" y="0" width="40" height="40" as="geometry"/></mxCell>'));
+  assert.equal(document.pages[0].elements[0].drawioShape, 'stencil:mxgraph.aws4.application_load_balancer');
+  assert.deepEqual(document.warnings, [], 'a name draw.io accepts is not an unsupported stencil');
+});
+
+test('draw.io built-in shapes draw their own outline instead of a plain box', async () => {
+  const cell = (id, style, extra = '') => `<mxCell id="${id}" style="${style}" vertex="1" parent="1"><mxGeometry x="0" y="0" width="60" height="60" as="geometry"/></mxCell>${extra}`;
+  const document = await parseDrawioDocument(graph(`${cell('actor', 'shape=umlActor')}${cell('memo', 'shape=note;size=14')}${cell('grid', 'shape=table;childLayout=tableLayout')}`));
+  const [actor, memo, grid] = document.pages[0].elements;
+  assert.deepEqual([actor.drawioShape, memo.drawioShape, grid.drawioShape], ['port:umlActor', 'port:note', 'container']);
+  assert.equal(memo.drawioOptions.size, 14, 'the corner fold comes from the style, not from the shape default');
+  const svg = renderDrawioPageSvg(document.pages[0]);
+  // UmlActorShape.paintBackground: a head ellipse at (w/4, 0, w/2, h/4), then
+  // the body, arms and legs.
+  assert.match(svg, /<ellipse cx="30" cy="7.5" rx="15" ry="7.5"/);
+  assert.match(svg, /d="M 30 15 L 30 40 M 30 20 L 0 20 M 30 20 L 60 20 M 30 40 L 0 60 M 30 40 L 60 60"/);
+  // NoteShape.paintVertexShape: the fold is cut from the top right corner.
+  assert.match(svg, /d="M 0 0 L 46 0 L 60 14 L 60 60 L 0 60 Z"/);
+  assert.doesNotMatch(svg, /<script|foreignObject/i);
+});
+
+test('a note keeps its corner fold across a project round trip', async () => {
+  const document = await parseDrawioDocument(graph('<mxCell id="memo" style="shape=note;size=14" vertex="1" parent="1"><mxGeometry x="0" y="0" width="60" height="60" as="geometry"/></mxCell>'));
+  const applied = applyDrawioImport({ devices: [], links: [], demands: [] }, createDrawioPreview(document));
+  const restored = parseProject(serializeProject(applied.topology, { scale: 1 }));
+  assert.equal(restored.topology.diagram.shapes[0].drawioOptions.size, 14);
+});
+
+test('an iphone mockup draws its body, screen and chrome', async () => {
+  const document = await parseDrawioDocument(graph('<mxCell id="phone" style="shape=mxgraph.ios.iPhone" vertex="1" parent="1"><mxGeometry x="0" y="0" width="40" height="60" as="geometry"/></mxCell>'));
+  assert.equal(document.pages[0].elements[0].drawioShape, 'port:mxgraph.ios.iPhone');
+  assert.deepEqual(document.warnings, []);
+  const svg = renderDrawioPageSvg(document.pages[0]);
+  // mxMockupiOS.js: a black body with a 4px radius under 100px wide, the screen
+  // inset to (6.25%, 15%) at 87.5% by 70%, and the home button at (40%, 87.5%).
+  assert.match(svg, /<rect x="0" y="0" width="40" height="60" rx="4" ry="4" fill="#000000"/);
+  assert.match(svg, /<rect x="2.5" y="9" width="35" height="42" fill="#1f2923"/);
+  assert.match(svg, /<ellipse cx="20" cy="55.5" rx="4" ry="3"/);
+  assert.equal((svg.match(/<linearGradient /g) || []).length, 2, 'the bezel and the home button each carry their own ramp');
+  assert.doesNotMatch(svg, /<script|foreignObject/i);
 });

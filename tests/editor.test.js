@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cloneTopology } from '../public/data.js';
-import { addDemand, addDevice, addLink, createEmptyTopology, moveDevice, removeDemand, removeDevice, removeLink, updateDemand, updateDevice } from '../public/editor.js';
+import { addDemand, addDevice, addLink, createEmptyTopology, moveDevice, promoteConnector, removeDemand, removeDevice, removeLink, updateDemand, updateDevice } from '../public/editor.js';
 import { calculateScenario, findShortestPaths } from '../public/engine.js';
 
 test('creates, moves, and links devices with validated IDs', () => {
@@ -217,4 +217,41 @@ test('takes a return path only when it ends where the demand starts', () => {
   // 끝점이 바뀌면 반환 경로는 다른 설계의 것이 된다. 명시 경로와 같이 걷어낸다.
   updateDemand(topology, 'web', { target: 'edge' });
   assert.equal(demand.returnPath, undefined);
+});
+
+test('an imported connector becomes a traffic link once both ends are devices', () => {
+  const topology = createEmptyTopology();
+  addDevice(topology, { name: 'Leaf A', position: { x: 0, y: 0 }, limits: { forwarding_bps: 10e9 } });
+  addDevice(topology, { name: 'API A', kind: 'server', position: { x: 200, y: 0 }, limits: { nic_bps: 10e9 } });
+  topology.diagram = { shapes: [{ id: 'note-1', kind: 'note', text: '영역', x: 0, y: 100, width: 80, height: 40 }], groups: [], connectors: [
+    { id: 'connector-drawio-e1', source: 'leaf-a', target: 'api-a', kind: 'annotation', zIndex: 5, stroke: '#ff0000', strokeWidth: 2, drawioOptions: { routeMode: 'orthogonal' }, drawioGeometry: { waypoints: [{ x: 100, y: 40 }] } },
+    { id: 'connector-to-shape', source: 'leaf-a', target: 'note-1', kind: 'annotation' },
+  ] };
+  const link = promoteConnector(topology, 'connector-drawio-e1');
+  assert.equal(link.id, 'link-drawio-e1');
+  assert.deepEqual([link.source, link.target], ['leaf-a', 'api-a']);
+  // The drawing carries no capacity, so the link states that it is unknown
+  // rather than inventing a rating the calculation would then trust.
+  assert.equal(link.capacity.forwarding_bps, null);
+  // The line keeps the appearance it was imported with.
+  assert.equal(link.drawioVisual.zIndex, 5);
+  assert.deepEqual(link.drawioVisual.paint, { stroke: '#ff0000', strokeWidth: 2 });
+  assert.deepEqual(link.drawioVisual.geometry.waypoints, [{ x: 100, y: 40 }]);
+  // One line, not two: the connector is gone once the link exists.
+  assert.deepEqual(topology.diagram.connectors.map(({ id }) => id), ['connector-to-shape']);
+  assert.equal(topology.links.length, 1);
+  // A connector that still ends on a shape cannot become a link.
+  assert.throws(() => promoteConnector(topology, 'connector-to-shape'), /device at both ends/);
+  assert.throws(() => promoteConnector(topology, 'connector-missing'), /does not exist/);
+  // The promoted link carries demand like any other link.
+  addDemand(topology, { name: 'Web', source: 'leaf-a', target: 'api-a', load: { forwarding_bps: 1e9 } });
+  assert.equal(calculateScenario(topology).links.find(({ id }) => id === link.id)?.load.forwarding_bps, 1e9);
+});
+
+test('a hand drawn connector keeps the app link look when it is promoted', () => {
+  const topology = createEmptyTopology();
+  addDevice(topology, { name: 'Leaf A', position: { x: 0, y: 0 }, limits: { forwarding_bps: 10e9 } });
+  addDevice(topology, { name: 'Leaf B', position: { x: 200, y: 0 }, limits: { forwarding_bps: 10e9 } });
+  topology.diagram = { shapes: [], groups: [], connectors: [{ id: 'annotation-1', source: 'leaf-a', target: 'leaf-b', kind: 'annotation' }] };
+  assert.equal(promoteConnector(topology, 'annotation-1').drawioVisual, undefined);
 });
