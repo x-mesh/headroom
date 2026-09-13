@@ -716,6 +716,66 @@ function rackPower() {
   });
 }
 
+// A/B 두 레일로 급전하는 한 줄. 잘 나뉜 쌍과 한쪽 레일에만 물린 장비를 한 설계 안에 같이 둔다 —
+// 어느 쪽이 어느 레일인지는 논리 그림에서 보이지 않고 랙의 전원 도메인 색으로만 드러난다.
+function pduRails() {
+  const topology = createEmptyTopology('A/B 전원 레일');
+  const switchLimits = { forwarding_bps: 40e9, forwarding_pps: 6e6 };
+  const appLimits = { nic_bps: 10e9, nic_pps: 1.5e6 };
+  place(topology, [
+    { id: 'ops', name: 'OPS', kind: 'client', zone: 'OFFICE', position: { x: 900, y: 140 }, limits: { nic_bps: 10e9 }, external: true },
+    { id: 'edge', name: 'EDGE', kind: 'router', zone: 'ROW B / RACK 11', position: { x: 620, y: 140 },
+      limits: { forwarding_bps: 20e9, forwarding_pps: 3e6, new_sessions_per_sec: 120e3, concurrent_sessions: 2e6 },
+      metadata: { powerBasis: 'typical', typicalDrawWatts: 210, uHeight: 1 } },
+    { id: 'core-a', name: 'CORE A', kind: 'switch', zone: 'ROW B / RACK 11', position: { x: 440, y: 300 }, limits: switchLimits,
+      metadata: { powerBasis: 'typical', typicalDrawWatts: 430, uHeight: 1 } },
+    { id: 'core-b', name: 'CORE B', kind: 'switch', zone: 'ROW B / RACK 11', position: { x: 800, y: 300 }, limits: switchLimits,
+      metadata: { powerBasis: 'typical', typicalDrawWatts: 430, uHeight: 1 } },
+    { id: 'app-01', name: 'APP 01', kind: 'server', zone: 'ROW B / RACK 11', position: { x: 440, y: 470 }, limits: appLimits,
+      metadata: { powerBasis: 'typical', typicalDrawWatts: 520, uHeight: 2 } },
+    { id: 'app-02', name: 'APP 02', kind: 'server', zone: 'ROW B / RACK 12', position: { x: 800, y: 470 }, limits: appLimits,
+      metadata: { powerBasis: 'typical', typicalDrawWatts: 520, uHeight: 2 } },
+    { id: 'nas', name: 'NAS', kind: 'nas', zone: 'ROW B / RACK 12', position: { x: 620, y: 620 }, limits: { nic_bps: 25e9, nic_pps: 3e6 },
+      metadata: { powerBasis: 'typical', typicalDrawWatts: 760, uHeight: 4 } },
+  ]);
+  connect(topology, [['ops', 'edge', 10e9], ['edge', 'core-a', 40e9], ['edge', 'core-b', 40e9],
+    ...mesh(['core-a', 'core-b'], ['app-01', 'app-02'], 10e9), ...mesh(['core-a', 'core-b'], ['nas'], 25e9)]);
+  addDemand(topology, { id: 'api', name: '공개 API A', source: 'ops', target: 'app-01',
+    load: { forwarding_bps: 2.5e9, forwarding_pps: 320e3, new_sessions_per_sec: 18e3, concurrent_sessions: 300e3 } });
+  addDemand(topology, { id: 'api-2', name: '공개 API B', source: 'ops', target: 'app-02',
+    load: { forwarding_bps: 2.5e9, forwarding_pps: 320e3, new_sessions_per_sec: 18e3, concurrent_sessions: 300e3 } });
+  addDemand(topology, { id: 'backup', name: '야간 백업', source: 'app-01', target: 'nas',
+    load: { forwarding_bps: 6e9, forwarding_pps: 700e3 } });
+  return declare(topology, {
+    services: [{ id: 'public-api', name: '공개 API', demandIds: ['api', 'api-2'], requiredDeliveryRatio: 0.99 }],
+    // 레일은 랙이 아니다. 한 랙 안에서도 장비마다 어느 레일에 꽂혔는지가 다르고, 그 차이가 장애
+    // 범위를 정한다. 도메인에 없는 EDGE 는 두 레일에 모두 물린 장비다.
+    failureDomains: [
+      { id: 'rail-a', name: 'A 레일 (PDU A)', kind: 'power', deviceIds: ['core-a', 'app-01', 'nas'] },
+      { id: 'rail-b', name: 'B 레일 (PDU B)', kind: 'power', deviceIds: ['core-b', 'app-02'] },
+    ],
+    racks: [
+      { id: 'rack-11', name: 'RACK 11', deviceIds: ['edge', 'core-a', 'core-b', 'app-01'], powerBasis: 'typical', powerBudgetWatts: 1800, capacityU: 42, placements: [
+        { id: 'rack-11-pdu-a', name: 'PDU A', kind: 'pdu', startU: 1, uHeight: 1, powerWatts: 0 },
+        { id: 'rack-11-pdu-b', name: 'PDU B', kind: 'pdu', startU: 2, uHeight: 1, powerWatts: 0 },
+        { id: 'rack-11-app-01', deviceId: 'app-01', startU: 4, uHeight: 2 },
+        { id: 'rack-11-cable-manager', name: 'CABLE MANAGER', kind: 'cable-management', startU: 38, uHeight: 1, powerWatts: 0 },
+        { id: 'rack-11-patch-panel', name: 'PATCH PANEL 11', kind: 'patch-panel', startU: 39, uHeight: 1, powerWatts: 0 },
+        { id: 'rack-11-core-a', deviceId: 'core-a', startU: 40, uHeight: 1 },
+        { id: 'rack-11-core-b', deviceId: 'core-b', startU: 41, uHeight: 1 },
+        { id: 'rack-11-edge', deviceId: 'edge', startU: 42, uHeight: 1 },
+      ] },
+      { id: 'rack-12', name: 'RACK 12', deviceIds: ['app-02', 'nas'], powerBasis: 'typical', powerBudgetWatts: 1800, capacityU: 42, placements: [
+        { id: 'rack-12-pdu-a', name: 'PDU A', kind: 'pdu', startU: 1, uHeight: 1, powerWatts: 0 },
+        { id: 'rack-12-pdu-b', name: 'PDU B', kind: 'pdu', startU: 2, uHeight: 1, powerWatts: 0 },
+        { id: 'rack-12-nas', deviceId: 'nas', startU: 4, uHeight: 4 },
+        { id: 'rack-12-app-02', deviceId: 'app-02', startU: 9, uHeight: 2 },
+        { id: 'rack-12-patch-panel', name: 'PATCH PANEL 12', kind: 'patch-panel', startU: 41, uHeight: 1, powerWatts: 0 },
+      ] },
+    ],
+  });
+}
+
 // 설계가 스물을 넘으면 한 줄로 깔린 목록에서는 고를 수가 없다. 등급 배지도 기준이 되지 못한다 —
 // 스물넷 중 스물이 단일 장애점이다. 그래서 무엇을 가르치는지로 묶는다. 순서가 곧 섹션 순서다.
 export const templateGroups = Object.freeze([
@@ -1120,6 +1180,20 @@ export const templates = [
       observe: 'NAS 대역폭이 99%까지 올라도 아직 넘지 않았는데 판정은 여전히 fail입니다. 넘은 것은 대역폭이 아니라 RACK 01의 전력 예산이고, 그 값은 배율을 따라가지 않습니다.',
     },
     build: rackPower,
+  },
+  {
+    id: 'pdu-rails', name: 'A/B 전원 레일',
+    group: 'resilience',
+    grade: { verdict: 'single-point', severs: 5 },
+    summary: 'A/B 두 레일로 급전하는데 스토리지만 한쪽 레일에 물린 구성입니다.',
+    teaches: '논리 그림에서는 CORE A/B도 APP 01/02도 잘 나뉜 쌍입니다. 전원까지 나뉘었는지는 랙에서만 보입니다. 랙 툴바의 전원 도메인을 켜면 RACK 12 안에서 NAS만 A 레일 색이고 APP 02는 B 레일 색입니다. 그래서 A 레일이 죽으면 API A에 더해 야간 백업까지 함께 끊기고, B 레일이 죽으면 API B 하나만 끊깁니다. 같은 전원 한 대인데 피해가 두 배입니다. 전력도 같이 보세요. RACK 11은 자리가 33U 남았는데 전력은 210W만 남았습니다.',
+    tags: ['전원 레일', 'A/B 급전', '전원 도메인', '랙', 'U 배치', '단일 급전'],
+    experiment: {
+      prompt: 'A 레일 하나가 멈추면 이중화한 이 설계에서 무엇이 끊길까요?',
+      action: { type: 'fault-domain', id: 'rail-a', label: 'A 레일 장애 실험' },
+      observe: 'API A와 야간 백업이 함께 끊깁니다. NAS가 A 레일에만 물려 있어 서비스 하나가 아니라 둘이 사라집니다. B 레일에 물린 API B는 그대로 전달되고 남은 경로는 25%로 한가합니다 — 끊은 것은 용량이 아니라 전원입니다.',
+    },
+    build: pduRails,
   },
   {
     id: 'blank', name: '빈 설계',
