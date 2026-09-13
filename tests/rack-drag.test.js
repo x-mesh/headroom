@@ -150,8 +150,15 @@ test('the 2D rack stage moves a placed device and catches drops away from the ra
     await page.mouse.move(tallSource.x + tallSource.width / 2, tallSource.y + tallSource.height / 2);
     await page.mouse.down();
     await page.mouse.move(rack.x + rack.width / 2, rack.y + rack.height * .6, { steps: 8 });
+
+    // 끄는 동안 어느 랙이 이 장비를 받을 수 있는지 랙마다 답해야 한다.
+    const candidates = await page.evaluate(() => [...document.querySelectorAll('.rack-elevation-wrap')].map((node) => node.dataset.candidate));
+    assert.ok(candidates.includes('blocked'), '3U 랙은 4U 장비를 받을 수 없다고 표시해야 합니다.');
+    assert.ok(candidates.some((value) => value && value !== 'blocked'), '받을 수 있는 랙이 표시되어야 합니다.');
+
     await page.mouse.up();
     await page.waitForFunction(() => [...document.querySelectorAll('.rack-device')].some((node) => node.style.getPropertyValue('--rack-height') === '4'));
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.rack-elevation-wrap')].map((node) => node.dataset.candidate ?? null)), [null, null, null], '놓은 뒤에는 후보 표시가 남지 않아야 합니다.');
     // 전력을 입력했으므로 랙 합계가 미확인으로 떨어지지 않아야 한다.
     assert.match(await page.locator('#toast').textContent(), /전력 \d+%/);
   } finally {
