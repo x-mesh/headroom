@@ -1,6 +1,6 @@
 import { axisCatalog, behaviorCatalog, cloneTopology, failureDomainKinds } from './data.js';
 import { calculateScenario, calculateSurvivalMultiplier, compareScenarios, createExport, createFailureDomainSweepTask, createSingleFaultSweepTask, createSurvivalMultiplierTask, ENGINE_VERSION, sweepFailureDomains, sweepSingleFaults } from './engine.js';
-import { acceptEvidence, addDemand, addDevice, addLink, applySpec, clearEvidenceAcceptance, moveDevice, normalizeId, promoteConnector, removeDemand, removeDevice, removeLink, setLimitOverride, setWorkloadConditions, updateDemand, updateDevice, updateLink } from './editor.js';
+import { acceptEvidence, addDemand, addDevice, addLink, applySpec, applySpecToKind, clearEvidenceAcceptance, moveDevice, normalizeId, promoteConnector, removeDemand, removeDevice, removeLink, setLimitOverride, setWorkloadConditions, updateDemand, updateDevice, updateLink } from './editor.js';
 import { importDeviceDefinition } from './device-import.js';
 import { applyMeasuredLimits, applyObservedLoad, buildObservedLoadValidationReport, compareTopologyFingerprint, fingerprintMatches, importMeasuredLimits, importObservedLoad, importZabbixObservedLoad, OBSERVED_LOAD_STALE_AFTER_DAYS, observedLoadIsStale } from './measured-import.js';
 import { parseProject, serializeProject } from './project.js';
@@ -11,7 +11,7 @@ import { ICONS, ICON_FALLBACK, ICON_KINDS, ICON_SPRITE } from './icons.js';
 import { vendorLogoFor } from './logos.js';
 import { buildTemplate, templateGroups, templates } from './templates.js';
 import { buildSpec, catalogEntry, catalogFor, catalogProfile } from './devices/catalog.js';
-import { addConnector, addShape, alignSelection, copySelection, distributeSelection, exportDiagramSvg, groupSelection, importDrawio, moveSelection, pasteSelection, removeDiagramElements, ungroupSelection, updateConnector, updateGroup, updateShape } from './diagram.js';
+import { addConnector, addShape, alignSelection, copySelection, distributeSelection, exportDiagramSvg, groupSelection, importDrawio, moveSelection, pasteSelection, removeDiagramElements, retargetConnector, ungroupSelection, updateConnector, updateGroup, updateShape } from './diagram.js';
 import { applyDrawioImport, createDrawioEdgeRenderContext, createDrawioPreview, parseDrawioDocument, renderDrawioEdgeSvg, renderDrawioPageSvg, renderDrawioVisualSvg } from './drawio-import.js';
 import { createHistory } from './history.js';
 import { acceptanceDigest, evidenceApplicability } from './evidence.js';
@@ -1721,6 +1721,21 @@ function renderTopology() {
     const locked = connector.locked ? ' locked' : '';
     return `<g class="diagram-connector${selected ? ' selected' : ''}${locked}" data-connector-id="${escapeAttribute(connector.id)}">${startMarker.definition}${endMarker.definition}<polyline class="diagram-connector-hit" points="${points}" fill="none" stroke="transparent" stroke-width="${hitWidth}" tabindex="0" role="button" aria-label="${escapeAttribute(`${connector.label || connector.id} 연결선 검사${connector.locked ? ' · 잠김' : ''}`)}"></polyline><polyline class="diagram-connector-line" points="${points}" fill="none" stroke="${escapeAttribute(selectedStroke)}" stroke-width="${selected ? Math.max(width + 2, 2.5) : width}"${dash}${startMarker.attribute}${endMarker.attribute}></polyline>${connector.locked ? `<text class="diagram-lock-mark" x="${labelPoint.x / count}" y="${labelPoint.y / count - 8}" text-anchor="middle">🔒</text>` : ''}${label}</g>`;
   }).join('');
+  // 가져온 연결선의 보이는 선은 pointer-events 가 꺼진 그림 레이어에만 있다. 같은 경로 위에
+  // 투명한 잡이줄을 놓지 않으면 선택할 수 없고, 선택할 수 없으면 링크로 승격할 수도 없다.
+  const importedConnectorHits = (topology.diagram?.connectors || [])
+    .filter((connector) => hasDrawioImport && Number.isInteger(connector.zIndex))
+    .map((connector) => {
+      const route = importedEdgeContext.get(connector.id)?.route?.points;
+      if (!route || route.length < 2) return '';
+      const geometry = escapeAttribute(route.map(({ x, y }, index) => `${index ? 'L' : 'M'} ${x} ${y}`).join(' '));
+      const selected = state.selection.some((item) => item.type === 'connector' && item.id === connector.id);
+      return `<g class="diagram-connector${selected ? ' selected' : ''}${connector.locked ? ' locked' : ''}" data-connector-id="${escapeAttribute(connector.id)}">
+        ${selected ? `<path class="link-selection" d="${geometry}"></path>` : ''}
+        <path class="diagram-connector-hit" d="${geometry}" fill="none" stroke="transparent" stroke-width="16" tabindex="0" role="button" aria-label="${escapeAttribute(`${connector.label || connector.id} 연결선 검사${connector.locked ? ' · 잠김' : ''}`)}"></path>
+      </g>`;
+    }).join('');
+
   // 라벨이 어디에 앉을지 먼저 정한다. 한 링크만 보고는 옆 라벨과 겹치는지 알 수 없다.
   const selectionHas = (type, id) => state.selection.some((item) => item.type === type && item.id === id)
     || type === 'shape' && state.selection.some((item) => item.type === 'group'
@@ -1808,7 +1823,7 @@ function renderTopology() {
       ${spot ? `<text class="link-label"${link.severed ? '' : ` data-live-util="${utilization ?? ''}" data-live-seed="${link.id}" data-live-source-type="${escapeAttribute(link.sourceInfo?.type || 'datasheet')}"`} x="${spot.x}" y="${spot.y}" text-anchor="middle">${link.severed ? 'DOWN' : formatPercent(utilization)}</text>` : ''}
       ${!imported && selectionHas('link', link.id) ? bendHandles(link) : ''}
     </g>`;
-  }).join('') + diagramConnectors + (hasDrawioImport ? '' : groupLabels);
+  }).join('') + diagramConnectors + importedConnectorHits + (hasDrawioImport ? '' : groupLabels);
   fitGroupTags();
   element('diagram-group-layer').innerHTML = hasDrawioImport ? '' : diagramGroupMarkup;
   for (const frame of element('diagram-group-layer').querySelectorAll('[data-diagram-group-id] :is(rect, text)')) {
@@ -2038,6 +2053,17 @@ function renderGroupEditor(group) {
 
 // 연결선은 계산에 들어가지 않는다. 양 끝이 장비면 링크로 바꿀 수 있고, 아니면 무엇이 막고
 // 있는지 그 자리에서 말해 준다 — 도형을 장비로 매핑하면 이 버튼이 열린다.
+// 가져온 선은 장비가 아니라 상자나 허공에 붙어 있곤 한다. 끝을 다시 지정할 수 있어야
+// 그 선이 계산에 들어간다. 장비를 먼저 보여 준다 — 링크가 되려면 양 끝이 장비여야 한다.
+function connectorEndpointOptions(selected) {
+  const option = (id, text) => `<option value="${escapeAttribute(id)}"${id === selected ? ' selected' : ''}>${escapeText(text)}</option>`;
+  const devices = topology.devices.map((device) => option(device.id, device.name || device.id)).join('');
+  const shapes = (topology.diagram?.shapes || []).map((shape) => option(shape.id, shape.text || shape.id)).join('');
+  const missing = [...topology.devices, ...(topology.diagram?.shapes || [])].some((item) => item.id === selected)
+    ? '' : option(selected, `${selected} (없는 끝)`);
+  return `${missing}<optgroup label="장비">${devices}</optgroup><optgroup label="도형">${shapes}</optgroup>`;
+}
+
 function connectorPromotionMarkup(connector) {
   const isDevice = (id) => topology.devices.some((device) => device.id === id);
   if (isDevice(connector.source) && isDevice(connector.target) && connector.source !== connector.target) {
@@ -2054,6 +2080,8 @@ function renderConnectorEditor(connector) {
     <div class="resource-identity"><strong>${escapeText(connector.label || connector.id)}</strong><span>연결선 · ${escapeText(connector.kind || 'annotation')}${connector.locked ? ' · 잠김' : ''}</span></div>
     <label class="shape-lock"><input name="locked" type="checkbox" data-diagram-lock${connector.locked ? ' checked' : ''}><span>연결선 잠금</span></label>
     <div class="shape-editor-grid">
+      <label><span>출발</span><select name="source">${connectorEndpointOptions(connector.source)}</select></label>
+      <label><span>도착</span><select name="target">${connectorEndpointOptions(connector.target)}</select></label>
       <label class="shape-editor-wide"><span>라벨</span><input name="label" value="${escapeAttribute(connector.label || '')}" maxlength="1000"></label>
       <label><span>종류</span><select name="kind"><option value="annotation"${connector.kind !== 'dependency' ? ' selected' : ''}>주석</option><option value="dependency"${connector.kind === 'dependency' ? ' selected' : ''}>의존성</option></select></label>
       <label><span>선 색상</span><input name="stroke" value="${escapeAttribute(connector.stroke || '#526e64')}"></label>
@@ -3221,6 +3249,28 @@ function renderDeviceLimitFields(form) {
   fields.innerHTML = deviceLimitFields(form.querySelector('select[name="kind"]').value, { ...(form._deviceTemplate?.limits || {}), ...kept });
 }
 
+// 가져온 장비는 용량이 비어 있어 계산에 들어가지 못한다. 한 대씩 모델을 고르는 대신
+// 종류별로 데이터시트 값을 한 번에 붙인다. 고른 모델은 spec 으로 남아 근거를 그대로 끌고
+// 간다 — 숫자만 채워 넣으면 어디서 온 값인지 따질 수 없다.
+function openCapacityFill() {
+  const pending = topology.devices.filter((device) => !device.spec && catalogFor(device.kind).length);
+  if (!pending.length) {
+    showToast(topology.devices.length ? '용량을 채울 장비가 없습니다. 모두 모델이 정해져 있습니다.' : '먼저 구성도를 가져오거나 장비를 추가하세요.');
+    return;
+  }
+  const counts = new Map();
+  for (const device of pending) counts.set(device.kind, (counts.get(device.kind) || 0) + 1);
+  const label = (kind) => PALETTE.find((item) => item.kind === kind)?.label || kind;
+  const rows = [...counts].sort((a, b) => b[1] - a[1]).map(([kind, count]) => {
+    const options = catalogFor(kind).flatMap((entry) => entry.profiles.map((profile) =>
+      `<option value="${escapeAttribute(`${entry.id}::${profile.id}`)}">${escapeText(`${entry.vendor} ${entry.model} · ${profile.label ?? profile.id}`)}</option>`)).join('');
+    return `<label><span>${escapeText(label(kind))} ${count}대</span><select name="kind:${escapeAttribute(kind)}"><option value="">그대로 두기</option>${options}</select></label>`;
+  }).join('');
+  openEditorPanel('가져온 장비 용량 채우기', `<p class="editor-hint">모델을 고르면 그 데이터시트의 한계값이 같은 종류의 장비에 함께 붙습니다. 이미 모델을 고른 장비는 건드리지 않습니다.</p>
+    <form class="editor-form" data-editor-form="capacity-fill">${rows}
+    <div class="form-actions"><button type="submit">적용</button></div><p class="editor-error"></p></form>`);
+}
+
 function openDemandForm(targetId = null, sourceId = null) {
   if (topology.devices.length < 2) { showToast('수요를 만들려면 장비가 두 대 이상 있어야 합니다.'); return; }
   // 노드에서 열면 그 장비가 목적지다. 출발지는 목적지와 달라야 하므로 겹치지 않는 첫 장비를 고른다.
@@ -3411,6 +3461,7 @@ function handleEditorAction(action) {
   if (action === 'import-observed-load') element('observed-load-file-input').click();
   if (action === 'import-zabbix-observed-load') element('zabbix-observed-load-file-input').click();
   if (action === 'import-drawio') element('drawio-file-input').click();
+  if (action === 'fill-capacity') { openCapacityFill(); return; }
   if (action === 'export-svg') {
     if (analysisProgress && detailView.level !== 'off') showToast(`${analysisProgress.label} 계산 중 ${analysisProgress.completed}/${analysisProgress.total} · 완료 후 내보낼 수 있습니다.`);
     else { downloadText('rack-mesh-diagram.svg', diagramSvg(), 'image/svg+xml'); showToast(`현재 ${detailView.level === 'off' ? '구성도' : detailView.level === 'brief' ? '요약' : '전체'} 보기로 SVG를 내보냈습니다.`); }
@@ -4211,6 +4262,20 @@ element('editor-panel-content').addEventListener('submit', (event) => {
       }
       state.selectedId = device.id; closeEditorPanel(); commitTopology(`장비 ${device.name}을 추가했습니다.`);
     }
+    if (form.dataset.editorForm === 'capacity-fill') {
+      const filled = [];
+      for (const [field, value] of data.entries()) {
+        if (!field.startsWith('kind:') || !value) continue;
+        const [catalogId, profileId] = String(value).split('::');
+        const entry = catalogEntry(catalogId); const profile = entry && catalogProfile(catalogId, profileId);
+        if (!entry || !profile) continue;
+        const applied = applySpecToKind(topology, field.slice(5), { ...buildSpec(entry, profile), vendor: entry.vendor, model: entry.model });
+        if (applied.length) filled.push(`${entry.vendor} ${entry.model} ${applied.length}대`);
+      }
+      closeEditorPanel();
+      if (filled.length) commitTopology(`데이터시트 용량을 채웠습니다. ${filled.join(' · ')}`);
+      else showToast('고른 모델이 없습니다.');
+    }
     if (form.dataset.editorForm === 'demand') {
       const demand = addDemand(topology, { name: data.get('name'), source: data.get('source'), target: data.get('target'), load: { forwarding_bps: data.get('forwarding_bps'), forwarding_pps: data.get('forwarding_pps') || 0, new_sessions_per_sec: data.get('new_sessions_per_sec') || 0, concurrent_sessions: data.get('concurrent_sessions') || 0 } });
       closeEditorPanel(); commitTopology(`Demand ${demand.name}을 추가했습니다.`);
@@ -4605,6 +4670,12 @@ element('inspector-content').addEventListener('submit', (event) => {
       return;
     }
     if (form.dataset.resourceForm === 'connector') {
+      const connectorId = form.dataset.resourceId;
+      const before = topology.diagram.connectors.find((item) => item.id === connectorId);
+      for (const side of ['source', 'target']) {
+        const picked = data.get(side);
+        if (picked && picked !== before?.[side]) topology = retargetConnector(topology, connectorId, side, picked);
+      }
       topology = updateConnector(topology, form.dataset.resourceId, {
         label: data.get('label'), kind: data.get('kind'), stroke: data.get('stroke'),
         strokeWidth: Number(data.get('strokeWidth')), dashed: data.has('dashed'),
@@ -4828,7 +4899,9 @@ topologyScroll.addEventListener('pointerdown', (event) => {
     return;
   }
   if (event.pointerType === 'touch') return;
-  const onResource = event.target.closest('.mesh-node, .link-hit, .link-handle, .diagram-shape, .diagram-group');
+  // 연결선도 자원이다. 빠져 있으면 선 위에서 누른 것이 마키 선택으로 잡히고, preventDefault 가
+  // 뒤따르는 click 을 지워서 선을 영영 고를 수 없다.
+  const onResource = event.target.closest('.mesh-node, .link-hit, .link-handle, .diagram-shape, .diagram-group, .diagram-connector-hit');
   const panButton = event.button === 1 || event.button === 2;
   if (!onResource && event.button === 0 && state.editorMode === 'select') {
     const start = canvasPoint(event);

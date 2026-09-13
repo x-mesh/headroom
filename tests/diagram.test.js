@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { addConnector, addShape, updateConnector, updateGroup, updateShape, removeDiagramElements, moveSelection, alignSelection, distributeSelection, copySelection, pasteSelection, groupSelection, ungroupSelection, exportDiagramSvg, importDrawio } from '../public/diagram.js';
+import { addConnector, addShape, retargetConnector, updateConnector, updateGroup, updateShape, removeDiagramElements, moveSelection, alignSelection, distributeSelection, copySelection, pasteSelection, groupSelection, ungroupSelection, exportDiagramSvg, importDrawio } from '../public/diagram.js';
 import { parseProject, serializeProject } from '../public/project.js';
 import { calculateScenario, calculateSurvivalMultiplier, sweepFailureDomains, sweepSingleFaults } from '../public/engine.js';
 import { nodeAxes } from '../public/node-view.js';
@@ -301,4 +301,26 @@ test('the exported picture bends its lines the same way the screen does', () => 
   assert.ok(bends(shapes.orthogonal) > 10, `직각으로 내보낸 그림이 ${bends(shapes.orthogonal)}개만 굽었습니다`);
   assert.ok(shapes.curved.includes(' Q '), '곡선으로 내보낸 그림은 이차 곡선을 써야 한다');
   for (const d of linkPaths(shapes.curved)) assert.doesNotMatch(d, /Q [-\d. ]+ Q/, '곡선 뒤에 명령 없는 좌표를 두면 경로가 깨진다');
+});
+
+test('a connector end can be moved onto a device without touching the rest of it', () => {
+  const topology = { name: 't', devices: [
+    { id: 'dev-a', name: 'Leaf A', kind: 'switch', zone: 'Z', position: { x: 0, y: 0 }, limits: {}, enabled: true },
+    { id: 'dev-b', name: 'API A', kind: 'server', zone: 'Z', position: { x: 200, y: 0 }, limits: {}, enabled: true },
+  ], links: [], demands: [], failureDomains: [],
+    diagram: { shapes: [{ id: 'note-1', kind: 'note', text: '상자', x: 0, y: 100, width: 40, height: 20 }], groups: [],
+      connectors: [{ id: 'c1', source: 'note-1', target: 'dev-b', kind: 'annotation', label: '연결', stroke: '#993333' }] } };
+  const moved = retargetConnector(topology, 'c1', 'source', 'dev-a');
+  assert.deepEqual([moved.diagram.connectors[0].source, moved.diagram.connectors[0].target], ['dev-a', 'dev-b']);
+  // 끝만 옮긴다. 라벨과 색은 그대로 둬야 실수로 다른 것이 바뀌지 않는다.
+  assert.equal(moved.diagram.connectors[0].label, '연결');
+  assert.equal(moved.diagram.connectors[0].stroke, '#993333');
+  assert.equal(topology.diagram.connectors[0].source, 'note-1', '원본은 그대로 둔다');
+  assert.throws(() => retargetConnector(moved, 'c1', 'source', 'ghost'), /장비나 도형만/);
+  assert.throws(() => retargetConnector(moved, 'c1', 'target', 'dev-a'), /서로 달라야/);
+  assert.throws(() => retargetConnector(moved, 'c1', 'middle', 'dev-a'), /source 또는 target/);
+  assert.throws(() => retargetConnector(moved, 'missing', 'source', 'dev-a'), /찾을 수 없습니다/);
+  // 잠긴 선은 끝도 옮기지 못한다.
+  const locked = updateConnector(moved, 'c1', { locked: true });
+  assert.throws(() => retargetConnector(locked, 'c1', 'source', 'note-1'), /잠긴|locked/i);
 });

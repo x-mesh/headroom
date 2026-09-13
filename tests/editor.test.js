@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cloneTopology } from '../public/data.js';
-import { addDemand, addDevice, addLink, createEmptyTopology, moveDevice, promoteConnector, removeDemand, removeDevice, removeLink, updateDemand, updateDevice } from '../public/editor.js';
+import { addDemand, addDevice, addLink, applySpec, applySpecToKind, createEmptyTopology, moveDevice, promoteConnector, removeDemand, removeDevice, removeLink, updateDemand, updateDevice } from '../public/editor.js';
 import { calculateScenario, findShortestPaths } from '../public/engine.js';
 
 test('creates, moves, and links devices with validated IDs', () => {
@@ -254,4 +254,25 @@ test('a hand drawn connector keeps the app link look when it is promoted', () =>
   addDevice(topology, { name: 'Leaf B', position: { x: 200, y: 0 }, limits: { forwarding_bps: 10e9 } });
   topology.diagram = { shapes: [], groups: [], connectors: [{ id: 'annotation-1', source: 'leaf-a', target: 'leaf-b', kind: 'annotation' }] };
   assert.equal(promoteConnector(topology, 'annotation-1').drawioVisual, undefined);
+});
+
+test('a datasheet fills every device of its kind that has no model yet', async () => {
+  const { buildSpec, catalogFor } = await import('../public/devices/catalog.js');
+  const topology = createEmptyTopology();
+  for (const name of ['Leaf A', 'Leaf B', 'Leaf C']) addDevice(topology, { name, kind: 'switch', position: { x: 0, y: 0 }, limits: {} });
+  addDevice(topology, { name: 'Edge FW', kind: 'firewall', position: { x: 0, y: 0 }, limits: {} });
+  const [first, second] = catalogFor('switch');
+  const pick = (entry) => ({ ...buildSpec(entry, entry.profiles[0]), vendor: entry.vendor, model: entry.model });
+  // One switch already carries a model somebody chose by hand.
+  applySpec(topology, 'leaf-c', pick(second));
+  const filled = applySpecToKind(topology, 'switch', pick(first));
+  assert.deepEqual(filled, ['leaf-a', 'leaf-b'], 'a model chosen by hand is left alone');
+  assert.equal(topology.devices.find(({ id }) => id === 'leaf-c').spec.catalogId, second.id);
+  assert.equal(topology.devices.find(({ id }) => id === 'edge-fw').spec, undefined, 'another kind is untouched');
+  // The datasheet number reaches the device, and it carries where it came from.
+  const leaf = topology.devices.find(({ id }) => id === 'leaf-a');
+  assert.equal(leaf.limits.forwarding_bps, first.profiles[0].limits.forwarding_bps);
+  assert.equal(leaf.spec.catalogId, first.id);
+  assert.ok(leaf.spec.source, 'the spec keeps its source so the number can be traced');
+  assert.throws(() => applySpecToKind(topology, 'switch', null), /catalog spec is required/);
 });

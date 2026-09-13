@@ -305,6 +305,79 @@ async function verifyCanvasEditing() {
   assert.ok(await page.locator('.link-group .packet-dot').count() > 0, '가져온 링크 위에 트래픽이 흐른다');
   assert.equal(await page.locator('#drawio-import-layer [data-drawio-role="link"]').count(), 1, '트래픽을 얹어도 draw.io 선은 그대로 한 번만 그린다');
 
+  // 가져온 장비는 용량이 비어 있어 계산에 들어가지 못한다. 종류별로 데이터시트를 붙이는
+  // 경로가 실제로 값을 채우는지 본다.
+  const capacityBefore = await page.evaluate(() => [...document.querySelectorAll('.mesh-node')].length);
+  assert.ok(capacityBefore >= 2, '앞 단계에서 가져온 장비가 남아 있다');
+  await page.locator('#start-menu-button').click();
+  await page.locator('#start-menu [data-editor-action="fill-capacity"]').click();
+  await page.waitForSelector('[data-editor-form="capacity-fill"]');
+  const kindSelects = page.locator('[data-editor-form="capacity-fill"] select');
+  assert.ok(await kindSelects.count() > 0, '용량이 비어 있는 종류가 목록에 뜬다');
+  const options = await kindSelects.first().locator('option').count();
+  assert.ok(options > 1, '카탈로그 모델이 선택지로 뜬다');
+  await kindSelects.first().selectOption({ index: 1 });
+  await page.locator('[data-editor-form="capacity-fill"] button[type="submit"]').click();
+  await page.waitForFunction(() => document.querySelector('#toast')?.textContent.includes('데이터시트 용량'), null, { timeout: 8000 });
+  assert.match(await page.locator('#toast').textContent(), /데이터시트 용량을 채웠습니다/);
+  // 같은 종류가 남지 않았으면 두 번째 호출은 채울 대상이 없다고 답한다.
+  await page.waitForFunction(() => !document.querySelector('#toast')?.classList.contains('visible'), null, { timeout: 8000 });
+
+  // 가져온 연결선은 그림 레이어에만 그려지고 그 레이어는 클릭을 받지 않는다. 잡이줄이 없으면
+  // 선을 고를 수 없고, 고를 수 없으면 끝을 고쳐 링크로 만들 수도 없다.
+  const lineDrawio = `<mxfile><diagram id="line" name="선"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="sw" value="스위치" style="shape=mxgraph.networks.switch" vertex="1" parent="1"><mxGeometry x="40" y="300" width="80" height="60" as="geometry"/></mxCell><mxCell id="srv" value="서버" style="shape=mxgraph.networks.server" vertex="1" parent="1"><mxGeometry x="360" y="300" width="80" height="60" as="geometry"/></mxCell><mxCell id="p" value="왼쪽 상자" style="shape=rect" vertex="1" parent="1"><mxGeometry x="40" y="460" width="80" height="50" as="geometry"/></mxCell><mxCell id="q" value="오른쪽 상자" style="shape=rect" vertex="1" parent="1"><mxGeometry x="360" y="460" width="80" height="50" as="geometry"/></mxCell><mxCell id="wire" value="연결" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#993333" edge="1" source="p" target="q" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>`;
+  await page.evaluate((source) => {
+    const transfer = new DataTransfer(); transfer.items.add(new File([source], 'line.drawio', { type: 'application/vnd.jgraph.mxfile' }));
+    document.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+  }, lineDrawio);
+  await page.waitForFunction(() => document.querySelector('#editor-panel-heading')?.textContent.includes('미리보기'));
+  await page.locator('[data-drawio-accept-high]').click();
+  await page.locator('[data-drawio-apply]').click();
+  await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 2);
+
+  const connectorHit = await page.evaluate(() => {
+    const hit = document.querySelector('[data-connector-id*="wire"] .diagram-connector-hit');
+    if (!hit) return null;
+    const box = hit.getBoundingClientRect();
+    for (let t = 0.3; t <= 0.7; t += 0.1) {
+      const x = box.left + box.width * t; const y = box.top + box.height * 0.5;
+      if (document.elementFromPoint(x, y) === hit) return { x, y };
+    }
+    return null;
+  });
+  assert.ok(connectorHit, '가져온 연결선에도 잡이줄이 있어 포인터로 집힌다');
+  await page.mouse.click(connectorHit.x, connectorHit.y);
+  await page.waitForSelector('[data-resource-form="connector"]');
+  // 두 끝이 아직 도형이라 승격은 막혀 있고, 무엇이 막고 있는지 그 자리에서 말해 준다.
+  assert.equal(await page.locator('[data-promote-connector]').count(), 0);
+  assert.match(await page.locator('[data-resource-form="connector"] .editor-hint').last().textContent(), /장비가 아닙니다/);
+
+  // 끝을 장비로 다시 지정하면 같은 선이 계산에 들어갈 수 있게 된다.
+  const deviceValues = await page.locator('[data-resource-form="connector"] select[name="source"] optgroup[label="장비"] option').evaluateAll((items) => items.map((item) => item.value));
+  assert.equal(deviceValues.length, 2, '가져온 장비가 끝점 후보로 뜬다');
+  await page.locator('[data-resource-form="connector"] select[name="source"]').selectOption(deviceValues[0]);
+  await page.locator('[data-resource-form="connector"] select[name="target"]').selectOption(deviceValues[1]);
+  await page.locator('[data-resource-form="connector"] button[type="submit"]').click();
+  await page.waitForFunction(() => !document.querySelector('#toast')?.classList.contains('visible'), null, { timeout: 8000 });
+  // 끝이 바뀌면 선도 옮겨 간다. 옛 좌표로 다시 누르면 빈 캔버스를 누르게 된다.
+  const movedHit = await page.evaluate(() => {
+    const hit = document.querySelector('[data-connector-id*="wire"] .diagram-connector-hit');
+    if (!hit) return null;
+    const box = hit.getBoundingClientRect();
+    for (let t = 0.3; t <= 0.7; t += 0.1) {
+      const x = box.left + box.width * t; const y = box.top + box.height * 0.5;
+      if (document.elementFromPoint(x, y) === hit) return { x, y };
+    }
+    return null;
+  });
+  assert.ok(movedHit, '끝을 옮긴 선도 계속 집힌다');
+  await page.mouse.click(movedHit.x, movedHit.y);
+  await page.waitForSelector('[data-promote-connector]');
+  await page.locator('[data-promote-connector]').click();
+  await page.waitForFunction(() => document.querySelector('#toast')?.textContent.includes('트래픽 링크로'), null, { timeout: 8000 });
+  assert.equal(await page.locator('[data-connector-id*="wire"]').count(), 0, '승격한 선은 주석으로 남지 않는다');
+  await page.waitForFunction(() => !document.querySelector('#toast')?.classList.contains('visible'), null, { timeout: 8000 });
+
   // 토스트는 화면 하단에 고정이라 아래쪽 노드를 덮는다. 다음 클릭 전에 걷히기를 기다린다.
   await page.waitForFunction(() => !document.querySelector('#toast')?.classList.contains('visible'), null, { timeout: 8000 });
   await page.close();

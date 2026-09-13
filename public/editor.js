@@ -205,6 +205,16 @@ export function applySpec(topology, id, spec) {
 }
 
 /** 축 하나를 보정한다. null 이나 빈 값이면 데이터시트 값으로 되돌린다. */
+// 가져온 장비는 용량이 비어 있어 계산에 들어가지 못한다. 한 대씩 고르는 대신 같은
+// 종류에 한 번에 붙인다. 이미 spec 이 있는 장비는 건드리지 않는다 — 손으로 고른 모델을
+// 덮으면 사용자가 한 판단이 조용히 사라진다.
+export function applySpecToKind(topology, kind, spec, { overwrite = false } = {}) {
+  if (!spec) throw new Error('A catalog spec is required');
+  const targets = topology.devices.filter((device) => device.kind === kind && (overwrite || !device.spec));
+  for (const device of targets) applySpec(topology, device.id, spec);
+  return targets.map(({ id }) => id);
+}
+
 export function setLimitOverride(topology, id, axis, value) {
   const device = topology.devices.find((item) => item.id === id);
   if (!device) throw new Error(`Device ${id} does not exist`);

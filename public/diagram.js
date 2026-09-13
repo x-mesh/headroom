@@ -136,6 +136,23 @@ export function updateConnector(topology, id, patch) {
   if (updated.locked != null) updated.locked = Boolean(updated.locked);
   next.diagram.connectors[index] = updated; return next;
 }
+// 가져온 선은 장비가 아니라 상자나 허공에 붙어 있는 경우가 많다. updateConnector 는 끝점을
+// 일부러 고정하므로, 다시 지정하는 길을 따로 둔다 — 라벨을 고치다 실수로 위상이 바뀌면
+// 계산 결과가 조용히 달라진다.
+export function retargetConnector(topology, id, side, endpointId) {
+  if (side !== 'source' && side !== 'target') throw new Error('연결선의 끝은 source 또는 target 입니다.');
+  const next = draft(topology);
+  const index = next.diagram.connectors.findIndex((item) => item.id === id);
+  if (index < 0) throw new Error('연결선을 찾을 수 없습니다.');
+  const current = next.diagram.connectors[index];
+  if (current.locked) lockedError();
+  const endpoints = new Set([...next.devices.map((item) => item.id), ...next.diagram.shapes.map((item) => item.id)]);
+  if (!endpoints.has(endpointId)) throw new Error('장비나 도형만 연결선의 끝이 될 수 있습니다.');
+  if (endpointId === (side === 'source' ? current.target : current.source)) throw new Error('연결선의 두 끝은 서로 달라야 합니다.');
+  next.diagram.connectors[index] = { ...current, [side]: endpointId };
+  return next;
+}
+
 export function updateShape(topology, id, patch) {
   const next = draft(topology); const index = next.diagram.shapes.findIndex((s) => s.id === id);
   if (index < 0) throw new Error('도형을 찾을 수 없습니다.');
