@@ -64,7 +64,8 @@ test('classifier uses stencil namespace order and never guesses labels', () => {
   assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.aws4.instance2' }).suggestedDeviceKind, 'server');
   assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.aws4.application_load_balancer' }).suggestedDeviceKind, 'lb');
   assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.aws4.group' }).classification, 'zone');
-  assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.key_management_service' }).classification, 'device-candidate');
+  assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.key_management_service' }).suggestedDeviceKind, 'server');
+  assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.illustration_users' }).classification, 'device-candidate');
   assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=rectangle', text: 'Firewall' }).classification, 'annotation');
   assert.equal(classifyDrawioElement({ type: 'container', rawStyle: '' }).classification, 'zone');
 });
@@ -83,12 +84,32 @@ test('managed gateways route, managed buckets store, managed services serve', ()
 });
 
 test('a short abbreviation does not claim the name it is buried in', () => {
-  // vpc_nat_gateway 는 통과 경로지 서버가 아니고, secrets_manager 안의 ecr 은 레지스트리가 아니다.
+  // vpc_nat_gateway 는 통과 경로지 서버가 아니다. 'pc' 가 'vpc' 안에서 터지면 서버가 된다.
   assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.aws3.vpc_nat_gateway' }).suggestedDeviceKind, 'router');
-  assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.aws4.secrets_manager' }).suggestedDeviceKind, null);
+  assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.aws3.vpc_peering' }).suggestedDeviceKind, null);
   // aws3 네임스페이스 자체가 s3 로 끝나므로 저장소 판정이 번지면 안 된다.
   assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.aws3.ec2' }).suggestedDeviceKind, 'server');
   assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: 'shape=mxgraph.aws3.auto_scaling' }).suggestedDeviceKind, null);
+});
+
+test('one service keeps one kind whichever stencil set spells it', () => {
+  const kindOf = (token) => classifyDrawioElement({ type: 'shape', rawStyle: `shape=${token}` }).suggestedDeviceKind;
+  // aws3 와 aws4 는 같은 서비스를 다르게 적는다. 네임스페이스가 종류를 바꾸면 안 된다.
+  for (const [older, newer] of [['kms', 'key_management_service'], ['s3', 'bucket'], ['lambda_function', 'lambda'], ['ecs_service', 'ecs']]) {
+    assert.equal(kindOf(`mxgraph.aws3.${older}`), kindOf(`mxgraph.aws4.${newer}`), `${older} / ${newer}`);
+  }
+  // 게이트웨이는 밑줄을 넣기도 빼기도 한다.
+  assert.equal(kindOf('mxgraph.aws3d.vpcgateway'), 'router');
+  assert.equal(kindOf('mxgraph.aws3d.customergateway'), 'router');
+});
+
+test('a drawing of people or a policy is not a device', () => {
+  // 통과 대역이 없는 것은 장비가 아니다. 사람·건물 그림, 정책 표시, 주소, 영역.
+  for (const token of ['mxgraph.aws4.illustration_users', 'mxgraph.aws4.illustration_office_building', 'mxgraph.aws3.role',
+    'mxgraph.aws3.network_access_controllist', 'mxgraph.aws4.peering', 'mxgraph.aws3.vpc_peering', 'mxgraph.aws4.auto_scaling',
+    'mxgraph.aws4.elastic_ip_address', 'mxgraph.aws3.corporate_data_center']) {
+    assert.equal(classifyDrawioElement({ type: 'shape', rawStyle: `shape=${token}` }).suggestedDeviceKind, null, token);
+  }
 });
 
 test('mscae stencils are the Microsoft namespace, not unclassified noise', () => {

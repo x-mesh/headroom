@@ -598,6 +598,14 @@ async function pageElements(model, page, registry) {
   return { id: page.id, name: page.name, index: page.index, elements, warnings, stats: { cells: cells.size, elements: elements.length } };
 }
 
+// 관리형 서비스도 대역을 쓰고 한계가 있어 장비로 센다. 종류만 정할 뿐 한계는 미확인으로
+// 남으므로 용량을 지어내지 않는다. aws3 와 aws4 가 같은 것을 다르게 적어서 - kms 와
+// key_management_service, s3 와 bucket, lambda_function 과 lambda - 두 철자를 다 받는다.
+// 사람·건물 그림(illustration_*), 정책 표시(role, network_access_controllist, peering,
+// auto_scaling), 영역(virtual_private_cloud, corporate_data_center)은 통과 대역이 없어 뺀다.
+const MANAGED_SERVICE = /(?:server|mobile|instance|ec2|fargate|ecs|eks|lambda|batch|database|aurora|dynamodb|neptune|timestream|qldb|opensearch|elasticache|memcached|redis|sns|sqs|mq_broker|eventbridge|kinesis|managed_streaming_for_kafka|codepipeline|codebuild|codecommit|codedeploy|cloudwatch|monitoring|systems_manager|parameter_store|secrets_manager|directory_service|route_?53|cloudfront|api_gateway|athena|key_management_service|blockchain|admin_console)/;
+const MANAGED_STORE = /(?:storage|glacier|bucket|elastic_file_system|elastic_block_store)/;
+
 export function classifyDrawioElement(element) {
   if (element.type === 'group' || element.type === 'container') return { classification: 'zone', suggestedDeviceKind: null, confidence: 'high', ruleId: 'container-zone', evidence: 'container' };
   const legacy = styleMap(element.rawStyle || '');
@@ -615,12 +623,10 @@ export function classifyDrawioElement(element) {
   const kind = /(?:lb|load[_ ]?balanc|elastic_load_balancing)/.test(token) ? 'lb'
     : /firewall/.test(token) ? 'firewall'
       // 관리형 게이트웨이는 트래픽이 지나가는 길목이라 router 로 둔다.
-      : /(?:router|internet_gateway|nat_gateway|transit_gateway|vpn_gateway|customer_gateway|vpn_connection|direct_connect)/.test(token) ? 'router'
+      : /(?:router|(?:internet|nat|transit|vpn|customer|vpc)_?gateway|vpn_connection|direct_connect)/.test(token) ? 'router'
         : /switch/.test(token) ? 'switch'
-          // 관리형 서비스도 대역을 쓰고 한계가 있어 장비로 센다. 한계 자체는 미확인으로 남는다.
-          : /(?:server|mobile|instance|ec2|fargate|ecs_service|ecs_task|lambda_function|route_?53|cloudfront|api_gateway|athena|codedeploy|elasticache|redis|memcached|aurora|dynamodb|admin_console)/.test(token)
-            || abbr('pc', 'kms', 'ecr', 'rds') ? 'server'
-            : /(?:storage|glacier|elastic_file_system|elastic_block_store)/.test(token) || abbr('s3', 'efs', 'ebs') ? 'storage' : null;
+          : MANAGED_SERVICE.test(token) || abbr('pc', 'kms', 'ecr', 'rds') ? 'server'
+            : MANAGED_STORE.test(token) || abbr('s3', 'efs', 'ebs', 'volume') ? 'storage' : null;
   if (namespace) {
     return { classification: kind ? 'device' : 'device-candidate', suggestedDeviceKind: kind, confidence: kind ? 'high' : 'low', ruleId: namespace, evidence: token };
   }
