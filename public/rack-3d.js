@@ -364,6 +364,14 @@ function cabinet(rack, views, selectedId, note) {
     const faceMaterial = new THREE.MeshStandardMaterial({ map: faceTexture(view, accentOf(view), selected, profile), roughness: .46, metalness: .26 });
     const plate = addBox(RACK.faceWidth, itemHeight, .06, 0, y, FRONT_Z + .03, [chassisMaterial, chassisMaterial, chassisMaterial, chassisMaterial, faceMaterial, chassisMaterial]);
     plate.userData = chassis.userData;
+    // 전원 도메인은 러그 색만으로는 멀리서 안 읽힌다. 장비 옆에 같은 색 띠를 세워 한 전원에 물린
+    // 장비가 어디까지인지 랙 밖에서도 보이게 한다.
+    if (view.domainColor) {
+      const tint = new THREE.Color(view.domainColor);
+      const stripe = addBox(.1, itemHeight, .2, -(RACK.faceWidth / 2 + .06), y, FRONT_Z + .02,
+        new THREE.MeshStandardMaterial({ color: tint, emissive: tint, emissiveIntensity: view.active ? .3 : .05, roughness: .5, metalness: .2 }));
+      stripe.userData = chassis.userData;
+    }
   }
 
   const run = freeRun(capacityU, views);
