@@ -248,8 +248,10 @@
             <div><h1 id="rack-workspace-heading">랙 배치</h1><p id="rack-workspace-summary">랙을 추가해 시작하세요.</p></div>
             <div class="rack-toolbar-actions">
               <div class="topology-view-control" role="group" aria-label="랙 표시 방식"><button type="button" data-rack-view="2d" aria-pressed="true">2D</button><button type="button" data-rack-view="3d" aria-pressed="false">3D</button></div>
+              <button type="button" data-rack-domains aria-pressed="false">전원 도메인</button>
               <div class="rack-3d-controls" id="rack-3d-controls" hidden><div class="topology-view-control" role="group" aria-label="랙 3D 면"><button type="button" data-rack-face="front" aria-pressed="true">전면</button><button type="button" data-rack-face="rear" aria-pressed="false">후면</button></div><button type="button" data-rack-cables aria-pressed="true">케이블 켬</button></div>
             </div>
+            <div class="rack-power-domains" id="rack-power-domains" hidden></div>
           </header>
           <div class="rack-empty" id="rack-empty"><strong>아직 랙이 없습니다</strong><span>랙을 추가한 뒤 장비를 U 위치에 배치하세요.</span><button type="button" data-rack-action="new-rack">첫 랙 추가</button></div>
           <div class="rack-2d-scroll" id="rack-2d-scroll" hidden><div class="rack-2d-canvas" id="rack-2d-canvas"></div></div>

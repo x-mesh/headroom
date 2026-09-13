@@ -103,7 +103,7 @@ function freeTexture(units, width, height) {
   return textureOf(canvas);
 }
 
-function accentOf(view) { return !view.active ? '#6f7d79' : view.mapped ? '#0e9a86' : '#8aa39b'; }
+function accentOf(view) { return !view.active ? '#6f7d79' : view.domainColor || (view.mapped ? '#0e9a86' : '#8aa39b'); }
 
 // 섀시는 종류마다 깊이가 다르다. 패치 패널을 서버와 같은 깊이로 두면 옆에서 본 순간 정체가 드러난다.
 const CHASSIS = Object.freeze({
@@ -527,8 +527,8 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
     const framing = `${racks.map(({ rack }) => rack.id).join(',')}:${top.toFixed(2)}`;
     if (framing !== framedFor) {
       framedFor = framing;
-      view.focus = top * .46;
-      view.distance = Math.min(84, Math.max(13, top * 2.2, racks.length * spacing * 1.25));
+      view.focus = top * .48;
+      view.distance = Math.min(84, Math.max(13, top * 1.9, racks.length * spacing * 1.2));
     }
   }
   function canvasPointer(clientX, clientY) {
