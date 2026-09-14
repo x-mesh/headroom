@@ -15,10 +15,14 @@ function uniquePlacementId(topology, base) {
   throw new Error('랙 장비 ID를 만들 수 없습니다.');
 }
 
+// 0.5U 배치를 허용하되 0.3처럼 반 칸에 걸치는 값은 받지 않는다.
+function isHalfUnit(value) { return Number.isFinite(value) && Number.isInteger(value * 2); }
+function overlapsRange(aStart, aHeight, bStart, bHeight) { return aStart < bStart + bHeight && bStart < aStart + aHeight; }
+
 export function placementHeight(topology, placement) {
   const device = placement.deviceId ? topology.devices.find(({ id }) => id === placement.deviceId) : null;
-  const value = placement.uHeight ?? physical(device)?.uHeight ?? 1;
-  return Number.isInteger(Number(value)) && Number(value) > 0 ? Number(value) : 1;
+  const value = Number(placement.uHeight ?? physical(device)?.uHeight ?? 1);
+  return isHalfUnit(value) && value >= .5 ? value : 1;
 }
 
 export function rackPlacements(topology, rack) {
@@ -56,32 +60,52 @@ export function materializeRack(topology, rack) {
 function assertPlacement(topology, rack, placement, ignoreId = null) {
   const startU = Number(placement.startU);
   const uHeight = Number(placement.uHeight);
-  if (!Number.isInteger(startU) || startU < 1) throw new Error('시작 U는 1 이상의 정수여야 합니다.');
-  if (!Number.isInteger(uHeight) || uHeight < 1) throw new Error('장비 높이는 1U 이상의 정수여야 합니다.');
+  if (!isHalfUnit(startU) || startU < 1) throw new Error('시작 U는 1 이상, 0.5U 단위여야 합니다.');
+  if (!isHalfUnit(uHeight) || uHeight < .5) throw new Error('장비 높이는 0.5U 이상, 0.5U 단위여야 합니다.');
   if (startU + uHeight - 1 > rack.capacityU) throw new Error(`${rack.capacityU}U 랙 범위를 벗어납니다.`);
   const collision = rackPlacements(topology, rack).find((current) => current.id !== ignoreId
-    && startU <= current.startU + current.uHeight - 1 && current.startU <= startU + uHeight - 1);
+    && overlapsRange(startU, uHeight, current.startU, current.uHeight));
   if (collision) throw new Error(`${placementView(topology, collision).name}과 U 위치가 겹칩니다.`);
 }
 
-export function firstFreeStartU(topology, rack, uHeight = 1, ignoreId = null) {
-  const height = Math.max(1, Number(uHeight) || 1);
+// 서버 같은 정수 높이 장비도 0.5U 패널에 딱 붙어야 하므로 높이와 관계없이 반 칸 간격으로 찾는다.
+function freeStartCandidates(topology, rack, uHeight, ignoreId) {
+  const height = isHalfUnit(Number(uHeight)) && Number(uHeight) >= .5 ? Number(uHeight) : 1;
   const occupied = rackPlacements(topology, rack).filter(({ id }) => id !== ignoreId);
-  for (let startU = 1; startU + height - 1 <= rack.capacityU; startU += 1) {
-    if (!occupied.some((placement) => startU <= placement.startU + placement.uHeight - 1 && placement.startU <= startU + height - 1)) return startU;
+  const free = [];
+  for (let startU = 1; startU + height - 1 <= rack.capacityU; startU += .5) {
+    if (!occupied.some((placement) => overlapsRange(startU, height, placement.startU, placement.uHeight))) free.push(startU);
   }
-  return null;
+  return free;
+}
+
+export function firstFreeStartU(topology, rack, uHeight = 1, ignoreId = null) {
+  return freeStartCandidates(topology, rack, uHeight, ignoreId)[0] ?? null;
 }
 
 export function nearestFreeStartU(topology, rack, uHeight = 1, preferredStartU = 1, ignoreId = null) {
-  const height = Math.max(1, Number(uHeight) || 1);
-  const preferred = Math.min(Math.max(1, Math.round(Number(preferredStartU) || 1)), Math.max(1, rack.capacityU - height + 1));
-  const occupied = rackPlacements(topology, rack).filter(({ id }) => id !== ignoreId);
-  const free = [];
-  for (let startU = 1; startU + height - 1 <= rack.capacityU; startU += 1) {
-    if (!occupied.some((placement) => startU <= placement.startU + placement.uHeight - 1 && placement.startU <= startU + height - 1)) free.push(startU);
-  }
+  const height = isHalfUnit(Number(uHeight)) && Number(uHeight) >= .5 ? Number(uHeight) : 1;
+  const rounded = Math.round((Number(preferredStartU) || 1) * 2) / 2;
+  const preferred = Math.min(Math.max(1, rounded), Math.max(1, rack.capacityU - height + 1));
+  const free = freeStartCandidates(topology, rack, uHeight, ignoreId);
   return free.sort((a, b) => Math.abs(a - preferred) - Math.abs(b - preferred) || a - b)[0] ?? null;
+}
+
+// 새 랙 폼에 채울 이름. 가장 큰 RACK 번호 다음을 쓰되, 이름을 바꾼 랙이 처음 이름의 ID를 쥐고 있으면 그 번호는 건너뛴다.
+export function nextRackName(topology) {
+  const racks = topology.racks || [];
+  const numbers = racks.map(({ name }) => Number(/^RACK\s+(\d+)$/i.exec(String(name ?? '').trim())?.[1])).filter(Number.isInteger);
+  for (let number = Math.max(0, ...numbers) + 1; ; number += 1) {
+    const name = `RACK ${String(number).padStart(2, '0')}`;
+    if (!racks.some(({ id }) => id === placementId(name))) return name;
+  }
+}
+
+// 같은 계약의 랙을 이어 만드는 경우가 많아 가장 최근 랙의 예산을 쓴다. 랙이 없으면 30A 단상 회로 하나의
+// 사용 가능 용량(약 5kW)으로 둔다. 기본값이 실제보다 크면 입력하지 않은 랙이 여유 있어 보인다.
+export function suggestedRackPowerBudget(topology) {
+  const latest = Number(topology.racks?.at(-1)?.powerBudgetWatts);
+  return Number.isFinite(latest) && latest > 0 ? latest : 5000;
 }
 
 export function createRack(topology, input) {
@@ -106,6 +130,17 @@ export function removeRack(topology, rackId) {
   if (topology.racks.length === before) throw new Error('삭제할 랙을 찾을 수 없습니다.');
 }
 
+// 랙에는 좌표가 없고 배열 순서가 곧 2D·3D에서 놓이는 자리다. toIndex는 옮긴 뒤의 최종 순서다.
+export function moveRack(topology, rackId, toIndex) {
+  const racks = topology.racks || [];
+  const from = racks.findIndex(({ id }) => id === rackId);
+  if (from < 0) throw new Error('옮길 랙을 찾을 수 없습니다.');
+  if (!Number.isInteger(toIndex) || toIndex < 0 || toIndex >= racks.length) throw new Error('랙을 옮길 자리가 올바르지 않습니다.');
+  const [rack] = racks.splice(from, 1);
+  racks.splice(toIndex, 0, rack);
+  return rack;
+}
+
 export function addMappedPlacement(topology, rackId, input) {
   const rack = (topology.racks || []).find(({ id }) => id === rackId);
   const device = topology.devices.find(({ id }) => id === input.deviceId);
@@ -124,7 +159,7 @@ export function addStandalonePlacement(topology, rackId, input) {
   materializeRack(topology, rack);
   const placement = { id: uniquePlacementId(topology, input.name), name: String(input.name).trim(), kind: String(input.kind || 'other'), model: String(input.model || '').trim(), startU: Number(input.startU), uHeight: Number(input.uHeight), powerWatts: input.powerWatts === '' || input.powerWatts == null ? null : Number(input.powerWatts) };
   if (!placement.name) throw new Error('랙 장비 이름을 입력하세요.');
-  if (!Number.isInteger(placement.uHeight) || placement.uHeight < 1) throw new Error('장비 높이는 1U 이상이어야 합니다.');
+  if (!isHalfUnit(placement.uHeight) || placement.uHeight < .5) throw new Error('장비 높이는 0.5U 이상, 0.5U 단위여야 합니다.');
   if (placement.powerWatts != null && (!Number.isFinite(placement.powerWatts) || placement.powerWatts < 0)) throw new Error('장비 전력은 0 이상이어야 합니다.');
   assertPlacement(topology, rack, placement);
   rack.placements.push(placement);
@@ -165,6 +200,15 @@ export function removeMissingRackMappings(topology) {
     if (Array.isArray(rack.placements)) rack.placements = rack.placements.filter(({ deviceId }) => !deviceId || deviceIds.has(deviceId));
     rack.deviceIds = (rack.deviceIds || []).filter((id) => deviceIds.has(id));
   }
+}
+
+// 정수 배치는 기존 'U5–5' 형식 그대로, 반 칸 배치는 끝값이 시작값보다 작아지지 않게 맞춘다.
+export function placementRangeLabel(startU, uHeight) {
+  const s = Number(startU);
+  const h = Number(uHeight);
+  if (Number.isInteger(s) && Number.isInteger(h)) return `U${s}–${s + h - 1}`;
+  const last = s + h - .5;
+  return last === s ? `U${s}` : `U${s}–${last}`;
 }
 
 export function rackSummary(topology, rack) {

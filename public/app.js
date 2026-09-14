@@ -16,7 +16,7 @@ import { addConnector, addShape, alignSelection, copySelection, distributeSelect
 import { applyDrawioImport, createDrawioEdgeRenderContext, createDrawioPreview, parseDrawioDocument, renderDrawioEdgeSvg, renderDrawioPageSvg, renderDrawioVisualSvg } from './drawio-import.js';
 import { createHistory } from './history.js';
 import { acceptanceDigest, evidenceApplicability } from './evidence.js';
-import { addMappedPlacement, addStandalonePlacement, createRack, firstFreeStartU, materializeRack, nearestFreeStartU, placementHeight, placementView, rackPlacements, rackSummary, removePlacement, removeRack, updatePlacement } from './rack.js';
+import { addMappedPlacement, addStandalonePlacement, createRack, firstFreeStartU, materializeRack, moveRack, nearestFreeStartU, nextRackName, placementHeight, placementRangeLabel, placementView, rackPlacements, rackSummary, removePlacement, removeRack, suggestedRackPowerBudget, updatePlacement } from './rack.js';
 
 let topology = cloneTopology();
 const state = { scale: 1, selectedId: 'fw-a', selection: [{ type: 'device', id: 'fw-a' }], disabledDevices: new Set(), disabledLinks: new Set(), disabledDomains: new Set(), namedScenarios: [], editorMode: 'select', connectSource: null, leftPanel: 'palette', zoom: 1, viewMode: 'edit', workspace: 'topology', leftPanelCollapsed: false, rightPanelCollapsed: false };
@@ -92,8 +92,18 @@ const RACK_EQUIPMENT = [
   { kind: 'patch-panel', name: 'PATCH PANEL', label: '패치 패널', uHeight: 1, heights: [1, 2], powerWatts: 0 },
   { kind: 'pdu', name: 'PDU', label: 'PDU', uHeight: 1, heights: [1, 2], powerWatts: 0 },
   { kind: 'cable-management', name: 'CABLE MANAGER', label: '케이블 관리대', uHeight: 1, heights: [1, 2], powerWatts: 0 },
+  { kind: 'blank-panel', name: 'BLANK PANEL', label: '0.5U 패널', uHeight: .5, heights: [.5, 1], powerWatts: 0 },
 ];
 const RACK_HEIGHT_CHOICES = [1, 2, 4];
+// 소형 코로케이션 풀랙(2kW), 30A 단상 회로의 사용 가능 용량(약 5kW), 3상 208V 30A PDU 정격(8.6kW).
+const RACK_POWER_PRESETS = [2000, 5000, 8600];
+function rackPowerPresets(watts) {
+  return `<div class="rack-power-presets" role="group" aria-label="전력 예산 추천값">${RACK_POWER_PRESETS.map((value) => `<button type="button" data-rack-power-preset="${value}" aria-pressed="${value === Number(watts)}">${value / 1000}kW</button>`).join('')}</div>`;
+}
+function syncRackPowerPresets(form) {
+  const watts = Number(form.elements.power.value);
+  form.querySelectorAll('[data-rack-power-preset]').forEach((chip) => chip.setAttribute('aria-pressed', String(Number(chip.dataset.rackPowerPreset) === watts)));
+}
 // 팔레트에서 고른 U 와 전력은 그 항목에 남는다. 같은 장비를 연달아 넣을 때 매번 다시 고르지 않는다.
 const rackPaletteHeights = new Map();
 const rackPaletteWatts = new Map();
@@ -692,8 +702,8 @@ function renderRackElevations() {
     const summary = rackSummary(topology, rack);
     const views = rackPlacementViews(rack);
     const marks = Array.from({ length: rack.capacityU }, (_, index) => index + 1).filter((unit) => unit === 1 || unit === rack.capacityU || unit % 5 === 0).map((unit) => `<span style="bottom:calc((${unit} - .5) * var(--rack-u))">${unit}U</span>`).join('');
-    const devices = views.map((view) => `<button type="button" class="rack-device" data-rack-id="${escapeAttribute(rack.id)}" data-rack-placement="${escapeAttribute(view.id)}" data-mapped="${view.mapped}" data-active="${view.active}"${view.domainId ? ` data-domain="${escapeAttribute(view.domainId)}" style="--rack-start:${view.startU};--rack-height:${view.uHeight};--domain-color:${escapeAttribute(view.domainColor)}"` : ` style="--rack-start:${view.startU};--rack-height:${view.uHeight}"`} aria-pressed="${rack.id === rackView.selectedRackId && view.id === rackView.selectedPlacementId}"><strong>${escapeText(view.name)}</strong><span>${view.down ? t('status.severed') : `U${view.startU}–${view.startU + view.uHeight - 1}`}</span>${view.uHeight > 1 ? `<small>${escapeText(view.domainName && rackView.domains ? view.domainName : view.model || view.kind)}${view.mapped && !rackView.domains ? ` · ${escapeText(t('ui.topologyDevice'))}` : ''}</small>` : ''}</button>`).join('');
-    return `<section class="rack-elevation-wrap"><header class="rack-elevation-head"><strong>${escapeText(rack.name)}</strong><span>${summary.usedU}/${rack.capacityU}U</span>${rackGauges(rack, rackUsage(topology, rack))}</header><div class="rack-elevation" data-rack-id="${escapeAttribute(rack.id)}" style="--rack-capacity:${rack.capacityU}"><div class="rack-u-labels">${marks}</div>${devices}</div><span class="rack-rail-label">FRONT ELEVATION</span></section>`;
+    const devices = views.map((view) => `<button type="button" class="rack-device" data-rack-id="${escapeAttribute(rack.id)}" data-rack-placement="${escapeAttribute(view.id)}" data-mapped="${view.mapped}" data-active="${view.active}"${view.uHeight < 1 ? ' data-half-u="true"' : ''}${view.domainId ? ` data-domain="${escapeAttribute(view.domainId)}" style="--rack-start:${view.startU};--rack-height:${view.uHeight};--domain-color:${escapeAttribute(view.domainColor)}"` : ` style="--rack-start:${view.startU};--rack-height:${view.uHeight}"`} aria-pressed="${rack.id === rackView.selectedRackId && view.id === rackView.selectedPlacementId}"><strong>${escapeText(view.name)}</strong><span>${view.down ? t('status.severed') : placementRangeLabel(view.startU, view.uHeight)}</span>${view.uHeight > 1 ? `<small>${escapeText(view.domainName && rackView.domains ? view.domainName : view.model || view.kind)}${view.mapped && !rackView.domains ? ` · ${escapeText(t('ui.topologyDevice'))}` : ''}</small>` : ''}</button>`).join('');
+    return `<section class="rack-elevation-wrap"><header class="rack-elevation-head" data-rack-order-handle="${escapeAttribute(rack.id)}"><strong>${escapeText(rack.name)}</strong><span>${summary.usedU}/${rack.capacityU}U</span>${rackGauges(rack, rackUsage(topology, rack))}</header><div class="rack-elevation" data-rack-id="${escapeAttribute(rack.id)}" style="--rack-capacity:${rack.capacityU}"><div class="rack-u-labels">${marks}</div>${devices}</div><span class="rack-rail-label">${escapeText(t('rack.front'))} ${escapeText(t('ui.rack'))}</span></section>`;
   }).join('');
 }
 
@@ -730,11 +740,11 @@ function renderRackInspector() {
   if (!placement) {
     const usage = rackUsage(topology, rack);
     const unknownNote = usage.unknownPower.length ? `<p class="rack-gauge-note">전력 미확인: ${escapeText(usage.unknownPower.slice(0, 4).join(', '))}${usage.unknownPower.length > 4 ? ` 외 ${usage.unknownPower.length - 4}대` : ''} — 장비를 선택해 전력을 입력하면 합계가 나옵니다.</p>` : '';
-    target.innerHTML = `<div class="rack-inspector-summary"><span>장비</span><strong>${summary.placements.length}대</strong></div>${rackGauges(rack, usage)}${unknownNote}<form data-rack-form="rack-edit"><label>랙 이름<input name="name" maxlength="80" required value="${escapeAttribute(rack.name)}"></label><label>공간 (U)<input name="capacityU" type="number" min="1" max="100" required value="${rack.capacityU}"></label><label>전력 예산 (W)<input name="power" type="number" min="1" required value="${rack.powerBudgetWatts}"></label><label>전력 기준<select name="basis"><option value="nameplate"${rack.powerBasis === 'nameplate' ? ' selected' : ''}>명판값</option><option value="typical"${rack.powerBasis === 'typical' ? ' selected' : ''}>일반 부하</option><option value="measured"${rack.powerBasis === 'measured' ? ' selected' : ''}>실측</option></select></label><div class="rack-inspector-actions"><button type="submit">랙 저장</button><button type="button" data-rack-action="delete-rack" data-danger>랙 삭제</button></div><p class="rack-form-error"></p></form>`;
+    target.innerHTML = `<div class="rack-inspector-summary"><span>장비</span><strong>${summary.placements.length}대</strong><span>순서</span><strong>${topology.racks.findIndex(({ id }) => id === rack.id) + 1} / ${topology.racks.length}</strong></div>${rackGauges(rack, usage)}${unknownNote}<form data-rack-form="rack-edit"><label>랙 이름<input name="name" maxlength="80" required value="${escapeAttribute(rack.name)}"></label><label>공간 (U)<input name="capacityU" type="number" min="1" max="100" required value="${rack.capacityU}"></label><label>전력 예산 (W)<input name="power" type="number" min="1" required value="${rack.powerBudgetWatts}"></label><label>전력 기준<select name="basis"><option value="nameplate"${rack.powerBasis === 'nameplate' ? ' selected' : ''}>명판값</option><option value="typical"${rack.powerBasis === 'typical' ? ' selected' : ''}>일반 부하</option><option value="measured"${rack.powerBasis === 'measured' ? ' selected' : ''}>실측</option></select></label><div class="rack-inspector-actions"><button type="button" data-rack-action="move-rack-left"${topology.racks[0]?.id === rack.id ? ' disabled' : ''}>왼쪽으로</button><button type="button" data-rack-action="move-rack-right"${topology.racks.at(-1)?.id === rack.id ? ' disabled' : ''}>오른쪽으로</button></div><div class="rack-inspector-actions"><button type="submit">랙 저장</button><button type="button" data-rack-action="delete-rack" data-danger>랙 삭제</button></div><p class="rack-form-error"></p></form>`;
     return;
   }
   const view = placementView(topology, placement); const editableHeight = placement.uHeight || placementHeight(topology, placement);
-  target.innerHTML = `<div class="rack-inspector-summary"><span>장비</span><strong>${escapeText(view.name)}</strong><span>연결</span><strong>${view.mapped ? '토폴로지 장비' : '랙 전용'}</strong><span>위치</span><strong>U${view.startU}–${view.startU + view.uHeight - 1}</strong></div><form data-rack-form="placement-edit" data-placement-id="${escapeAttribute(view.id)}">${view.mapped ? `<label>이름<input value="${escapeAttribute(view.name)}" disabled></label>${devicePowerFields(rack, view)}` : `<label>이름<input name="name" maxlength="80" required value="${escapeAttribute(view.name)}"></label><label>모델<input name="model" maxlength="80" value="${escapeAttribute(view.model)}"></label><label>종류<input name="kind" maxlength="80" required value="${escapeAttribute(view.kind)}"></label><label>전력 (W)<input name="powerWatts" type="number" min="0" value="${view.powerWatts ?? ''}"></label>`}<label>시작 U<input name="startU" type="number" min="1" max="${rack.capacityU}" required value="${view.startU}"></label><label>높이 (U)<input name="uHeight" type="number" min="1" max="${rack.capacityU}" required value="${editableHeight}"></label><div class="rack-inspector-actions"><button type="submit">배치 저장</button><button type="button" data-rack-action="delete-placement" data-danger>랙에서 제거</button></div><p class="rack-form-error"></p></form>`;
+  target.innerHTML = `<div class="rack-inspector-summary"><span>장비</span><strong>${escapeText(view.name)}</strong><span>연결</span><strong>${view.mapped ? '토폴로지 장비' : '랙 전용'}</strong><span>위치</span><strong>${placementRangeLabel(view.startU, view.uHeight)}</strong></div><form data-rack-form="placement-edit" data-placement-id="${escapeAttribute(view.id)}">${view.mapped ? `<label>이름<input value="${escapeAttribute(view.name)}" disabled></label>${devicePowerFields(rack, view)}` : `<label>이름<input name="name" maxlength="80" required value="${escapeAttribute(view.name)}"></label><label>모델<input name="model" maxlength="80" value="${escapeAttribute(view.model)}"></label><label>종류<input name="kind" maxlength="80" required value="${escapeAttribute(view.kind)}"></label><label>전력 (W)<input name="powerWatts" type="number" min="0" value="${view.powerWatts ?? ''}"></label>`}<label>시작 U<input name="startU" type="number" min="1" max="${rack.capacityU}" step=".5" required value="${view.startU}"></label><label>높이 (U)<input name="uHeight" type="number" min=".5" max="${rack.capacityU}" step=".5" required value="${editableHeight}"></label><div class="rack-inspector-actions"><button type="submit">배치 저장</button><button type="button" data-rack-action="delete-placement" data-danger>랙에서 제거</button></div><p class="rack-form-error"></p></form>`;
 }
 
 function renderPowerDomains() {
@@ -804,23 +814,24 @@ function rackElevationDropTarget(clientX, clientY) {
   const innerHeight = Math.max(1, target.inner.bottom - target.inner.top);
   const unitHeight = innerHeight / target.rack.capacityU;
   const fromBottom = Math.min(innerHeight - .001, Math.max(0, target.inner.bottom - clientY));
-  return { rack: target.rack, node: target.node, hoveredU: Math.floor(fromBottom / unitHeight) + 1 };
+  return { rack: target.rack, node: target.node, hoveredU: Math.floor(fromBottom / unitHeight) + 1, positionU: fromBottom / unitHeight };
 }
 
 // 3D 뷰에서는 엘리베이션 DOM이 숨어 있어 사각형이 전부 0이 된다. 씬에 직접 물어봐야 드롭을 받는다.
 function rackSceneDropTarget(clientX, clientY) {
   const hit = rackScene?.dropTarget(clientX, clientY);
   const rack = hit && (topology.racks || []).find(({ id }) => id === hit.rackId);
-  return rack ? { rack, node: null, hoveredU: hit.hoveredU } : null;
+  return rack ? { rack, node: null, hoveredU: hit.hoveredU, positionU: hit.positionU } : null;
 }
 
 function rackDropTarget(clientX, clientY, drag) {
   const hovered = rackView.mode === '3d' ? rackSceneDropTarget(clientX, clientY) : rackElevationDropTarget(clientX, clientY);
   if (!hovered) return null;
   const uHeight = drag.uHeight;
-  // 포인터가 장비의 중앙을 잡고 있다고 보고 원하는 U를 정한다. 빈 구간이 아니면 가장 가까운
+  // 포인터가 잡은 연속 위치를 기준으로 원하는 U를 정한다. 빈 구간이 아니면 가장 가까운
   // 연속 공간으로 이동하되, 미리보기와 pointerup은 이 함수를 같이 써 같은 위치를 선택한다.
-  const preferred = Math.round(hovered.hoveredU - (uHeight - 1) / 2);
+  // 서버도 0.5U 패널에 붙일 수 있어야 하므로 장비 높이와 관계없이 반 칸 격자에 맞춘다.
+  const preferred = Math.round((hovered.positionU + 1 - uHeight / 2) * 2) / 2;
   const ignoreId = drag.placementId && drag.fromRackId === hovered.rack.id ? drag.placementId : null;
   // 이미 그 랙에 있는 장비를 옮기는 중이면 전력은 그대로다. 두 번 더하면 안 된다.
   const extra = ignoreId ? null : { deviceId: drag.deviceId, powerWatts: drag.powerWatts, uHeight, name: drag.name };
@@ -856,7 +867,7 @@ function showRackDropPreview(target) {
   if (!target.node) { if (target.startU != null) rackScene.setDropPreview({ rackId: target.rack.id, startU: target.startU, uHeight: target.uHeight, status: note.status }); return; }
   target.node.classList.add(target.startU == null ? 'drop-blocked' : 'drop-target');
   if (target.startU == null) return;
-  target.node.insertAdjacentHTML('beforeend', `<span class="rack-drop-preview" data-power="${note.status}" style="--rack-start:${target.startU};--rack-height:${target.uHeight}">U${target.startU}–${target.startU + target.uHeight - 1}<em>${escapeText(note.text)}</em></span>`);
+  target.node.insertAdjacentHTML('beforeend', `<span class="rack-drop-preview" data-power="${note.status}" style="--rack-start:${target.startU};--rack-height:${target.uHeight}">${placementRangeLabel(target.startU, target.uHeight)}<em>${escapeText(note.text)}</em></span>`);
 }
 
 function queueRackDropPreview(clientX, clientY) {
@@ -3702,7 +3713,7 @@ function openVerificationPanel() {
     <div class="verification-columns">
       <section data-verification-panel="service"${tab === 'service' ? '' : ' hidden'}><h3>서비스 생존성</h3><p>어떤 트래픽을 어느 비율까지 전달해야 하는지 정합니다.</p><ul>${services}</ul><form class="editor-form" data-editor-form="service"><label>이름<input name="name" required maxlength="80"></label><label>최소 전달률 (%)<input name="ratio" type="number" min="1" max="100" value="100"></label>${checkList('demandIds', topology.demands, '검증할 수요')}<button type="submit">서비스 추가</button><p class="editor-error"></p></form></section>
       <section data-verification-panel="domain"${tab === 'domain' ? '' : ' hidden'}><h3>공통 장애 도메인</h3><p>전원이나 회선처럼 함께 멈추는 자원을 묶습니다. 종류는 설명 라벨이며 계산에는 영향을 주지 않습니다.</p>${suggestionList}<ul>${domains}</ul><form class="editor-form" data-editor-form="failure-domain"><label>이름<input name="name" required maxlength="80"></label><label>종류<select name="kind">${failureDomainKinds.map((kind) => `<option value="${kind}">${escapeText(FAILURE_DOMAIN_KIND_LABEL[kind])}</option>`).join('')}</select></label>${checkList('deviceIds', topology.devices, '함께 멈출 장비')}${checkList('linkIds', topology.links, '함께 멈출 링크')}<button type="submit">장애 도메인 추가</button><p class="editor-error"></p></form></section>
-      <section data-verification-panel="rack"${tab === 'rack' ? '' : ' hidden'}><h3>랙 수용량</h3><p>장비의 전력과 공간이 랙 예산 안에 드는지 확인합니다.</p><ul>${racks}</ul><form class="editor-form" data-editor-form="rack"><label>이름<input name="name" required maxlength="80"></label><label>전력 예산 (W)<input name="power" type="number" min="1" required></label><label>공간 (U)<input name="units" type="number" min="1" required></label><label>전력 기준<select name="basis"><option value="nameplate">명판값</option><option value="typical">일반 부하</option><option value="measured">실측</option></select></label>${checkList('deviceIds', topology.devices, '랙 장비')}<button type="submit">랙 추가</button><p class="editor-error"></p></form></section>
+      <section data-verification-panel="rack"${tab === 'rack' ? '' : ' hidden'}><h3>랙 수용량</h3><p>장비의 전력과 공간이 랙 예산 안에 드는지 확인합니다.</p><ul>${racks}</ul><form class="editor-form" data-editor-form="rack"><label>이름<input name="name" required maxlength="80"></label><label>전력 예산 (W)<input name="power" type="number" min="1" required value="${suggestedRackPowerBudget(topology)}"></label><label>공간 (U)<input name="units" type="number" min="1" required></label><label>전력 기준<select name="basis"><option value="nameplate">명판값</option><option value="typical">일반 부하</option><option value="measured">실측</option></select></label>${checkList('deviceIds', topology.devices, '랙 장비')}<button type="submit">랙 추가</button><p class="editor-error"></p></form></section>
       <section data-verification-panel="scenario"${tab === 'scenario' ? '' : ' hidden'}><h3>비교 시나리오</h3><p>저장한 장애와 부하를 다시 계산해 서비스별 수용 판정과 기준선 차이를 표시합니다.</p><div class="saved-scenarios">${scenarios}</div><form class="editor-form" data-editor-form="scenario"><label>이름<input name="name" required maxlength="80"></label><button type="submit">현재 장애·부하 저장</button><p class="editor-error"></p></form></section>
     </div>`);
 }
@@ -4153,6 +4164,8 @@ element('rack-workspace').addEventListener('click', (event) => {
   if (event.target.closest('[data-rack-domains]')) { rackView.domains = !rackView.domains; renderRackWorkspace(); return; }
   const domainChip = event.target.closest('[data-power-domain]');
   if (domainChip) { toggleFailure('domain', domainChip.dataset.powerDomain); return; }
+  const powerPreset = event.target.closest('[data-rack-power-preset]');
+  if (powerPreset) { const form = powerPreset.closest('form'); form.elements.power.value = powerPreset.dataset.rackPowerPreset; syncRackPowerPresets(form); return; }
   const action = event.target.closest('[data-rack-action]')?.dataset.rackAction;
   if (!action) return;
   const rack = currentRack();
@@ -4164,19 +4177,26 @@ element('rack-workspace').addEventListener('click', (event) => {
     showToast('장애 도메인 탭입니다. 종류를 전원으로 두고 함께 멈출 장비를 고르세요.');
     return;
   }
+  if ((action === 'move-rack-left' || action === 'move-rack-right') && rack) {
+    const toIndex = topology.racks.findIndex(({ id }) => id === rack.id) + (action === 'move-rack-left' ? -1 : 1);
+    try { moveRack(topology, rack.id, toIndex); commitRack(`${rack.name}을 ${toIndex + 1}번째 자리로 옮겼습니다.`); } catch (error) { showToast(error.message); }
+    return;
+  }
   if (action === 'new-rack') {
-    element('rack-inspector-content').innerHTML = `<form data-rack-form="rack-new"><label>랙 이름<input name="name" maxlength="80" required placeholder="RACK 01"></label><label>공간 (U)<input name="capacityU" type="number" min="1" max="100" required value="42"></label><label>전력 예산 (W)<input name="power" type="number" min="1" required value="10000"></label><label>전력 기준<select name="basis"><option value="nameplate">명판값</option><option value="typical">일반 부하</option><option value="measured">실측</option></select></label><button type="submit">랙 생성</button><p class="rack-form-error"></p></form>`;
-    element('rack-inspector-content').querySelector('input[name="name"]').focus(); return;
+    const powerBudget = suggestedRackPowerBudget(topology);
+    element('rack-inspector-content').innerHTML = `<form data-rack-form="rack-new"><label>랙 이름<input name="name" maxlength="80" required value="${escapeAttribute(nextRackName(topology))}"></label><label>공간 (U)<input name="capacityU" type="number" min="1" max="100" required value="42"></label><label>전력 예산 (W)<input name="power" type="number" min="1" required value="${powerBudget}"></label>${rackPowerPresets(powerBudget)}<label>전력 기준<select name="basis"><option value="nameplate">명판값</option><option value="typical">일반 부하</option><option value="measured">실측</option></select></label><button type="submit">랙 생성</button><p class="rack-form-error"></p></form>`;
+    // 제안 이름을 선택해 두면 그대로 생성하거나, 바로 타이핑해 바꿀 수 있다.
+    element('rack-inspector-content').querySelector('input[name="name"]').select(); return;
   }
   if (action === 'add-mapped' && rack) {
     const choices = topology.devices.filter(({ id }) => !topologyDevicePlaced(id));
     if (!choices.length) { showToast('배치할 수 있는 토폴로지 장비가 없습니다.'); return; }
     const first = choices[0]; const height = placementHeight(topology, { deviceId: first.id }); const start = firstFreeStartU(topology, rack, height);
-    element('rack-inspector-content').innerHTML = `<form data-rack-form="mapped-new"><label>토폴로지 장비<select name="deviceId">${choices.map((device) => `<option value="${escapeAttribute(device.id)}">${escapeText(device.name)} · ${escapeText(device.kind)}</option>`).join('')}</select></label><label>시작 U<input name="startU" type="number" min="1" max="${rack.capacityU}" required value="${start ?? 1}"></label><label>높이 (U)<input name="uHeight" type="number" min="1" max="${rack.capacityU}" required value="${height}"></label><button type="submit">장비 연결</button><p class="rack-form-error"></p></form>`; return;
+    element('rack-inspector-content').innerHTML = `<form data-rack-form="mapped-new"><label>토폴로지 장비<select name="deviceId">${choices.map((device) => `<option value="${escapeAttribute(device.id)}">${escapeText(device.name)} · ${escapeText(device.kind)}</option>`).join('')}</select></label><label>시작 U<input name="startU" type="number" min="1" max="${rack.capacityU}" step=".5" required value="${start ?? 1}"></label><label>높이 (U)<input name="uHeight" type="number" min=".5" max="${rack.capacityU}" step=".5" required value="${height}"></label><button type="submit">장비 연결</button><p class="rack-form-error"></p></form>`; return;
   }
   if (action === 'add-standalone' && rack) {
     const start = firstFreeStartU(topology, rack, 1);
-    element('rack-inspector-content').innerHTML = `<form data-rack-form="standalone-new"><label>이름<input name="name" maxlength="80" required placeholder="PATCH PANEL 01"></label><label>모델<input name="model" maxlength="80"></label><label>종류<input name="kind" maxlength="80" required value="other"></label><label>시작 U<input name="startU" type="number" min="1" max="${rack.capacityU}" required value="${start ?? 1}"></label><label>높이 (U)<input name="uHeight" type="number" min="1" max="${rack.capacityU}" required value="1"></label><label>전력 (W)<input name="powerWatts" type="number" min="0"></label><button type="submit">랙 장비 추가</button><p class="rack-form-error"></p></form>`; return;
+    element('rack-inspector-content').innerHTML = `<form data-rack-form="standalone-new"><label>이름<input name="name" maxlength="80" required placeholder="PATCH PANEL 01"></label><label>모델<input name="model" maxlength="80"></label><label>종류<input name="kind" maxlength="80" required value="other"></label><label>시작 U<input name="startU" type="number" min="1" max="${rack.capacityU}" step=".5" required value="${start ?? 1}"></label><label>높이 (U)<input name="uHeight" type="number" min=".5" max="${rack.capacityU}" step=".5" required value="1"></label><label>전력 (W)<input name="powerWatts" type="number" min="0"></label><button type="submit">랙 장비 추가</button><p class="rack-form-error"></p></form>`; return;
   }
   if (action === 'delete-rack' && rack) { if (confirm(`${rack.name}과 랙 배치를 삭제할까요? 토폴로지 장비는 삭제되지 않습니다.`)) { removeRack(topology, rack.id); rackView.selectedRackId = topology.racks?.[0]?.id || null; rackView.selectedPlacementId = null; commitRack('랙을 삭제했습니다.'); } return; }
   if (action === 'delete-placement' && rack && rackView.selectedPlacementId) { removePlacement(topology, rack.id, rackView.selectedPlacementId); rackView.selectedPlacementId = null; commitRack('랙 배치를 제거했습니다. 장비 원본은 유지됩니다.'); }
@@ -4189,15 +4209,50 @@ element('rack-equipment-palette').addEventListener('pointerdown', (event) => {
 });
 // 이동과 놓기는 창에서 받는다. 끌던 요소에 붙이면 화면이 다시 그려지거나 브라우저가 pointer
 // capture 를 다르게 처리하는 순간 pointerup 이 오지 않고, 사용자는 이유 없이 실패만 본다.
+// 랙 머리글을 좌우로 끌면 한 줄 안의 순서가 바뀐다. 3D의 끌기는 카메라와 장비 이동에 쓰므로 2D에서만 받는다.
+let rackOrderDrag = null;
 window.addEventListener('pointermove', (event) => {
   if (rackDrag && event.pointerId === rackDrag.pointerId) advanceRackDrag(event.clientX, event.clientY);
+  if (rackOrderDrag && event.pointerId === rackOrderDrag.pointerId) advanceRackOrderDrag(event.clientX);
 });
 window.addEventListener('pointerup', (event) => {
   if (rackDrag && event.pointerId === rackDrag.pointerId) finishRackDrag(event.clientX, event.clientY);
+  if (rackOrderDrag && event.pointerId === rackOrderDrag.pointerId) finishRackOrderDrag(true);
 });
 window.addEventListener('pointercancel', (event) => {
   if (rackDrag && event.pointerId === rackDrag.pointerId) finishRackDrag(event.clientX, event.clientY);
+  if (rackOrderDrag && event.pointerId === rackOrderDrag.pointerId) finishRackOrderDrag(false);
 });
+element('rack-2d-canvas').addEventListener('pointerdown', (event) => {
+  const handle = event.target.closest('[data-rack-order-handle]');
+  if (!handle || event.button !== 0 || rackDrag) return;
+  event.preventDefault(); handle.setPointerCapture(event.pointerId);
+  rackOrderDrag = { rackId: handle.dataset.rackOrderHandle, pointerId: event.pointerId, handle, startX: event.clientX, moved: false, toIndex: null };
+});
+function advanceRackOrderDrag(clientX) {
+  const drag = rackOrderDrag;
+  if (!drag.moved && Math.abs(clientX - drag.startX) <= PALETTE_DRAG_THRESHOLD) return;
+  const wraps = [...element('rack-2d-canvas').querySelectorAll('.rack-elevation-wrap')];
+  const dragged = wraps.find((wrap) => wrap.querySelector('[data-rack-order-handle]')?.dataset.rackOrderHandle === drag.rackId);
+  if (!dragged) return;
+  drag.moved = true; dragged.classList.add('rack-order-dragging');
+  // 끌고 있는 랙을 뺀 나머지 중 포인터보다 왼쪽에 중심이 있는 랙 수가 곧 옮긴 뒤의 순서다.
+  const others = wraps.filter((wrap) => wrap !== dragged);
+  drag.toIndex = others.filter((wrap) => { const box = wrap.getBoundingClientRect(); return box.left + box.width / 2 < clientX; }).length;
+  wraps.forEach((wrap) => delete wrap.dataset.orderDrop);
+  if (others[drag.toIndex]) others[drag.toIndex].dataset.orderDrop = 'before';
+  else if (others.length) others.at(-1).dataset.orderDrop = 'after';
+}
+function finishRackOrderDrag(commit) {
+  const drag = rackOrderDrag; rackOrderDrag = null;
+  if (drag.handle.hasPointerCapture?.(drag.pointerId)) drag.handle.releasePointerCapture(drag.pointerId);
+  element('rack-2d-canvas').querySelectorAll('.rack-elevation-wrap').forEach((wrap) => { wrap.classList.remove('rack-order-dragging'); delete wrap.dataset.orderDrop; });
+  const from = (topology.racks || []).findIndex(({ id }) => id === drag.rackId);
+  if (!commit || !drag.moved || from < 0 || drag.toIndex === from) return;
+  const rack = moveRack(topology, drag.rackId, drag.toIndex);
+  rackView.selectedRackId = rack.id; rackView.selectedPlacementId = null;
+  commitRack(`${rack.name}을 ${drag.toIndex + 1}번째 자리로 옮겼습니다.`);
+}
 element('rack-2d-canvas').addEventListener('pointerdown', (event) => {
   const node = event.target.closest('[data-rack-placement]');
   if (!node || event.button !== 0 || rackDrag) return;
@@ -4225,6 +4280,10 @@ element('rack-equipment-palette').addEventListener('click', (event) => {
   if (!item || !rack) { if (!rack) showToast('먼저 랙을 추가하세요.'); return; }
   const drag = { type: item.dataset.rackPaletteType, deviceId: item.dataset.rackDeviceId || null, name: item.dataset.rackName || item.querySelector('strong')?.textContent || 'RACK DEVICE', kind: item.dataset.rackKind || '', uHeight: Number(item.dataset.rackHeight) || 1, powerWatts: item.dataset.rackPower === '' ? null : Number(item.dataset.rackPower) };
   placeRackItem(drag, { rack, startU: firstFreeStartU(topology, rack, drag.uHeight), uHeight: drag.uHeight });
+});
+// 직접 입력한 값이 추천값과 달라지면 눌린 버튼 표시도 풀어야 한다. 그대로 두면 입력값과 다른 값이 선택된 것처럼 보인다.
+element('rack-workspace').addEventListener('input', (event) => {
+  if (event.target.matches('form[data-rack-form] input[name="power"]')) syncRackPowerPresets(event.target.form);
 });
 element('rack-workspace').addEventListener('submit', (event) => {
   const form = event.target.closest('form[data-rack-form]'); if (!form) return; event.preventDefault();

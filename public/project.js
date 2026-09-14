@@ -180,7 +180,7 @@ function validateRackPlacements(topology, deviceIds) {
       validId(placement.id, 'Rack placement');
       if (placementIds.has(placement.id)) throw new Error(`Rack placement contains duplicate ID ${placement.id}`);
       placementIds.add(placement.id);
-      if (!Number.isInteger(placement.startU) || placement.startU < 1 || !Number.isInteger(placement.uHeight) || placement.uHeight < 1 || placement.startU + placement.uHeight - 1 > rack.capacityU) throw new Error('Rack placement is outside the rack');
+      if (!Number.isFinite(placement.startU) || !Number.isInteger(placement.startU * 2) || placement.startU < 1 || !Number.isFinite(placement.uHeight) || !Number.isInteger(placement.uHeight * 2) || placement.uHeight < .5 || placement.startU + placement.uHeight - 1 > rack.capacityU) throw new Error('Rack placement is outside the rack');
       if (placement.deviceId != null) {
         if (!deviceIds.has(placement.deviceId)) throw new Error('Rack placement references an unknown device');
         if (mappedDevices.has(placement.deviceId)) throw new Error('A topology device can appear in only one rack placement');
@@ -190,7 +190,8 @@ function validateRackPlacements(topology, deviceIds) {
         if (placement.model != null && placement.model !== '') boundedText(placement.model, 'Rack device model');
       }
       if (placement.powerWatts != null && (!Number.isFinite(placement.powerWatts) || placement.powerWatts < 0)) throw new Error('Rack device power must be non-negative');
-      for (let unit = placement.startU; unit < placement.startU + placement.uHeight; unit += 1) { if (occupied.has(unit)) throw new Error('Rack placements overlap'); occupied.add(unit); }
+      // 반 칸 배치가 겹치는지 보려면 정수 U가 아니라 반 칸 인덱스로 점유를 센다.
+      for (let slot = placement.startU * 2; slot < (placement.startU + placement.uHeight) * 2; slot += 1) { if (occupied.has(slot)) throw new Error('Rack placements overlap'); occupied.add(slot); }
     }
     const placed = rack.placements.map(({ deviceId }) => deviceId).filter(Boolean).sort();
     const declared = [...new Set(rack.deviceIds || [])].sort();
