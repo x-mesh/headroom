@@ -23,7 +23,7 @@ reportExtra: { warningThreshold: '警告線を{percent}超過', underExactOver: 
     ...en.content,
     axis: { forwarding_bps: { label: 'スループット', shortLabel: 'スループット', nodeLabel: 'スループット' }, forwarding_pps: { label: 'パケットスループット', shortLabel: 'パケット', nodeLabel: 'パケット' }, new_sessions_per_sec: { label: '新規セッション', shortLabel: '新規セッション', nodeLabel: '新規セッション' }, concurrent_sessions: { label: '同時セッション', shortLabel: '同時セッション', nodeLabel: 'セッション' }, vpn_tunnels: { label: '同時VPNトンネル', shortLabel: 'VPNトンネル', nodeLabel: 'VPN' }, nic_bps: { label: 'NICスループット', shortLabel: 'NICスループット', nodeLabel: 'NIC' }, nic_pps: { label: 'NICパケット', shortLabel: 'NICパケット', nodeLabel: 'NICパケット' }, tls_full_handshakes_per_sec: { label: '新規TLSハンドシェイク', shortLabel: '新規TLS', nodeLabel: '新規TLS' }, tls_resumed_handshakes_per_sec: { label: '再開TLSハンドシェイク', shortLabel: '再開TLS', nodeLabel: '再開TLS' } },
     behavior: { lb: { catalog: { label: '動作モード' }, inline: { label: 'inline (フルプロキシ)', note: 'リクエストとレスポンスは両方ともロードバランサーを通ります。' }, dsr: { label: 'DSR (ダイレクトリターン)', note: 'レスポンスは直接返りますが、接続追跡の負荷は残ります。' } }, firewall: { catalog: { label: '配置モード' }, routed: { label: 'routed (L3)', note: 'L3ホップとして動作します。' }, transparent: { label: 'transparent (L2)', note: 'bump-in-the-wireとして動作します。' } } },
-    template: { ...en.content.template, demo: { name: 'デュアルファブリックAPIクラスター', teaches: 'ファイアウォールの帯域は36%ですが、新規セッションは86%です。1台に複数の独立した上限があります。', prompt: 'ファイアウォールが1台停止すると、どの軸が先に上限へ達しますか？', action: 'ファイアウォール障害を試す', observe: '帯域は72%の余裕がありますが、新規セッションは171%になります。' }, 'dual-fabric': { name: 'デュアルファブリックAPIクラスター', summary: '共有電源を使うECMP API構成です。', teaches: 'SPINEが2台あっても共有電源が止まると同時に停止します。', prompt: '共有電源が止まってもSPINEの冗長性は残りますか？', action: '共有電源障害を試す', observe: '2台のSPINEが同時に停止します。' }, bundleText: 'バンドルコンテンツ' },
+    template: { ...en.content.template, demo: { name: 'デュアルファブリックAPIクラスター', teaches: 'ファイアウォールの帯域は36%ですが、新規セッションは86%です。1台に複数の独立した上限があります。', prompt: 'ファイアウォールが1台停止すると、どの軸が先に上限へ達しますか？', action: 'ファイアウォール障害を試す', observe: '帯域は72%の余裕がありますが、新規セッションは171%になります。' }, 'dual-fabric': { name: 'デュアルファブリックAPIクラスター', summary: '共有電源を使うECMP API構成です。', teaches: 'SPINEが2台あっても共有電源が止まると同時に停止します。', prompt: '共有電源が止まってもSPINEの冗長性は残りますか？', action: '共有電源障害を試す', observe: '2台のSPINEが同時に停止します。' }, 'dual-wan-shared-entry': { name: 'デュアルWANと共有引込経路', summary: 'ISPとedge routerは冗長化されていますが、2回線は同じ建物引込を共有します。', teaches: 'ISP AまたはISP Bの片方だけが止まれば、残りの回線がAPIリクエストを運びます。しかし両回線が同じ建物引込を通ると、引込1つの障害が2本のISP経路を同時に切断します。復元力はリンク数ではなく共有依存関係で決まります。', prompt: '2つのISPが同じ建物引込を共有すると、引込障害後もAPIリクエストは届きますか？', action: '共有建物引込の障害を試す', observe: '2本のISP引込リンクが同時に停止し、2つのAPIリクエストが切断されます。このツールはモデルにある共有経路の障害だけを計算します。BGP収束時間や回線復旧時間は計算しません。' }, 'ai-inference-pod': { name: 'AI推論Pod', summary: 'GPU 8台が2つのラック、A/B電源レール、デュアルファブリックを共有する推論構成です。', teaches: 'ラック配置でGPUサーバー8台のU位置と電力予算を確認し、3Dへ切り替えて機器パレットのサーバーを空きUへドラッグしてください。電源ドメインを有効にすると、PDU Aを共有するGPUとファブリック機器が2つのラックにまたがって色で見えます。PDU Aが停止するとGPU 4台とLEAF A・SPINE Aが停止するため、デュアルファブリックでもサービス基準を満たせません。', prompt: 'GPU PDU Aが停止すると、デュアルファブリックと2つのラックは推論リクエストをどこまで守れますか？', action: 'GPU PDU A障害を試す', observe: 'GPU 01・03・05・07とLEAF A・SPINE Aが同時に停止し、推論リクエスト4件が切断されます。GPU計算性能や冷却は計算せず、モデルにあるNIC・ファブリック・U・電力・電源ドメインだけを計算します。' }, bundleText: 'バンドルコンテンツ' },
     bundled: { 'pdu-3': 'PDU-3 SPINE共有電源' },
     catalog: { ...en.content.catalog, profileFallback: 'カタログプロファイル', noteFallback: 'このプロファイルのカタログ上限と条件を表示します。', 'fortinet-fortigate-100f': { 'fw-1518': { label: 'ファイアウォールのみ · 1518B', note: '1518バイトパケットでのIPv4ファイアウォールスループットです。' } } },
   },
@@ -38,4 +38,12 @@ messages.dynamic.overloadedState = '上限を超えています';
 messages.dynamic.tightState = '最も逼迫しています';
 messages.dynamic.poolShareExact = 'プール{size}台 · {percent}%';
 messages.dynamic.poolShareRange = 'プール{size}台 · {low}～{high}%';
+messages.content.template['ai-inference-pod'] = {
+  name: 'AI推論Pod',
+  summary: 'GPU 8台を2つのラック、2つのfabric plane、ラックごとに1台のPDUへ配置した推論構成です。',
+  teaches: 'ラック配置でGPU 8台のU位置と電力予算を確認してください。3Dに切り替え、機器パレットのラック専用サーバーを空きUへ置くと、U空間と電力予算の変化を確認できます。電源ドメインを有効にすると、ラックごとのPDUが担当するGPU 4台を確認できます。ラックPDUが停止するとGPU 4台は停止しますが、2つのfabric planeは残ります。',
+  prompt: 'GPU RACK 21 PDUが停止すると、2つのラックとfabric planeは推論リクエストをどこまで守れますか？',
+  action: 'GPU RACK 21 PDU障害を試す',
+  observe: 'GPU 01からGPU 04までが同時に停止し、推論リクエスト4件が切断されます。このモデルはNIC、fabric、U、電力、宣言した電源ドメインだけを計算します。GPU演算性能、冗長PSU、冷却は計算しません。',
+};
 export default messages;

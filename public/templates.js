@@ -443,6 +443,41 @@ function dualStack() {
   });
 }
 
+function dualWanSharedEntry() {
+  const topology = createEmptyTopology('이중 WAN 공용 인입 경로');
+  place(topology, [
+    ['internet', 'INTERNET', 'cloud', 'EDGE', 80, 290, { forwarding_bps: 20e9, forwarding_pps: 4e6 }],
+    ['isp-a', 'ISP A', 'cloud', 'WAN', 245, 180, { forwarding_bps: 12e9, forwarding_pps: 2e6 }],
+    ['isp-b', 'ISP B', 'cloud', 'WAN', 245, 400, { forwarding_bps: 12e9, forwarding_pps: 2e6 }],
+    ['edge-a', 'EDGE A', 'router', 'EDGE', 425, 180, { forwarding_bps: 12e9, forwarding_pps: 2e6 }],
+    ['edge-b', 'EDGE B', 'router', 'EDGE', 425, 400, { forwarding_bps: 12e9, forwarding_pps: 2e6 }],
+    ['fw-a', 'FW A', 'firewall', 'SECURITY', 610, 180, { forwarding_bps: 12e9, forwarding_pps: 2e6, new_sessions_per_sec: 20e3, concurrent_sessions: 200e3 }],
+    ['fw-b', 'FW B', 'firewall', 'SECURITY', 610, 400, { forwarding_bps: 12e9, forwarding_pps: 2e6, new_sessions_per_sec: 20e3, concurrent_sessions: 200e3 }],
+    ['api-a', 'API A', 'server', 'RACK 01', 825, 180, { nic_bps: 6e9, nic_pps: 1e6 }],
+    ['api-b', 'API B', 'server', 'RACK 02', 825, 400, { nic_bps: 6e9, nic_pps: 1e6 }],
+  ]);
+  connect(topology, [
+    { id: 'entry-isp-a', source: 'internet', target: 'isp-a', capacity: { forwarding_bps: 12e9 } },
+    { id: 'entry-isp-b', source: 'internet', target: 'isp-b', capacity: { forwarding_bps: 12e9 } },
+    ['isp-a', 'edge-a', 12e9], ['isp-b', 'edge-b', 12e9],
+    ['edge-a', 'fw-a', 12e9], ['edge-a', 'fw-b', 12e9], ['edge-b', 'fw-a', 12e9], ['edge-b', 'fw-b', 12e9],
+    ['fw-a', 'api-a', 12e9], ['fw-a', 'api-b', 12e9], ['fw-b', 'api-a', 12e9], ['fw-b', 'api-b', 12e9],
+  ]);
+  const wanPaths = (target) => ['a', 'b'].flatMap((isp) => ['a', 'b'].map((firewall) => ({
+    id: `${target}-via-${isp}${firewall}`, devices: ['internet', `isp-${isp}`, `edge-${isp}`, `fw-${firewall}`, target],
+    links: [`entry-isp-${isp}`, `isp-${isp}-edge-${isp}`, `edge-${isp}-fw-${firewall}`, `fw-${firewall}-${target}`],
+  })));
+  for (const target of ['api-a', 'api-b']) {
+    const paths = wanPaths(target);
+    addDemand(topology, { id: `${target}-traffic`, name: `${target.toUpperCase()} 요청`, source: 'internet', target, load: { forwarding_bps: 4e9, forwarding_pps: 400e3, new_sessions_per_sec: 4e3, concurrent_sessions: 40e3, nic_bps: 4e9, nic_pps: 400e3 }, pathMode: 'explicit', paths,
+      returnPath: paths.map(({ id, devices, links }) => ({ id: `${id}-return`, devices: [...devices].reverse(), links: [...links].reverse() })), directionality: { responseShare: 0.1, origin: 'estimate' } });
+  }
+  return declare(topology, {
+    services: [{ id: 'public-api', name: 'Public API', demandIds: ['api-a-traffic', 'api-b-traffic'], requiredDeliveryRatio: 0.99 }],
+    failureDomains: [{ id: 'shared-entry', name: '공용 건물 인입', kind: 'path', deviceIds: [], linkIds: ['entry-isp-a', 'entry-isp-b'] }],
+  });
+}
+
 function asymWan() {
   const topology = createEmptyTopology('비대칭 가입자 회선');
   place(topology, [
@@ -717,6 +752,50 @@ function rackPower() {
   });
 }
 
+function aiInferencePod() {
+  const topology = createEmptyTopology('AI 추론 Pod');
+  const gpu = { powerBasis: 'typical', uHeight: 4, typicalDrawWatts: 1400, maximumDrawWatts: 1800 };
+  place(topology, [
+    { id: 'client', name: 'CLIENT', kind: 'client', zone: 'EDGE', position: { x: 70, y: 290 }, limits: { nic_bps: 200e9 }, external: true },
+    { id: 'gateway', name: 'INFERENCE GW', kind: 'lb', zone: 'EDGE', position: { x: 230, y: 290 }, limits: { forwarding_bps: 200e9, forwarding_pps: 80e6, new_sessions_per_sec: 120e3, concurrent_sessions: 1.2e6 }, metadata: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 260 } },
+    { id: 'leaf-a', name: 'LEAF A', kind: 'switch', zone: 'FABRIC A', position: { x: 430, y: 160 }, limits: { forwarding_bps: 400e9, forwarding_pps: 80e6 }, metadata: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 420 } },
+    { id: 'leaf-b', name: 'LEAF B', kind: 'switch', zone: 'FABRIC B', position: { x: 430, y: 420 }, limits: { forwarding_bps: 400e9, forwarding_pps: 80e6 }, metadata: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 420 } },
+    { id: 'spine-a', name: 'SPINE A', kind: 'switch', zone: 'FABRIC A', position: { x: 610, y: 100 }, limits: { forwarding_bps: 400e9, forwarding_pps: 80e6 }, metadata: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 480 } },
+    { id: 'spine-b', name: 'SPINE B', kind: 'switch', zone: 'FABRIC B', position: { x: 610, y: 480 }, limits: { forwarding_bps: 400e9, forwarding_pps: 80e6 }, metadata: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 480 } },
+    ...repeat(8, (number, index) => ({ id: `gpu-${number}`, name: `GPU ${String(number).padStart(2, '0')}`, kind: 'server', zone: `RACK ${index < 4 ? '21' : '22'}`, position: { x: 850 + (index % 4) * 55, y: index < 4 ? 150 : 430 }, limits: { nic_bps: 100e9, nic_pps: 15e6 }, metadata: gpu })),
+  ]);
+  connect(topology, [
+    ['client', 'gateway', 200e9], ['gateway', 'leaf-a', 200e9], ['gateway', 'leaf-b', 200e9],
+    ['leaf-a', 'spine-a', 400e9], ['leaf-b', 'spine-b', 400e9],
+    ...repeat(8, (number) => [['spine-a', `gpu-${number}`, 100e9], ['spine-b', `gpu-${number}`, 100e9]]).flat(),
+  ]);
+  for (const number of Array.from({ length: 8 }, (unused, index) => index + 1)) {
+    const target = `gpu-${number}`;
+    const paths = ['a', 'b'].map((plane) => ({ id: `${target}-via-${plane}`, devices: ['client', 'gateway', `leaf-${plane}`, `spine-${plane}`, target], links: ['client-gateway', `gateway-leaf-${plane}`, `leaf-${plane}-spine-${plane}`, `spine-${plane}-${target}`] }));
+    addDemand(topology, { id: `inference-${number}`, name: `GPU ${String(number).padStart(2, '0')} 추론`, source: 'client', target, load: { forwarding_bps: 18e9, forwarding_pps: 2.2e6, new_sessions_per_sec: 12e3, concurrent_sessions: 90e3, nic_bps: 18e9, nic_pps: 2.2e6 }, pathMode: 'explicit', paths, returnPath: paths.map(({ id, devices, links }) => ({ id: `${id}-return`, devices: [...devices].reverse(), links: [...links].reverse() })), directionality: { responseShare: 0.1, origin: 'estimate' } });
+  }
+  return declare(topology, {
+    services: [{ id: 'inference-api', name: 'Inference API', demandIds: Array.from({ length: 8 }, (unused, index) => `inference-${index + 1}`), requiredDeliveryRatio: 0.99 }],
+    // 실제 이중 PSU 결선이나 냉각은 모델에 없다. 여기서는 GPU가 랙별 단일 공급 PDU 그룹을 공유하는지만 계산한다.
+    failureDomains: [
+      { id: 'gpu-rail-a', name: 'GPU RACK 21 PDU', kind: 'power', deviceIds: ['gpu-1', 'gpu-2', 'gpu-3', 'gpu-4'] },
+      { id: 'gpu-rail-b', name: 'GPU RACK 22 PDU', kind: 'power', deviceIds: ['gpu-5', 'gpu-6', 'gpu-7', 'gpu-8'] },
+    ],
+    racks: [
+      { id: 'gpu-rack-21', name: 'GPU RACK 21', deviceIds: ['leaf-a', 'spine-a', 'gpu-1', 'gpu-2', 'gpu-3', 'gpu-4'], powerBasis: 'typical', powerBudgetWatts: 6800, capacityU: 42, placements: [
+        { id: 'gpu-rack-21-pdu-a', name: 'PDU A', kind: 'pdu', startU: 1, uHeight: 1, powerWatts: 0 }, { id: 'gpu-rack-21-pdu-b', name: 'PDU B', kind: 'pdu', startU: 2, uHeight: 1, powerWatts: 0 },
+        { id: 'gpu-rack-21-gpu-1', deviceId: 'gpu-1', startU: 4, uHeight: 4 }, { id: 'gpu-rack-21-gpu-2', deviceId: 'gpu-2', startU: 9, uHeight: 4 }, { id: 'gpu-rack-21-gpu-3', deviceId: 'gpu-3', startU: 14, uHeight: 4 }, { id: 'gpu-rack-21-gpu-4', deviceId: 'gpu-4', startU: 19, uHeight: 4 },
+        { id: 'gpu-rack-21-leaf-a', deviceId: 'leaf-a', startU: 38, uHeight: 1 }, { id: 'gpu-rack-21-spine-a', deviceId: 'spine-a', startU: 40, uHeight: 1 },
+      ] },
+      { id: 'gpu-rack-22', name: 'GPU RACK 22', deviceIds: ['leaf-b', 'spine-b', 'gpu-5', 'gpu-6', 'gpu-7', 'gpu-8'], powerBasis: 'typical', powerBudgetWatts: 6800, capacityU: 42, placements: [
+        { id: 'gpu-rack-22-pdu-a', name: 'PDU A', kind: 'pdu', startU: 1, uHeight: 1, powerWatts: 0 }, { id: 'gpu-rack-22-pdu-b', name: 'PDU B', kind: 'pdu', startU: 2, uHeight: 1, powerWatts: 0 },
+        { id: 'gpu-rack-22-gpu-5', deviceId: 'gpu-5', startU: 4, uHeight: 4 }, { id: 'gpu-rack-22-gpu-6', deviceId: 'gpu-6', startU: 9, uHeight: 4 }, { id: 'gpu-rack-22-gpu-7', deviceId: 'gpu-7', startU: 14, uHeight: 4 }, { id: 'gpu-rack-22-gpu-8', deviceId: 'gpu-8', startU: 19, uHeight: 4 },
+        { id: 'gpu-rack-22-leaf-b', deviceId: 'leaf-b', startU: 38, uHeight: 1 }, { id: 'gpu-rack-22-spine-b', deviceId: 'spine-b', startU: 40, uHeight: 1 },
+      ] },
+    ],
+  });
+}
+
 // A/B 두 레일로 급전하는 한 줄. 잘 나뉜 쌍과 한쪽 레일에만 물린 장비를 한 설계 안에 같이 둔다 —
 // 어느 쪽이 어느 레일인지는 논리 그림에서 보이지 않고 랙의 전원 도메인 색으로만 드러난다.
 function pduRails() {
@@ -839,6 +918,20 @@ export const templates = [
     tags: ['이중화', '단일 장애점', '비교', 'ECMP', '백엔드 풀'],
     experiment: { prompt: 'FW A가 멈추면 연결은 유지되지만 남은 장비 용량도 충분할까요?', action: { type: 'fault-device', id: 'fw-a', label: 'FW A 장애 실험' }, observe: '트래픽은 FW B로 모이고 처리량과 신규 세션 한계를 넘습니다.' },
     build: dualStack,
+  },
+  {
+    id: 'dual-wan-shared-entry', name: '이중 WAN 공용 인입 경로',
+    group: 'resilience',
+    grade: { verdict: 'single-point', severs: 3 },
+    summary: 'ISP와 edge router는 이중화됐지만 두 회선이 같은 건물 인입을 공유합니다.',
+    teaches: 'ISP A 또는 ISP B 하나만 멈추면 남은 회선이 API 요청을 전달합니다. 하지만 두 회선이 같은 건물 인입을 지나면, 인입 하나의 장애가 두 ISP 경로를 함께 끊습니다. 링크가 두 개라는 사실보다 서로 무엇을 공유하는지가 복원력을 결정합니다.',
+    tags: ['이중 WAN', 'ISP', '공용 인입', '경로 장애 도메인', '이중화 무효'],
+    experiment: {
+      prompt: '두 ISP가 같은 건물 인입을 공유하면 인입 하나의 장애 뒤에도 API가 전달될까요?',
+      action: { type: 'fault-domain', id: 'shared-entry', label: '공용 건물 인입 장애 실험' },
+      observe: '두 ISP 진입 링크가 함께 끊겨 API 요청 두 개가 모두 단절됩니다. 이 도구는 BGP 수렴 시간이나 회선 복구 시간을 계산하지 않고, 모델에 적은 공용 경로의 장애 영향만 계산합니다.',
+    },
+    build: dualWanSharedEntry,
   },
   {
     id: 'inline-lb', name: '인라인 로드밸런싱',
@@ -1195,6 +1288,20 @@ export const templates = [
       observe: 'API A와 야간 백업이 함께 끊깁니다. NAS가 A 레일에만 물려 있어 서비스 하나가 아니라 둘이 사라집니다. B 레일에 물린 API B는 그대로 전달되고 남은 경로는 25%로 한가합니다 — 끊은 것은 용량이 아니라 전원입니다.',
     },
     build: pduRails,
+  },
+  {
+    id: 'ai-inference-pod', name: 'AI 추론 Pod',
+    group: 'resilience',
+    grade: { verdict: 'single-point', severs: 10 },
+    summary: 'GPU 8대가 두 랙, 두 팹릭 plane, 랙별 PDU 하나에 배치된 추론 구성입니다.',
+    teaches: '랙 배치에서 GPU 8대의 U 위치와 전력 예산을 확인하세요. 3D로 바꾼 뒤 장비 팔레트의 랙 전용 서버를 빈 U에 놓으면 U 공간과 전력 예산 변화를 볼 수 있습니다. 전원 도메인을 켜면 랙별 PDU가 담당하는 GPU 네 대가 보입니다. 랙 PDU 하나가 멈추면 GPU 네 대가 멈추지만 팹릭 plane 둘은 유지됩니다.',
+    tags: ['AI 추론', 'GPU', '3D 랙', '이중 팹릭', 'PDU', 'U 배치'],
+    experiment: {
+      prompt: 'GPU RACK 21 PDU가 멈추면 두 랙과 두 팹릭 plane은 추론 요청을 얼마나 지킬까요?',
+      action: { type: 'fault-domain', id: 'gpu-rail-a', label: 'GPU RACK 21 PDU 장애 실험' },
+      observe: 'GPU 01부터 GPU 04까지 함께 멈춰 추론 요청 네 개가 단절됩니다. 이 모델은 NIC·팹릭·U·전력·선언한 전원 도메인만 계산합니다. GPU 연산 성능, 이중 PSU, 냉각은 계산하지 않습니다.',
+    },
+    build: aiInferencePod,
   },
   {
     id: 'blank', name: '빈 설계',

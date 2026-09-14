@@ -45,7 +45,22 @@ test('bundled templates, catalog profiles, and editor errors use English and Jap
   setLocale('ko');
 });
 
+test('new shared-path and GPU rack templates have localized teaching copy', () => {
+  setLocale('en');
+  assert.match(buildTemplate('dual-wan-shared-entry').template.teaches, /building entry path/);
+  assert.match(buildTemplate('ai-inference-pod').template.teaches, /both fabric planes/);
+
+  setLocale('ja');
+  assert.match(buildTemplate('dual-wan-shared-entry').template.teaches, /共有/);
+  assert.match(buildTemplate('ai-inference-pod').template.teaches, /ラック/);
+
+  setLocale('ko');
+  assert.match(buildTemplate('dual-wan-shared-entry').template.teaches, /공유/);
+  assert.match(buildTemplate('ai-inference-pod').template.teaches, /랙 배치/);
+});
+
 test('localizes bundled failure-domain and pool labels without changing user content', () => {
+  setLocale('ko');
   assert.equal(t('dynamic.poolShareExact', { size: 2, percent: 50 }, 'en'), 'Pool 2 devices · 50%');
   assert.equal(t('dynamic.poolShareRange', { size: 2, low: 50, high: 100 }, 'ja'), 'プール2台 · 50～100%');
   assert.equal(localizedBundledLabel('pdu-3', 'PDU-3 SPINE 공용 전원', true), 'PDU-3 SPINE 공용 전원');

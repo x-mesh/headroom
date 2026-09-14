@@ -95,6 +95,19 @@ test('the default dual fabric exposes rack and rack failure domains', () => {
   assert.deepEqual(domains.redundancyInvalid.map(({ id }) => id), ['pdu-3']);
 });
 
+test('dual WAN makes an individual ISP loss survivable but exposes the shared entry path', () => {
+  const topology = buildTemplate('dual-wan-shared-entry');
+  const baseline = calculateScenario(topology);
+  const oneIsp = calculateScenario(topology, { disabledLinks: ['entry-isp-a'] });
+  const sharedEntry = calculateScenario(topology, { disabledDomains: ['shared-entry'] });
+  assert.equal(baseline.summary.unreachableCount, 0);
+  assert.equal(baseline.services.find(({ id }) => id === 'public-api').status, 'pass');
+  assert.equal(oneIsp.summary.unreachableCount, 0);
+  assert.equal(sharedEntry.summary.unreachableCount, 2);
+  assert.equal(sharedEntry.services.find(({ id }) => id === 'public-api').status, 'fail');
+  assert.deepEqual(topology.failureDomains, [{ id: 'shared-entry', name: '공용 건물 인입', kind: 'path', deviceIds: [], linkIds: ['entry-isp-a', 'entry-isp-b'] }]);
+});
+
 test('the rack template opens with a valid physical placement', () => {
   const topology = buildTemplate('rack-power');
   assert.equal(topology.racks.length, 2);
@@ -109,6 +122,24 @@ test('the rack template opens with a valid physical placement', () => {
     }
   }
   assert.doesNotThrow(() => serializeProject(topology, { scale: 1 }));
+});
+
+test('AI inference pod keeps GPU racks physical and exposes shared power losses', () => {
+  const topology = buildTemplate('ai-inference-pod');
+  const baseline = calculateScenario(topology);
+  const afterRailA = calculateScenario(topology, { disabledDomains: ['gpu-rail-a'] });
+  const afterRailB = calculateScenario(topology, { disabledDomains: ['gpu-rail-b'] });
+  const afterSpineA = calculateScenario(topology, { disabledDevices: ['spine-a'] });
+  assert.equal(topology.racks.length, 2);
+  assert.equal(topology.racks.flatMap(({ placements }) => placements).filter(({ deviceId }) => deviceId?.startsWith('gpu-')).length, 8);
+  assert.ok(baseline.racks.every(({ status }) => status === 'pass'));
+  assert.equal(baseline.services.find(({ id }) => id === 'inference-api').status, 'pass');
+  assert.equal(afterSpineA.services.find(({ id }) => id === 'inference-api').status, 'pass');
+  assert.equal(afterRailA.summary.unreachableCount, 4);
+  assert.equal(afterRailA.services.find(({ id }) => id === 'inference-api').status, 'fail');
+  assert.equal(afterRailB.summary.unreachableCount, 4);
+  assert.equal(afterRailB.services.find(({ id }) => id === 'inference-api').status, 'fail');
+  assert.deepEqual(topology.failureDomains.map(({ id, kind, deviceIds }) => [id, kind, deviceIds]), [['gpu-rail-a', 'power', ['gpu-1', 'gpu-2', 'gpu-3', 'gpu-4']], ['gpu-rail-b', 'power', ['gpu-5', 'gpu-6', 'gpu-7', 'gpu-8']]]);
 });
 
 test('the initial demo itself exposes service, rack domains, and rack budgets', () => {

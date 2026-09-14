@@ -81,6 +81,7 @@ let previousBindingKey = null;
 const teaserTimers = new Set();
 let teaserActive = false;
 let restoredWorkingCopy = false;
+let templatePickerReturn = null;
 let spatialScene = null;
 let rackScene = null;
 let spatialScenePromise = null;
@@ -2917,7 +2918,14 @@ function openDrawioPreview(document, { fileName = '' } = {}) {
   renderDrawioPreview();
 }
 
-function closeEditorPanel() { element('editor-panel').hidden = true; element('editor-panel-content').innerHTML = ''; }
+function closeEditorPanel({ restoreTemplateWorkspace = true } = {}) {
+  element('editor-panel').hidden = true; element('editor-panel-content').innerHTML = '';
+  if (restoreTemplateWorkspace && templatePickerReturn) {
+    const previous = templatePickerReturn; templatePickerReturn = null;
+    Object.assign(rackView, previous.rackView);
+    setWorkspace(previous.workspace);
+  }
+}
 function formError(form, message) { const target = form.querySelector('.editor-error'); if (target) target.textContent = localizeError({ message }); }
 function deviceOptions(selected = '') { return topology.devices.map(({ id, name }) => `<option value="${id}" ${id === selected ? 'selected' : ''}>${escapeAttribute(name)} · ${id}</option>`).join(''); }
 // 팔레트 클릭은 놓을 자리를 사용자가 고르지 않으므로 비어 있는 슬롯을 찾아 준다.
@@ -3254,6 +3262,11 @@ function templateCard(item, groupLabel) {
 }
 
 function openTemplatePicker() {
+  // 편집 패널은 토폴로지 작업 공간에 있다. 랙 화면에서 가려진 패널을 열면 시작 메뉴가 무반응처럼 보인다.
+  if (state.workspace === 'rack') {
+    templatePickerReturn = { workspace: state.workspace, rackView: structuredClone(rackView) };
+    setWorkspace('topology');
+  }
   // 카드 자체는 그대로 두고 제목만 사이에 끼운다. 검색은 여전히 .template-item 전부를 훑는다.
   const sections = templateGroups.map(({ id, label }) => {
     const members = templates.filter((item) => item.group === id);
@@ -3551,20 +3564,26 @@ function loadTopology(next, message, undo = null) {
 function applyTemplate(id) {
   const chosen = templates.find((item) => item.id === id);
   if (!chosen) return;
+  const priorPresentation = templatePickerReturn || { workspace: state.workspace, rackView: structuredClone(rackView) };
+  templatePickerReturn = null;
+  // 일반 템플릿은 구성도에서 편집한다. 랙만 보여 주는 템플릿은 아래에서 랙 화면을 연다.
+  if (id !== 'rack-power') setWorkspace('topology');
   const previous = structuredClone(topology);
   const previousBaseline = structuredClone(baselineSnapshot);
-  const restore = { scale: state.scale, devices: [...state.disabledDevices], links: [...state.disabledLinks], domains: [...state.disabledDomains], namedScenarios: structuredClone(state.namedScenarios), selectedId: state.selectedId };
+  const restore = { scale: state.scale, devices: [...state.disabledDevices], links: [...state.disabledLinks], domains: [...state.disabledDomains], namedScenarios: structuredClone(state.namedScenarios), selectedId: state.selectedId, presentation: priorPresentation };
   loadTopology(buildTemplate(id), `${chosen.name}을 불러왔습니다.`, () => {
     topology = previous;
     state.scale = restore.scale; state.selectedId = restore.selectedId;
     state.disabledDevices = new Set(restore.devices); state.disabledLinks = new Set(restore.links); state.disabledDomains = new Set(restore.domains); state.namedScenarios = restore.namedScenarios;
     baselineSnapshot = previousBaseline; baseline = calculateScenario(previousBaseline.topology, previousBaseline.scenario);
     element('scale-input').value = String(restore.scale * 100);
-    documentHistory.reset(topology); recalculate(); showToast('이전 설계로 되돌렸습니다.');
-    focusCanvas(current.summary.bindingResourceId);
+    documentHistory.reset(topology); recalculate();
+    Object.assign(rackView, restore.presentation.rackView); setWorkspace(restore.presentation.workspace);
+    showToast('이전 설계로 되돌렸습니다.');
+    if (restore.presentation.workspace === 'topology') focusCanvas(current.summary.bindingResourceId);
   });
   if (id === 'blank') setLeftPanel('palette');
-  if (id === 'rack-power') {
+  if (['rack-power', 'ai-inference-pod'].includes(id)) {
     rackView.mode = '2d'; rackView.selectedRackId = topology.racks?.[0]?.id || null; rackView.selectedPlacementId = null;
     setWorkspace('rack');
   }
