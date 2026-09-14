@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createEmptyTopology, addDevice, setDevicePower } from '../public/editor.js';
-import { addMappedPlacement, addStandalonePlacement, createRack, firstFreeStartU, nearestFreeStartU, rackSummary, removePlacement, updatePlacement } from '../public/rack.js';
+import { addMappedPlacement, addStandalonePlacement, copyRack, copyRackPlacement, createRack, firstFreeStartU, moveRack, nearestFreeStartU, nextRackName, pasteRack, pasteRackPlacement, placementRangeLabel, rackSummary, removePlacement, renamePlacement, renameRack, suggestedRackPowerBudget, updatePlacement } from '../public/rack.js';
 import { parseProject, serializeProject } from '../public/project.js';
 import { rackUsage } from '../public/engine.js';
 
@@ -101,4 +101,173 @@ test('a hand-entered device power counts in the rack and clears back to unknown'
   assert.equal(rackUsage(topology, rack).powerKnown, false);
   assert.equal(device.metadata.typicalDrawWatts, undefined);
   assert.throws(() => setDevicePower(topology, device.id, { basis: 'typical', watts: '-5' }), /0 이상/);
+});
+
+test('0.5U placements accept half-unit adjacency and reject half-unit overlap', () => {
+  const topology = fixture();
+  const rack = createRack(topology, { name: 'RACK 05', capacityU: 6, powerBudgetWatts: 2000, powerBasis: 'nameplate' });
+  addStandalonePlacement(topology, rack.id, { name: 'PATCH 05', kind: 'other', startU: 1, uHeight: 1, powerWatts: 0 });
+  addStandalonePlacement(topology, rack.id, { name: 'BLANK 05', kind: 'blank-panel', startU: 2, uHeight: .5, powerWatts: 0 });
+  addStandalonePlacement(topology, rack.id, { name: 'BLANK 06', kind: 'blank-panel', startU: 2.5, uHeight: .5, powerWatts: 0 });
+
+  assert.throws(() => addStandalonePlacement(topology, rack.id, { name: 'X', kind: 'blank-panel', startU: 1.5, uHeight: .5, powerWatts: 0 }), /겹칩니다/);
+  assert.throws(() => addStandalonePlacement(topology, rack.id, { name: 'Y', kind: 'other', startU: 2.5, uHeight: 1, powerWatts: 0 }), /겹칩니다/);
+  assert.equal(rackSummary(topology, rack).usedU, 2);
+});
+
+test('0.5U placements reject non-half-unit values without rounding them', () => {
+  const topology = fixture();
+  const rack = createRack(topology, { name: 'RACK 06', capacityU: 6, powerBudgetWatts: 2000, powerBasis: 'nameplate' });
+  assert.throws(() => addStandalonePlacement(topology, rack.id, { name: 'A', kind: 'other', startU: 1.3, uHeight: 1, powerWatts: 0 }), /0\.5U/);
+  assert.throws(() => addStandalonePlacement(topology, rack.id, { name: 'B', kind: 'other', startU: 1, uHeight: .3, powerWatts: 0 }), /0\.5U/);
+  assert.throws(() => addStandalonePlacement(topology, rack.id, { name: 'C', kind: 'other', startU: 1, uHeight: 0, powerWatts: 0 }), /0\.5U/);
+  assert.throws(() => addStandalonePlacement(topology, rack.id, { name: 'D', kind: 'other', startU: .5, uHeight: 1, powerWatts: 0 }), /0\.5U/);
+
+  const half = addStandalonePlacement(topology, rack.id, { name: 'BLANK', kind: 'blank-panel', startU: 6.5, uHeight: .5, powerWatts: 0 });
+  const full = addMappedPlacement(topology, rack.id, { deviceId: topology.devices[0].id, startU: 1, uHeight: 1 });
+  assert.throws(() => updatePlacement(topology, rack.id, full.id, { startU: 6.5, uHeight: 1 }), /범위를 벗어납니다/);
+  assert.equal(half.startU, 6.5);
+});
+
+test('free-slot search lets whole-U devices sit flush against a 0.5U panel', () => {
+  const topology = fixture();
+  const rack = createRack(topology, { name: 'RACK 07', capacityU: 6, powerBudgetWatts: 2000, powerBasis: 'nameplate' });
+  addStandalonePlacement(topology, rack.id, { name: 'BLANK', kind: 'blank-panel', startU: 1, uHeight: .5, powerWatts: 0 });
+  assert.equal(firstFreeStartU(topology, rack, 1), 1.5);
+  assert.equal(nearestFreeStartU(topology, rack, 1, 1.5), 1.5);
+  assert.equal(nearestFreeStartU(topology, rack, 1, 2), 2);
+  assert.equal(firstFreeStartU(topology, rack, .5), 1.5);
+
+  // 사용자가 겪은 배치: 2U 서버를 U13.5 패널 바로 아래로 올리면 11.5에 붙어야 한다.
+  const serverRack = createRack(topology, { name: 'RACK 09', capacityU: 42, powerBudgetWatts: 2000, powerBasis: 'nameplate' });
+  const server = addMappedPlacement(topology, serverRack.id, { deviceId: topology.devices[0].id, startU: 11, uHeight: 2 });
+  addStandalonePlacement(topology, serverRack.id, { name: 'BLANK 13.5', kind: 'blank-panel', startU: 13.5, uHeight: .5, powerWatts: 0 });
+  assert.equal(nearestFreeStartU(topology, serverRack, 2, 11.5, server.id), 11.5);
+  assert.throws(() => updatePlacement(topology, serverRack.id, server.id, { startU: 12, uHeight: 2 }), /겹칩니다/);
+  assert.equal(updatePlacement(topology, serverRack.id, server.id, { startU: 11.5, uHeight: 2 }).startU, 11.5);
+
+  const topology2 = fixture();
+  const rack2 = createRack(topology2, { name: 'RACK 08', capacityU: 2, powerBudgetWatts: 2000, powerBasis: 'nameplate' });
+  addStandalonePlacement(topology2, rack2.id, { name: 'BLANK A', kind: 'blank-panel', startU: 1, uHeight: .5, powerWatts: 0 });
+  addStandalonePlacement(topology2, rack2.id, { name: 'BLANK B', kind: 'blank-panel', startU: 2.5, uHeight: .5, powerWatts: 0 });
+  assert.equal(firstFreeStartU(topology2, rack2, 1), 1.5);
+  assert.equal(nearestFreeStartU(topology2, rack2, 1, 1), 1.5);
+  assert.equal(firstFreeStartU(topology2, rack2, 2), null);
+});
+
+test('the new-rack name continues after the highest RACK number and skips IDs still in use', () => {
+  const topology = fixture();
+  const rackInput = { capacityU: 42, powerBudgetWatts: 1000, powerBasis: 'nameplate' };
+  assert.equal(nextRackName(topology), 'RACK 01');
+  createRack(topology, { ...rackInput, name: 'RACK 01' });
+  assert.equal(nextRackName(topology), 'RACK 02');
+
+  // 번호 사이가 비어 있어도 새 랙은 가장 뒤 번호를 받는다. 번호 형식이 아닌 이름은 세지 않는다.
+  createRack(topology, { ...rackInput, name: 'SECURITY' });
+  createRack(topology, { ...rackInput, name: 'RACK 07' });
+  assert.equal(nextRackName(topology), 'RACK 08');
+
+  // 이름을 바꾼 랙은 처음 이름의 ID를 유지한다. 제안 이름으로 바로 만들 수 있어야 한다.
+  createRack(topology, { ...rackInput, name: 'RACK 08' }).name = 'CORE';
+  assert.equal(nextRackName(topology), 'RACK 09');
+  assert.equal(createRack(topology, { ...rackInput, name: nextRackName(topology) }).name, 'RACK 09');
+});
+
+test('a new rack starts from the latest rack power budget, or 5 kW when there is none', () => {
+  const topology = fixture();
+  assert.equal(suggestedRackPowerBudget(topology), 5000);
+  createRack(topology, { name: 'RACK 01', capacityU: 42, powerBudgetWatts: 1400, powerBasis: 'nameplate' });
+  assert.equal(suggestedRackPowerBudget(topology), 1400);
+  createRack(topology, { name: 'RACK 02', capacityU: 42, powerBudgetWatts: 8600, powerBasis: 'nameplate' });
+  assert.equal(suggestedRackPowerBudget(topology), 8600);
+});
+
+test('moveRack reorders racks, keeps the order in the project file, and rejects unknown racks or slots', () => {
+  const topology = fixture();
+  const rackInput = { capacityU: 42, powerBudgetWatts: 1000, powerBasis: 'nameplate' };
+  const first = createRack(topology, { ...rackInput, name: 'RACK 01' });
+  createRack(topology, { ...rackInput, name: 'RACK 02' });
+  const third = createRack(topology, { ...rackInput, name: 'RACK 03' });
+
+  moveRack(topology, third.id, 0);
+  assert.deepEqual(topology.racks.map(({ name }) => name), ['RACK 03', 'RACK 01', 'RACK 02']);
+  moveRack(topology, third.id, 1);
+  assert.deepEqual(topology.racks.map(({ name }) => name), ['RACK 01', 'RACK 03', 'RACK 02']);
+  // 좌표 필드가 없으므로 순서가 저장 파일에 그대로 남아야 다시 열어도 같은 자리에 선다.
+  assert.deepEqual(parseProject(serializeProject(topology, {})).topology.racks.map(({ name }) => name), ['RACK 01', 'RACK 03', 'RACK 02']);
+
+  assert.throws(() => moveRack(topology, 'missing-rack', 0), /찾을 수 없습니다/);
+  assert.throws(() => moveRack(topology, first.id, 3), /자리가 올바르지 않습니다/);
+  assert.throws(() => moveRack(topology, first.id, -1), /자리가 올바르지 않습니다/);
+  assert.deepEqual(topology.racks.map(({ name }) => name), ['RACK 01', 'RACK 03', 'RACK 02']);
+});
+
+test('renaming a rack, a rack-only device, or a mapped device follows the project-file name rules', () => {
+  const topology = fixture();
+  const rack = createRack(topology, { name: 'RACK 01', capacityU: 12, powerBudgetWatts: 2000, powerBasis: 'nameplate' });
+  const mapped = addMappedPlacement(topology, rack.id, { deviceId: topology.devices[0].id, startU: 1, uHeight: 2 });
+  const panel = addStandalonePlacement(topology, rack.id, { name: 'PATCH 01', kind: 'patch-panel', startU: 10, uHeight: 1, powerWatts: 0 });
+
+  assert.equal(renameRack(topology, rack.id, '  CORE A  ').name, 'CORE A');
+  assert.equal(rack.id, 'rack-01', '이름을 바꿔도 랙 ID는 그대로여야 합니다.');
+  renamePlacement(topology, rack.id, panel.id, 'PATCH 1F');
+  assert.equal(rack.placements.find(({ id }) => id === panel.id).name, 'PATCH 1F');
+  // 연결된 배치는 이름을 따로 갖지 않는다. 토폴로지 장비 자체의 이름이 바뀌어야 한다.
+  renamePlacement(topology, rack.id, mapped.id, 'API 01B');
+  assert.equal(topology.devices[0].name, 'API 01B');
+  assert.equal(rackSummary(topology, rack).placements.find(({ id }) => id === mapped.id).name, 'API 01B');
+
+  assert.throws(() => renameRack(topology, rack.id, '   '), /이름을 입력하세요/);
+  assert.throws(() => renamePlacement(topology, rack.id, panel.id, '<b>'), /< 또는 >/);
+  assert.throws(() => renameRack(topology, rack.id, 'x'.repeat(81)), /80자/);
+  assert.throws(() => renamePlacement(topology, rack.id, 'missing-placement', 'X'), /찾을 수 없습니다/);
+  assert.equal(rack.name, 'CORE A');
+  assert.doesNotThrow(() => parseProject(serializeProject(topology, {})));
+});
+
+test('the rack clipboard pastes devices and racks as rack-only devices without touching the topology', () => {
+  const topology = fixture();
+  const rackInput = { capacityU: 6, powerBudgetWatts: 2000, powerBasis: 'nameplate' };
+  const rack = createRack(topology, { ...rackInput, name: 'RACK 01' });
+  const mapped = addMappedPlacement(topology, rack.id, { deviceId: topology.devices[0].id, startU: 1, uHeight: 2 });
+  const panel = addStandalonePlacement(topology, rack.id, { name: 'PATCH 01', kind: 'patch-panel', model: 'CAT6-24', startU: 5, uHeight: 1, powerWatts: 0 });
+  const devicesBefore = structuredClone(topology.devices);
+
+  // 연결 장비는 토폴로지를 복제하지 않고, 랙 기준(명판값) 전력을 가진 랙 전용 장비로 붙는다. 원래 자리가 차 있으니 가장 가까운 빈자리로 간다.
+  const pasted = pasteRackPlacement(topology, rack.id, copyRackPlacement(topology, rack.id, mapped.id));
+  assert.deepEqual({ name: pasted.name, kind: pasted.kind, startU: pasted.startU, uHeight: pasted.uHeight, powerWatts: pasted.powerWatts, deviceId: pasted.deviceId },
+    { name: 'API 01 복제', kind: 'server', startU: 3, uHeight: 2, powerWatts: 400, deviceId: undefined });
+  assert.deepEqual(topology.devices, devicesBefore, '랙 붙여넣기가 토폴로지 장비를 바꿨습니다.');
+
+  const panelCopy = pasteRackPlacement(topology, rack.id, copyRackPlacement(topology, rack.id, panel.id));
+  assert.deepEqual([panelCopy.name, panelCopy.model, panelCopy.startU, panelCopy.powerWatts], ['PATCH 01 복제', 'CAT6-24', 6, 0]);
+  assert.throws(() => pasteRackPlacement(topology, rack.id, copyRackPlacement(topology, rack.id, mapped.id)), /2U 연속 공간이 없습니다/);
+
+  // 랙 붙여넣기는 다음 번호 이름으로 복사한 랙 바로 오른쪽에 새 랙을 만들고, 장비를 같은 U에 랙 전용으로 둔다.
+  createRack(topology, { ...rackInput, name: 'RACK 02' });
+  const copiedRack = pasteRack(topology, copyRack(topology, rack.id), rack.id);
+  assert.deepEqual(topology.racks.map(({ name }) => name), ['RACK 01', 'RACK 03', 'RACK 02']);
+  assert.deepEqual(rackSummary(topology, copiedRack).placements.map(({ name, startU, mapped: isMapped }) => [name, startU, isMapped]).sort((a, b) => a[1] - b[1]),
+    [['API 01', 1, false], ['API 01 복제', 3, false], ['PATCH 01', 5, false], ['PATCH 01 복제', 6, false]]);
+  assert.deepEqual([copiedRack.capacityU, copiedRack.powerBudgetWatts, copiedRack.powerBasis, copiedRack.deviceIds], [6, 2000, 'nameplate', []]);
+  assert.deepEqual(topology.devices, devicesBefore);
+  assert.doesNotThrow(() => parseProject(serializeProject(topology, {})));
+});
+
+test('placementRangeLabel keeps whole-U strings and never shows an end below the start', () => {
+  assert.equal(placementRangeLabel(5, 1), 'U5–5');
+  assert.equal(placementRangeLabel(1, 2), 'U1–2');
+  assert.equal(placementRangeLabel(1.5, .5), 'U1.5');
+  assert.equal(placementRangeLabel(1.5, 1), 'U1.5–2');
+  assert.equal(placementRangeLabel(2, .5), 'U2');
+  assert.equal(placementRangeLabel(2, 1.5), 'U2–3');
+
+  for (let startU = 1; startU <= 3; startU += .5) {
+    for (let uHeight = .5; uHeight <= 3; uHeight += .5) {
+      const label = placementRangeLabel(startU, uHeight);
+      const [, end] = label.replace('U', '').split('–');
+      const endValue = end === undefined ? startU : Number(end);
+      assert.ok(endValue >= startU, `${label} end should not be below start ${startU}`);
+    }
+  }
 });

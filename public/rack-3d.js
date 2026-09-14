@@ -110,6 +110,8 @@ const CHASSIS = Object.freeze({
   'patch-panel': { depth: .7, face: 'patch', dark: false },
   pdu: { depth: .95, face: 'outlets', dark: true },
   'cable-management': { depth: .6, face: 'rings', dark: true },
+  // 0.5U 패널은 스페이서일 뿐이라 패치 패널보다도 얕고 무늬 없는 민무늬 면으로 둔다.
+  'blank-panel': { depth: .35, face: 'plain', dark: true },
 });
 
 function chassisProfile(view) {
@@ -246,6 +248,7 @@ function drawVents(context, area, dark) {
 // 전면 베젤은 캔버스 한 장으로 그린다. 러그·상태 LED·포트/베이·모델 실크스크린이 1U를 1U로 읽히게 한다.
 function faceTexture(view, accent, selected, profile) {
   const { width, height, rowUnit } = faceGeometry(view);
+  const half = view.uHeight < 1; // 반 칸 장비는 모델 줄과 면 장식 없이 이름만 작게 보여준다.
   const [canvas, context] = canvasOf(width, height);
   const dark = profile.dark;
   const shell = context.createLinearGradient(0, 0, 0, height);
@@ -280,7 +283,7 @@ function faceTexture(view, accent, selected, profile) {
   context.textBaseline = 'middle'; context.textAlign = 'left';
   const middle = height / 2;
   let cursor = inset + rowUnit * .18;
-  if (profile.face !== 'patch' && profile.face !== 'rings') {
+  if (profile.face !== 'patch' && profile.face !== 'rings' && profile.face !== 'plain') {
     const radius = Math.max(2.5, rowUnit * .07);
     for (const color of [view.active ? '#43c894' : '#5d6a66', view.mapped ? accent : (dark ? '#7c8d87' : '#a3b1ac'), view.active ? '#d8b45c' : '#5d6a66']) {
       context.fillStyle = color; context.beginPath(); context.arc(cursor, middle, radius, 0, Math.PI * 2); context.fill();
@@ -290,8 +293,8 @@ function faceTexture(view, accent, selected, profile) {
   }
 
   const name = view.name.length > 20 ? `${view.name.slice(0, 19)}…` : view.name;
-  const model = (view.model || view.kind || '').slice(0, 24);
-  context.font = `700 ${Math.round(rowUnit * .3)}px Pretendard, -apple-system, sans-serif`;
+  const model = half ? '' : (view.model || view.kind || '').slice(0, 24);
+  context.font = `700 ${Math.round(rowUnit * (half ? .24 : .3))}px Pretendard, -apple-system, sans-serif`;
   const nameWidth = context.measureText(name).width;
   context.fillStyle = ink; context.fillText(name, cursor, model ? middle - rowUnit * .15 : middle);
   context.font = `500 ${Math.round(rowUnit * .2)}px ui-monospace, Menlo, monospace`;
@@ -300,7 +303,7 @@ function faceTexture(view, accent, selected, profile) {
   cursor += Math.max(nameWidth, modelWidth) + rowUnit * .34;
 
   const area = { left: cursor, right: width - inset, top: rowUnit * .16, bottom: height - rowUnit * .16, rowUnit };
-  if (area.right > area.left) {
+  if (area.right > area.left && !half && profile.face !== 'plain') {
     if (profile.face === 'ports') drawPorts(context, area, view, accent);
     else if (profile.face === 'slots') drawSlots(context, area, view, accent);
     else if (profile.face === 'bays') drawBays(context, area, view, dark);
@@ -318,16 +321,23 @@ function faceTexture(view, accent, selected, profile) {
   return textureOf(canvas);
 }
 
+// 반 칸 배치가 있어도 빈 구간을 놓치지 않도록 U가 아니라 반 칸 인덱스로 점유를 센다.
 function freeRun(capacityU, views) {
-  const occupied = new Array(capacityU + 2).fill(false);
-  for (const view of views) for (let offset = 0; offset < view.uHeight; offset += 1) occupied[view.startU + offset] = true;
+  const slots = capacityU * 2;
+  const occupied = new Array(slots).fill(false);
+  for (const view of views) {
+    const from = Math.round((view.startU - 1) * 2);
+    const to = Math.round((view.startU - 1 + view.uHeight) * 2);
+    for (let slot = from; slot < to; slot += 1) occupied[slot] = true;
+  }
   let best = null; let run = null;
-  for (let unit = 1; unit <= capacityU; unit += 1) {
-    if (occupied[unit]) { run = null; continue; }
-    run = run ? { start: run.start, end: unit } : { start: unit, end: unit };
+  for (let slot = 0; slot < slots; slot += 1) {
+    if (occupied[slot]) { run = null; continue; }
+    run = run ? { start: run.start, end: slot } : { start: slot, end: slot };
     if (!best || run.end - run.start > best.end - best.start) best = run;
   }
-  return best && best.end - best.start >= 1 ? best : null;
+  const length = best ? best.end - best.start + 1 : 0;
+  return length >= 4 ? { start: best.start / 2 + 1, units: length / 2 } : null;
 }
 
 function cabinet(rack, views, selectedId, note) {
@@ -376,9 +386,9 @@ function cabinet(rack, views, selectedId, note) {
 
   const run = freeRun(capacityU, views);
   if (run) {
-    const units = run.end - run.start + 1; const width = RACK.faceWidth - .26; const decalHeight = units * U - .07;
+    const { start, units } = run; const width = RACK.faceWidth - .26; const decalHeight = units * U - .07;
     const decal = new THREE.Mesh(new THREE.PlaneGeometry(width, decalHeight), new THREE.MeshBasicMaterial({ map: freeTexture(units, width, decalHeight), transparent: true, depthWrite: false }));
-    decal.position.set(0, baseY + (run.start - 1) * U + units * U / 2, FRONT_Z + .02); group.add(decal);
+    decal.position.set(0, baseY + (start - 1) * U + units * U / 2, FRONT_Z + .02); group.add(decal);
   }
 
   const usedU = views.reduce((sum, view) => sum + view.uHeight, 0);
@@ -518,7 +528,7 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
     racks.forEach(({ rack, placements, note }, index) => {
       const x = index * spacing - center; const metrics = rackMetrics(rack); positions.set(rack.id, { x, ...metrics }); tallest = Math.max(tallest, metrics.height);
       dropZones.push({ rackId: rack.id, x, baseY: metrics.baseY, inner: metrics.inner, capacityU: metrics.capacityU });
-      const group = cabinet(rack, placements, selectedPlacementId, note); group.position.x = x; world.add(group);
+      const group = cabinet(rack, placements, selectedPlacementId, note); group.position.x = x; group.userData.rackId = rack.id; world.add(group);
       group.traverse((child) => { if (child.userData.pickable) pickables.push(child); });
     });
     rackCount = racks.length;
@@ -538,6 +548,9 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
       view.focus = top * .48;
       view.distance = Math.min(84, Math.max(13, top * 1.9, racks.length * spacing * 1.2));
     }
+    // 광선 판정은 matrixWorld를 쓰는데 새로 만든 물체의 행렬은 다음 렌더 때에야 갱신된다. 선택으로 다시 그린
+    // 직후의 더블클릭·우클릭이 옛 행렬로 아무것도 맞히지 못하므로 여기서 갱신한다.
+    world.updateMatrixWorld(true);
   }
   function canvasPointer(clientX, clientY) {
     const box = canvas.getBoundingClientRect();
@@ -555,8 +568,9 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
       const distance = raycaster.ray.distanceSqToSegment(dropSpan[0], dropSpan[1], null, dropPoint);
       if (!best || distance < best.distance) best = { distance, zone, y: dropPoint.y };
     }
-    const hoveredU = Math.min(best.zone.capacityU, Math.max(1, Math.floor((best.y - best.zone.baseY) / U) + 1));
-    return { rackId: best.zone.rackId, hoveredU };
+    const positionU = Math.min(best.zone.capacityU - .001, Math.max(0, (best.y - best.zone.baseY) / U));
+    const hoveredU = Math.floor(positionU) + 1;
+    return { rackId: best.zone.rackId, hoveredU, positionU };
   }
   function setDropCandidates(list) {
     for (const pad of candidates) pad.visible = false;
@@ -596,8 +610,19 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
     raycaster.setFromCamera(pointer, camera);
     return raycaster.intersectObjects(pickables, false).find(({ object }) => object.userData.placementId)?.object.userData ?? null;
   }
+  // 장비가 아닌 틀·기둥·라벨을 눌러도 랙 메뉴를 열 수 있게, 맞은 물체에서 부모를 따라 올라가 랙 ID를 찾는다.
+  function hitRack(clientX, clientY) {
+    if (!canvasPointer(clientX, clientY)) return null;
+    raycaster.setFromCamera(pointer, camera);
+    for (const { object } of raycaster.intersectObjects(world.children.slice(2), true)) {
+      for (let node = object; node; node = node.parent) if (node.userData.rackId) return { rackId: node.userData.rackId };
+    }
+    return null;
+  }
   function reportPlacementDrag(phase, placement, event) { onPlacementDrag({ phase, rackId: placement.rackId, placementId: placement.placementId, clientX: event.clientX, clientY: event.clientY }); }
   canvas.addEventListener('pointerdown', (event) => {
+    // 오른쪽 버튼은 랙 메뉴에 쓴다. 회전까지 받으면 메뉴를 열려고 누른 순간 시점이 흔들린다.
+    if (event.button !== 0) return;
     // 장비를 집었으면 카메라를 돌리지 않고 재배치 드래그로 넘긴다.
     const placement = onPlacementDrag ? hitPlacement(event.clientX, event.clientY) : null;
     dragging = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false, placement };
@@ -624,7 +649,7 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
   canvas.addEventListener('wheel', (event) => { event.preventDefault(); view.distance = THREE.MathUtils.clamp(view.distance * Math.exp(event.deltaY * .001), 9, 90); }, { passive: false });
   const observer = new ResizeObserver(resize); observer.observe(host); resize();
   return {
-    update, dropTarget, setDropPreview, setDropCandidates, placementAt: (clientX, clientY) => hitPlacement(clientX, clientY),
+    update, dropTarget, setDropPreview, setDropCandidates, placementAt: (clientX, clientY) => hitPlacement(clientX, clientY), rackAt: (clientX, clientY) => hitRack(clientX, clientY),
     setFace(next) { if (!['front', 'rear'].includes(next) || face === next) return; face = next; view.yaw = face === 'rear' ? Math.PI - .48 : -.48; },
     start() { if (active) return; active = true; resize(); frame = requestAnimationFrame(renderFrame); },
     stop() { active = false; cancelAnimationFrame(frame); },

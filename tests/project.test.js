@@ -172,6 +172,35 @@ test('takes a device visual label at its length limit and rejects one character 
   assert.throws(() => createProject(withText('a'.repeat(10001))), /visual text is invalid/);
 });
 
+test('round trips half-U rack placements and rejects half-unit overlap or non-half-unit values', () => {
+  const topology = cloneTopology();
+  const placements = [
+    { id: 'switch-1', name: 'SWITCH 1', kind: 'switch', startU: 1, uHeight: 1, powerWatts: 0 },
+    { id: 'blank-2', name: 'BLANK 2', kind: 'blank-panel', startU: 2, uHeight: .5, powerWatts: 0 },
+    { id: 'blank-2-5', name: 'BLANK 2.5', kind: 'blank-panel', startU: 2.5, uHeight: .5, powerWatts: 0 },
+    { id: 'blank-4-5', name: 'BLANK 4.5', kind: 'blank-panel', startU: 4.5, uHeight: .5, powerWatts: 0 },
+  ];
+  topology.racks.push({ id: 'rack-half', name: 'RACK HALF', capacityU: 4, powerBudgetWatts: 1000, powerBasis: 'nameplate', deviceIds: [], placements });
+  const restored = parseProject(serializeProject(topology));
+  const rackHalf = restored.topology.racks.find(({ id }) => id === 'rack-half');
+  assert.deepEqual(rackHalf.placements, placements);
+
+  const breaks = [
+    [(copy) => { copy.startU = 1.5; }, /overlap/],
+    [(copy) => { copy.uHeight = .3; }, /outside the rack/],
+    [(copy) => { copy.startU = 2.25; }, /outside the rack/],
+  ];
+  for (const [mutate, message] of breaks) {
+    const broken = structuredClone(topology);
+    const target = broken.racks.find(({ id }) => id === 'rack-half').placements.find(({ id }) => id === 'blank-2');
+    mutate(target);
+    assert.throws(() => parseProject(serializeProject(broken)), message);
+  }
+  const outsideByHeight = structuredClone(topology);
+  outsideByHeight.racks.find(({ id }) => id === 'rack-half').placements.find(({ id }) => id === 'blank-4-5').uHeight = 1;
+  assert.throws(() => parseProject(serializeProject(outsideByHeight)), /outside the rack/);
+});
+
 test('takes the one value each label run style allows and refuses any other', () => {
   const withRun = (run) => {
     const topology = cloneTopology();
