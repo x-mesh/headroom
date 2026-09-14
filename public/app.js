@@ -3058,15 +3058,19 @@ function showGuideIntro() {
   box.hidden = false;
   box.dataset.intro = '';
   box.innerHTML = `<p class="tour-count">RACK MESH GUIDE</p>
-    <h2 id="tour-title">인프라 설계의 한계와 장애 영향을 미리 살펴보세요</h2>
-    <p class="tour-text">영상은 용량 한계, 장애 이후의 변화, 3D 토폴로지, 실제 랙 배치를 차례로 보여 줍니다.</p>
+    <h2 id="tour-title">설계의 한계와 장애 영향을 먼저 확인하세요</h2>
+    <p class="tour-text">구성도를 그리고, 부하와 장애를 바꾸고, 3D 랙에 서버를 배치합니다.</p>
     <figure class="guide-preview">
-      <video autoplay muted loop playsinline preload="metadata" poster="./assets/guide-preview.webp" aria-label="용량 한계, 장애 주입, 3D 토폴로지와 랙 배치 미리보기">
+      <video autoplay muted loop playsinline preload="metadata" poster="./assets/guide-preview.webp" aria-label="용량 한계, 장애 주입, 3D 랙 배치 미리보기">
         <source src="./assets/guide-preview.webm" type="video/webm">
         <source src="./assets/guide-preview.mp4" type="video/mp4">
       </video>
-      <img src="./assets/guide-preview.webp" alt="3D 토폴로지에서 용량 한계를 확인하는 화면">
-      <figcaption><span>용량 한계</span><i></i><span>장애 영향</span><i></i><span>3D 토폴로지</span><i></i><span>랙 배치</span></figcaption>
+      <img src="./assets/guide-preview.webp" alt="3D 랙에서 용량 한계를 확인하는 화면">
+      <figcaption class="guide-features" aria-label="주요 기능 상태">
+        <span class="guide-feature"><strong>용량 한계</strong><b>현재 설계 111%</b></span>
+        <span class="guide-feature"><strong>장애 영향</strong><b>PDU-A · 서버 6대</b></span>
+        <span class="guide-feature"><strong>3D 랙 배치</strong><b>Drag &amp; drop</b></span>
+      </figcaption>
     </figure>
     <div class="tour-actions">
       <button type="button" data-guide="dismiss">직접 둘러보기</button>

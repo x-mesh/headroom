@@ -1842,9 +1842,10 @@ async function verifyTourAnchoring() {
   await page.addInitScript(() => window.addEventListener('error', (event) => console.error(`failure-location ${event.filename}:${event.lineno}:${event.colno}`)));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   await page.waitForSelector('#tour:not([hidden])');
-  assert.match(await page.locator('#tour-title').textContent(), /인프라 설계의 한계와 장애 영향/, '첫 방문은 제품 범위를 먼저 설명해야 합니다');
+  assert.match(await page.locator('#tour-title').textContent(), /설계의 한계와 장애 영향/, '첫 방문은 제품 범위를 먼저 설명해야 합니다');
+  assert.match(await page.locator('.tour-text').textContent(), /구성도를 그리고/, '첫 방문은 구성도를 편집할 수 있음을 알려야 합니다');
   assert.equal(await page.locator('.guide-preview video').count(), 1, '중앙 안내는 실제 제품 미리보기를 보여야 합니다');
-  assert.match(await page.locator('.guide-preview figcaption').textContent(), /용량 한계.*장애 영향.*3D 토폴로지.*랙 배치/, '영상 아래에서 네 장면의 의미를 알려야 합니다');
+  assert.match(await page.locator('.guide-preview figcaption').textContent(), /용량 한계[\s\S]*현재 설계 111%[\s\S]*장애 영향[\s\S]*PDU-A[\s\S]*서버 6대[\s\S]*3D 랙 배치[\s\S]*Drag & drop/, '영상 아래에서 세 가지 기능과 상태를 알려야 합니다');
   assert.ok(await page.locator('.guide-preview video').evaluate((video) => video.muted && video.loop && video.autoplay && video.playsInline), '미리보기는 무음 자동 반복 재생이어야 합니다');
   assert.ok(await page.locator('#tour').evaluate((node) => node.getBoundingClientRect().width >= 1000), '데스크톱 중앙 안내는 영상을 충분히 크게 보여야 합니다');
   assert.match(await page.locator('#tour-spot').evaluate((node) => getComputedStyle(node).backdropFilter), /blur/, '중앙 안내 뒤의 제품 화면은 흐려야 합니다');
