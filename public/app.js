@@ -16,7 +16,7 @@ import { addConnector, addShape, alignSelection, copySelection, distributeSelect
 import { applyDrawioImport, createDrawioEdgeRenderContext, createDrawioPreview, parseDrawioDocument, renderDrawioEdgeSvg, renderDrawioPageSvg, renderDrawioVisualSvg } from './drawio-import.js';
 import { createHistory } from './history.js';
 import { acceptanceDigest, evidenceApplicability } from './evidence.js';
-import { addMappedPlacement, addStandalonePlacement, createRack, firstFreeStartU, materializeRack, moveRack, nearestFreeStartU, nextRackName, placementHeight, placementRangeLabel, placementView, rackPlacements, rackSummary, removePlacement, removeRack, suggestedRackPowerBudget, updatePlacement } from './rack.js';
+import { addMappedPlacement, addStandalonePlacement, copyRack, copyRackPlacement, createRack, firstFreeStartU, materializeRack, moveRack, nearestFreeStartU, nextRackName, pasteRack, pasteRackPlacement, placementHeight, placementRangeLabel, placementView, rackPlacements, rackSummary, removePlacement, removeRack, renamePlacement, renameRack, suggestedRackPowerBudget, updatePlacement } from './rack.js';
 
 let topology = cloneTopology();
 const state = { scale: 1, selectedId: 'fw-a', selection: [{ type: 'device', id: 'fw-a' }], disabledDevices: new Set(), disabledLinks: new Set(), disabledDomains: new Set(), namedScenarios: [], editorMode: 'select', connectSource: null, leftPanel: 'palette', zoom: 1, viewMode: 'edit', workspace: 'topology', leftPanelCollapsed: false, rightPanelCollapsed: false };
@@ -3965,14 +3965,11 @@ function contextItemsFor(resource, type) {
   return items;
 }
 
-function openContextMenu(event, id, type) {
-  const resource = type === 'device' ? deviceById(id) : linkById(id);
-  if (!resource) return;
+// 토폴로지와 랙 화면이 같은 메뉴 틀을 쓴다. 항목과 대상만 화면마다 다르다.
+function showContextMenu(event, title, items) {
   event.preventDefault();
-  state.selectedId = id;
-  contextTarget = { id, type };
   const menu = element('context-menu');
-  menu.innerHTML = `<p class="context-title">${escapeText(resourceName(resource))}</p>${contextItemsFor(resource, type).map((item) =>
+  menu.innerHTML = `<p class="context-title">${escapeText(title)}</p>${items.map((item) =>
     `<button type="button" role="menuitem" data-context-action="${item.id}"${item.danger ? ' data-danger=""' : ''}>${escapeText(item.label)}</button>`).join('')}`;
   menu.hidden = false;
   // 메뉴가 화면 밖으로 나가지 않게 오른쪽·아래 경계에서 접는다.
@@ -3980,6 +3977,14 @@ function openContextMenu(event, id, type) {
   menu.style.left = `${Math.min(event.clientX, window.innerWidth - box.width - 8)}px`;
   menu.style.top = `${Math.min(event.clientY, window.innerHeight - box.height - 8)}px`;
   menu.querySelector('[role="menuitem"]')?.focus();
+}
+
+function openContextMenu(event, id, type) {
+  const resource = type === 'device' ? deviceById(id) : linkById(id);
+  if (!resource) return;
+  state.selectedId = id;
+  contextTarget = { id, type };
+  showContextMenu(event, resourceName(resource), contextItemsFor(resource, type));
   renderTopology(); renderInspector();
 }
 
@@ -3989,10 +3994,167 @@ function closeContextMenu() {
   menu.hidden = true; menu.innerHTML = ''; contextTarget = null;
 }
 
+// 랙 화면 메뉴에서는 토폴로지 캔버스 좌표가 필요한 복제·링크 시작을 뺀다.
+function rackContextItems(target) {
+  const rack = (topology.racks || []).find(({ id }) => id === target.rackId);
+  if (!rack) return [];
+  if (!target.placementId) {
+    const index = topology.racks.indexOf(rack);
+    const deviceIds = rackPlacements(topology, rack).map(({ deviceId }) => deviceId).filter(Boolean);
+    const items = [{ id: 'rack-rename', label: '이름 바꾸기' }];
+    if (index > 0) items.push({ id: 'rack-move-left', label: '왼쪽으로' });
+    if (index < topology.racks.length - 1) items.push({ id: 'rack-move-right', label: '오른쪽으로' });
+    if (deviceIds.length) items.push({ id: 'rack-fault', label: deviceIds.every((id) => state.disabledDevices.has(id)) ? '랙 전체 장애 복구' : '랙 전체 장애 주입' });
+    return [...items, { id: 'rack-delete', label: '랙 삭제', danger: true }];
+  }
+  const placement = rackPlacements(topology, rack).find(({ id }) => id === target.placementId);
+  if (!placement) return [];
+  // PDU·패널 같은 랙 전용 장비는 토폴로지 계산에 없어서 장애를 주입할 대상이 아니다.
+  if (!placement.deviceId) return [{ id: 'rack-rename', label: '이름 바꾸기' }, { id: 'rack-remove-placement', label: '랙에서 빼기', danger: true }];
+  return [
+    { id: 'rack-device-fault', label: state.disabledDevices.has(placement.deviceId) ? '장애 복구' : '장애 주입' },
+    { id: 'rack-rename', label: '이름 바꾸기' },
+    { id: 'rack-show-topology', label: '토폴로지에서 보기' },
+    { id: 'rack-remove-placement', label: '랙에서 빼기', danger: true },
+  ];
+}
+
+function openRackContextMenu(event, target) {
+  const rack = (topology.racks || []).find(({ id }) => id === target.rackId);
+  const placement = rack && target.placementId ? rackPlacements(topology, rack).find(({ id }) => id === target.placementId) : null;
+  if (!rack || (target.placementId && !placement)) return;
+  rackView.selectedRackId = rack.id; rackView.selectedPlacementId = placement?.id || null;
+  contextTarget = target;
+  showContextMenu(event, placement ? placementView(topology, placement).name : rack.name, rackContextItems(target));
+  renderRackWorkspace();
+}
+
+// 랙 하나가 통째로 멈추는 경우를 장애 도메인 없이 본다. 장비마다 toggleFailure를 부르면 재계산과 토스트가 장비 수만큼 반복된다.
+function toggleRackFailure(rack) {
+  const deviceIds = rackPlacements(topology, rack).map(({ deviceId }) => deviceId).filter(Boolean);
+  const restore = deviceIds.every((id) => state.disabledDevices.has(id));
+  cancelTeaser();
+  for (const id of deviceIds) restore ? state.disabledDevices.delete(id) : state.disabledDevices.add(id);
+  recalculate();
+  const message = `${rack.name} 장비 ${deviceIds.length}대 ${restore ? '장애를 복구했습니다' : '장애를 주입했습니다'}`;
+  showToast(`${message} · 경로 재계산 완료`);
+  element('failure-change-live').textContent = `${message}.`;
+}
+
+// 랙 클립보드는 토폴로지 클립보드와 따로 둔다. 서로의 내용을 붙이면 토폴로지 요소가 랙에, 랙 장비가 토폴로지에 섞인다.
+let rackClipboard = null;
+function copyToRackClipboard(rack) {
+  try {
+    rackClipboard = rackView.selectedPlacementId ? copyRackPlacement(topology, rack.id, rackView.selectedPlacementId) : copyRack(topology, rack.id);
+    showToast(`${rackClipboard.type === 'rack' ? rack.name : rackClipboard.item.name}을 복사했습니다.`);
+  } catch (error) { showToast(error.message); }
+}
+
+function pasteRackClipboard(rack) {
+  const clip = rackClipboard;
+  const items = clip.type === 'rack' ? clip.items : [clip.item];
+  const converted = items.some(({ fromDevice }) => fromDevice) ? ' · 토폴로지 장비는 복제하지 않고 랙 전용 장비로 붙여넣었습니다' : '';
+  if (clip.type === 'placement' && !rack) { showToast('먼저 랙을 추가하세요.'); return; }
+  // 랙 붙여넣기는 랙을 만든 뒤 장비를 하나씩 넣는다. 중간에 막히면 반쯤 만든 랙이 남으므로 스냅숏으로 되돌린다.
+  const snapshot = structuredClone(topology.racks);
+  try {
+    if (clip.type === 'rack') {
+      const created = pasteRack(topology, clip, rack?.id ?? null);
+      rackView.selectedRackId = created.id; rackView.selectedPlacementId = null;
+      commitRack(`${created.name}을 만들었습니다 · 장비 ${items.length}대${converted}`);
+      return;
+    }
+    const placement = pasteRackPlacement(topology, rack.id, clip);
+    rackView.selectedPlacementId = placement.id;
+    commitRack(`${placement.name}을 ${rack.name} ${placement.startU}U에 붙여넣었습니다${converted}`);
+  } catch (error) { topology.racks = snapshot; showToast(error.message); }
+}
+
+function runRackContextAction(action, target) {
+  const rack = (topology.racks || []).find(({ id }) => id === target.rackId);
+  if (!rack) return;
+  try {
+    if (action === 'rack-rename') { startRackRename(target); return; }
+    if (action === 'rack-move-left' || action === 'rack-move-right') {
+      const toIndex = topology.racks.indexOf(rack) + (action === 'rack-move-left' ? -1 : 1);
+      moveRack(topology, rack.id, toIndex); commitRack(`${rack.name}을 ${toIndex + 1}번째 자리로 옮겼습니다.`); return;
+    }
+    if (action === 'rack-fault') { toggleRackFailure(rack); return; }
+    if (action === 'rack-delete') {
+      if (confirm(`${rack.name}과 랙 배치를 삭제할까요? 토폴로지 장비는 삭제되지 않습니다.`)) { removeRack(topology, rack.id); rackView.selectedRackId = topology.racks?.[0]?.id || null; rackView.selectedPlacementId = null; commitRack('랙을 삭제했습니다.'); }
+      return;
+    }
+    const placement = rackPlacements(topology, rack).find(({ id }) => id === target.placementId);
+    if (!placement) return;
+    if (action === 'rack-device-fault') { toggleFailure('device', placement.deviceId); return; }
+    if (action === 'rack-show-topology') { state.selectedId = placement.deviceId; state.selection = [{ type: 'device', id: placement.deviceId }]; setWorkspace('topology'); render(); return; }
+    if (action === 'rack-remove-placement') { removePlacement(topology, rack.id, placement.id); if (rackView.selectedPlacementId === placement.id) rackView.selectedPlacementId = null; commitRack('랙 배치를 제거했습니다. 장비 원본은 유지됩니다.'); }
+  } catch (error) { showToast(error.message); }
+}
+
+// 이름 입력 칸은 다시 그려지는 랙 캔버스 밖(body)에 띄운다. 캔버스 안에 두면 선택이나 재계산으로 다시 그릴 때 입력 중인 칸이 사라진다.
+// 3D에는 이름을 띄울 DOM 블록이 없으므로 누른 화면 좌표(target.anchorBox)에 연다.
+let rackRename = null;
+function startRackRename(target) {
+  finishRackRename(true);
+  const rack = (topology.racks || []).find(({ id }) => id === target.rackId);
+  const placement = rack && target.placementId ? rackPlacements(topology, rack).find(({ id }) => id === target.placementId) : null;
+  if (!rack || (target.placementId && !placement)) return;
+  const anchor = target.anchorBox || rackView.mode !== '2d' ? null : placement
+    ? element('rack-2d-canvas').querySelector(`[data-rack-placement="${CSS.escape(placement.id)}"]`)
+    : element('rack-2d-canvas').querySelector(`[data-rack-order-handle="${CSS.escape(target.rackId)}"] strong`);
+  const box = target.anchorBox || anchor?.getBoundingClientRect();
+  if (!box) return;
+  const name = placement ? placementView(topology, placement).name : rack.name;
+  // 0.5U 블록은 9px라 글자가 들어가지 않는다. 편집하는 동안만 칸을 키운다.
+  const height = Math.max(box.height, 28);
+  const input = document.createElement('input');
+  input.className = 'rack-name-editor'; input.value = name; input.maxLength = 80;
+  input.setAttribute('aria-label', placement ? `${name} 장비 이름` : `${name} 랙 이름`);
+  Object.assign(input.style, { left: `${box.left}px`, top: `${box.top + box.height / 2 - height / 2}px`, width: `${Math.max(box.width, 180)}px`, height: `${height}px` });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); finishRackRename(true, { keepOnError: true }); }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finishRackRename(false); }
+  });
+  input.addEventListener('blur', () => finishRackRename(true));
+  document.body.append(input);
+  rackRename = { target, name, mapped: Boolean(placement?.deviceId), input };
+  input.focus(); input.select();
+}
+
+function finishRackRename(save, { keepOnError = false } = {}) {
+  const edit = rackRename;
+  if (!edit) return;
+  const value = edit.input.value;
+  let renamed = null;
+  if (save && value.trim() !== edit.name) {
+    try {
+      renamed = edit.target.placementId ? renamePlacement(topology, edit.target.rackId, edit.target.placementId, value) : renameRack(topology, edit.target.rackId, value);
+    } catch (error) {
+      showToast(error.message);
+      // Enter로 저장하다 막히면 입력한 글자를 버리지 않고 칸을 남긴다.
+      if (keepOnError) return;
+    }
+  }
+  rackRename = null;
+  edit.input.remove();
+  if (renamed) commitRack(`이름을 바꿨습니다: ${renamed.name}${edit.mapped ? ' · 토폴로지 장비 이름도 함께 바뀌었습니다' : ''}`);
+}
+
+// 첫 누르기에서 블록이 선택되며 다시 그려지므로 두 번째 누르기는 새 요소에 떨어진다. 같은 대상인지는 요소가 아니라 ID로 판단한다.
+let rackLastPress = null;
+function rackDoublePress(key, event) {
+  const last = rackLastPress;
+  const double = Boolean(last && last.key === key && event.timeStamp - last.time < 450 && Math.hypot(event.clientX - last.x, event.clientY - last.y) < 8);
+  rackLastPress = double ? null : { key, time: event.timeStamp, x: event.clientX, y: event.clientY };
+  return double;
+}
+
 function runContextAction(action) {
   const target = contextTarget;
   closeContextMenu();
   if (!target) return;
+  if (target.rackId) { runRackContextAction(action, target); return; }
   const { id, type } = target;
   const resource = type === 'device' ? deviceById(id) : linkById(id);
   if (!resource) return;
@@ -4226,7 +4388,9 @@ window.addEventListener('pointercancel', (event) => {
 element('rack-2d-canvas').addEventListener('pointerdown', (event) => {
   const handle = event.target.closest('[data-rack-order-handle]');
   if (!handle || event.button !== 0 || rackDrag) return;
-  event.preventDefault(); handle.setPointerCapture(event.pointerId);
+  event.preventDefault();
+  if (rackDoublePress(`rack:${handle.dataset.rackOrderHandle}`, event)) { startRackRename({ rackId: handle.dataset.rackOrderHandle }); return; }
+  handle.setPointerCapture(event.pointerId);
   rackOrderDrag = { rackId: handle.dataset.rackOrderHandle, pointerId: event.pointerId, handle, startX: event.clientX, moved: false, toIndex: null };
 });
 function advanceRackOrderDrag(clientX) {
@@ -4259,10 +4423,43 @@ element('rack-2d-canvas').addEventListener('pointerdown', (event) => {
   const rack = (topology.racks || []).find(({ id }) => id === node.dataset.rackId);
   const placement = rack && rackPlacements(topology, rack).find(({ id }) => id === node.dataset.rackPlacement);
   if (!placement) return;
-  event.preventDefault(); node.setPointerCapture(event.pointerId);
+  event.preventDefault();
+  if (rackDoublePress(`placement:${placement.id}`, event)) { startRackRename({ rackId: rack.id, placementId: placement.id }); return; }
+  node.setPointerCapture(event.pointerId);
   rackDrag = rackPlacementDrag(rack, placement, node, event.pointerId, event.clientX, event.clientY);
 });
 element('rack-2d-canvas').addEventListener('dragstart', (event) => event.preventDefault());
+element('rack-2d-canvas').addEventListener('contextmenu', (event) => {
+  const node = event.target.closest('[data-rack-placement]');
+  if (node) { openRackContextMenu(event, { rackId: node.dataset.rackId, placementId: node.dataset.rackPlacement }); return; }
+  const rackNode = event.target.closest('[data-rack-order-handle], .rack-elevation');
+  if (rackNode) openRackContextMenu(event, { rackId: rackNode.dataset.rackOrderHandle || rackNode.dataset.rackId });
+});
+// 입력 칸과 메뉴는 화면 좌표에 떠 있다. 랙이 스크롤되면 가리키던 대상에서 떨어지므로 닫는다.
+element('rack-2d-scroll').addEventListener('scroll', () => { closeContextMenu(); finishRackRename(true); });
+// 3D도 2D와 같은 메뉴와 이름 칸을 쓴다. 이름 칸은 누른 좌표에 띄운다.
+function rackSceneTarget(clientX, clientY) {
+  const placement = rackScene?.placementAt(clientX, clientY);
+  const hit = placement || rackScene?.rackAt(clientX, clientY);
+  if (!hit) return null;
+  return { rackId: hit.rackId, placementId: placement?.placementId, anchorBox: { left: clientX - 90, top: clientY - 14, width: 180, height: 28 } };
+}
+element('rack-3d-canvas').addEventListener('contextmenu', (event) => {
+  const target = rackSceneTarget(event.clientX, event.clientY);
+  if (target) openRackContextMenu(event, target);
+});
+// 3D 캔버스는 다시 그려지지 않고 pointerdown에서 기본 동작을 막지 않으므로 브라우저 dblclick을 그대로 받는다.
+element('rack-3d-canvas').addEventListener('dblclick', (event) => {
+  const target = rackSceneTarget(event.clientX, event.clientY);
+  if (target) startRackRename(target);
+});
+element('rack-workspace').addEventListener('keydown', (event) => {
+  if (event.key !== 'F2' || rackView.mode !== '2d') return;
+  const node = event.target.closest('[data-rack-placement], [data-rack-select]');
+  if (!node) return;
+  event.preventDefault();
+  startRackRename(node.dataset.rackPlacement ? { rackId: node.dataset.rackId, placementId: node.dataset.rackPlacement } : { rackId: node.dataset.rackSelect });
+});
 element('rack-equipment-palette').addEventListener('input', (event) => {
   const field = event.target.closest('[data-rack-palette-key]');
   if (!field || field.tagName !== 'INPUT') return;
@@ -5446,6 +5643,12 @@ element('toast').addEventListener('click', (event) => {
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+    const rackNode = document.activeElement?.closest?.('[data-rack-placement]');
+    if (rackNode) {
+      event.preventDefault(); const box = rackNode.getBoundingClientRect();
+      openRackContextMenu({ preventDefault() {}, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 }, { rackId: rackNode.dataset.rackId, placementId: rackNode.dataset.rackPlacement });
+      return;
+    }
     const node = document.activeElement?.closest?.('[data-device-id]'); const link = document.activeElement?.closest?.('[data-link-id]');
     if (node || link) {
       event.preventDefault(); const box = (node || link).getBoundingClientRect();
@@ -5464,6 +5667,18 @@ document.addEventListener('keydown', (event) => {
   if (command && event.key.toLowerCase() === 'z') { event.preventDefault(); historyStep(event.shiftKey ? 'redo' : 'undo'); }
   if (command && event.key.toLowerCase() === 'y') { event.preventDefault(); historyStep('redo'); }
   if (command && event.key.toLowerCase() === 's') { event.preventDefault(); saveProject(); }
+  // 아래의 복사·붙여넣기·삭제는 토폴로지 선택(state.selection)을 대상으로 한다. 랙 화면에서는 그 선택이 보이지 않아
+  // 누른 사람이 모르는 장비가 지워졌다. 랙 화면에서는 거기서 고른 배치나 랙만 복사하고 붙이고 뺀다.
+  if (state.workspace === 'rack') {
+    const rack = currentRack();
+    if (command && event.key.toLowerCase() === 'c' && rack) { event.preventDefault(); copyToRackClipboard(rack); }
+    if (command && event.key.toLowerCase() === 'v' && rackClipboard) { event.preventDefault(); pasteRackClipboard(rack); }
+    if ((event.key === 'Delete' || event.key === 'Backspace') && rack && rackView.selectedPlacementId) {
+      event.preventDefault();
+      try { removePlacement(topology, rack.id, rackView.selectedPlacementId); rackView.selectedPlacementId = null; commitRack('랙 배치를 제거했습니다. 장비 원본은 유지됩니다.'); } catch (error) { showToast(error.message); }
+    }
+    return;
+  }
   if (command && event.key.toLowerCase() === 'c' && state.selection.length) {
     event.preventDefault();
     try { clipboard = copySelection(topology, state.selection); showToast(`${state.selection.length}개 요소를 복사했습니다.`); } catch (error) { showToast(error.message); }

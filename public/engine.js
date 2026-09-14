@@ -761,7 +761,7 @@ export function rackUsage(topology, rack, extra = null) {
   };
 }
 
-function rackExtraWatts(topology, rack, extra) {
+export function rackExtraWatts(topology, rack, extra) {
   if (extra.deviceId) {
     const device = topology.devices.find(({ id }) => id === extra.deviceId);
     const physical = rackPhysical(device);

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createEmptyTopology, addDevice, setDevicePower } from '../public/editor.js';
-import { addMappedPlacement, addStandalonePlacement, createRack, firstFreeStartU, moveRack, nearestFreeStartU, nextRackName, placementRangeLabel, rackSummary, removePlacement, suggestedRackPowerBudget, updatePlacement } from '../public/rack.js';
+import { addMappedPlacement, addStandalonePlacement, copyRack, copyRackPlacement, createRack, firstFreeStartU, moveRack, nearestFreeStartU, nextRackName, pasteRack, pasteRackPlacement, placementRangeLabel, rackSummary, removePlacement, renamePlacement, renameRack, suggestedRackPowerBudget, updatePlacement } from '../public/rack.js';
 import { parseProject, serializeProject } from '../public/project.js';
 import { rackUsage } from '../public/engine.js';
 
@@ -200,6 +200,58 @@ test('moveRack reorders racks, keeps the order in the project file, and rejects 
   assert.throws(() => moveRack(topology, first.id, 3), /자리가 올바르지 않습니다/);
   assert.throws(() => moveRack(topology, first.id, -1), /자리가 올바르지 않습니다/);
   assert.deepEqual(topology.racks.map(({ name }) => name), ['RACK 01', 'RACK 03', 'RACK 02']);
+});
+
+test('renaming a rack, a rack-only device, or a mapped device follows the project-file name rules', () => {
+  const topology = fixture();
+  const rack = createRack(topology, { name: 'RACK 01', capacityU: 12, powerBudgetWatts: 2000, powerBasis: 'nameplate' });
+  const mapped = addMappedPlacement(topology, rack.id, { deviceId: topology.devices[0].id, startU: 1, uHeight: 2 });
+  const panel = addStandalonePlacement(topology, rack.id, { name: 'PATCH 01', kind: 'patch-panel', startU: 10, uHeight: 1, powerWatts: 0 });
+
+  assert.equal(renameRack(topology, rack.id, '  CORE A  ').name, 'CORE A');
+  assert.equal(rack.id, 'rack-01', '이름을 바꿔도 랙 ID는 그대로여야 합니다.');
+  renamePlacement(topology, rack.id, panel.id, 'PATCH 1F');
+  assert.equal(rack.placements.find(({ id }) => id === panel.id).name, 'PATCH 1F');
+  // 연결된 배치는 이름을 따로 갖지 않는다. 토폴로지 장비 자체의 이름이 바뀌어야 한다.
+  renamePlacement(topology, rack.id, mapped.id, 'API 01B');
+  assert.equal(topology.devices[0].name, 'API 01B');
+  assert.equal(rackSummary(topology, rack).placements.find(({ id }) => id === mapped.id).name, 'API 01B');
+
+  assert.throws(() => renameRack(topology, rack.id, '   '), /이름을 입력하세요/);
+  assert.throws(() => renamePlacement(topology, rack.id, panel.id, '<b>'), /< 또는 >/);
+  assert.throws(() => renameRack(topology, rack.id, 'x'.repeat(81)), /80자/);
+  assert.throws(() => renamePlacement(topology, rack.id, 'missing-placement', 'X'), /찾을 수 없습니다/);
+  assert.equal(rack.name, 'CORE A');
+  assert.doesNotThrow(() => parseProject(serializeProject(topology, {})));
+});
+
+test('the rack clipboard pastes devices and racks as rack-only devices without touching the topology', () => {
+  const topology = fixture();
+  const rackInput = { capacityU: 6, powerBudgetWatts: 2000, powerBasis: 'nameplate' };
+  const rack = createRack(topology, { ...rackInput, name: 'RACK 01' });
+  const mapped = addMappedPlacement(topology, rack.id, { deviceId: topology.devices[0].id, startU: 1, uHeight: 2 });
+  const panel = addStandalonePlacement(topology, rack.id, { name: 'PATCH 01', kind: 'patch-panel', model: 'CAT6-24', startU: 5, uHeight: 1, powerWatts: 0 });
+  const devicesBefore = structuredClone(topology.devices);
+
+  // 연결 장비는 토폴로지를 복제하지 않고, 랙 기준(명판값) 전력을 가진 랙 전용 장비로 붙는다. 원래 자리가 차 있으니 가장 가까운 빈자리로 간다.
+  const pasted = pasteRackPlacement(topology, rack.id, copyRackPlacement(topology, rack.id, mapped.id));
+  assert.deepEqual({ name: pasted.name, kind: pasted.kind, startU: pasted.startU, uHeight: pasted.uHeight, powerWatts: pasted.powerWatts, deviceId: pasted.deviceId },
+    { name: 'API 01 복제', kind: 'server', startU: 3, uHeight: 2, powerWatts: 400, deviceId: undefined });
+  assert.deepEqual(topology.devices, devicesBefore, '랙 붙여넣기가 토폴로지 장비를 바꿨습니다.');
+
+  const panelCopy = pasteRackPlacement(topology, rack.id, copyRackPlacement(topology, rack.id, panel.id));
+  assert.deepEqual([panelCopy.name, panelCopy.model, panelCopy.startU, panelCopy.powerWatts], ['PATCH 01 복제', 'CAT6-24', 6, 0]);
+  assert.throws(() => pasteRackPlacement(topology, rack.id, copyRackPlacement(topology, rack.id, mapped.id)), /2U 연속 공간이 없습니다/);
+
+  // 랙 붙여넣기는 다음 번호 이름으로 복사한 랙 바로 오른쪽에 새 랙을 만들고, 장비를 같은 U에 랙 전용으로 둔다.
+  createRack(topology, { ...rackInput, name: 'RACK 02' });
+  const copiedRack = pasteRack(topology, copyRack(topology, rack.id), rack.id);
+  assert.deepEqual(topology.racks.map(({ name }) => name), ['RACK 01', 'RACK 03', 'RACK 02']);
+  assert.deepEqual(rackSummary(topology, copiedRack).placements.map(({ name, startU, mapped: isMapped }) => [name, startU, isMapped]).sort((a, b) => a[1] - b[1]),
+    [['API 01', 1, false], ['API 01 복제', 3, false], ['PATCH 01', 5, false], ['PATCH 01 복제', 6, false]]);
+  assert.deepEqual([copiedRack.capacityU, copiedRack.powerBudgetWatts, copiedRack.powerBasis, copiedRack.deviceIds], [6, 2000, 'nameplate', []]);
+  assert.deepEqual(topology.devices, devicesBefore);
+  assert.doesNotThrow(() => parseProject(serializeProject(topology, {})));
 });
 
 test('placementRangeLabel keeps whole-U strings and never shows an end below the start', () => {

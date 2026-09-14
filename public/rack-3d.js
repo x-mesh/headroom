@@ -528,7 +528,7 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
     racks.forEach(({ rack, placements, note }, index) => {
       const x = index * spacing - center; const metrics = rackMetrics(rack); positions.set(rack.id, { x, ...metrics }); tallest = Math.max(tallest, metrics.height);
       dropZones.push({ rackId: rack.id, x, baseY: metrics.baseY, inner: metrics.inner, capacityU: metrics.capacityU });
-      const group = cabinet(rack, placements, selectedPlacementId, note); group.position.x = x; world.add(group);
+      const group = cabinet(rack, placements, selectedPlacementId, note); group.position.x = x; group.userData.rackId = rack.id; world.add(group);
       group.traverse((child) => { if (child.userData.pickable) pickables.push(child); });
     });
     rackCount = racks.length;
@@ -548,6 +548,9 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
       view.focus = top * .48;
       view.distance = Math.min(84, Math.max(13, top * 1.9, racks.length * spacing * 1.2));
     }
+    // 광선 판정은 matrixWorld를 쓰는데 새로 만든 물체의 행렬은 다음 렌더 때에야 갱신된다. 선택으로 다시 그린
+    // 직후의 더블클릭·우클릭이 옛 행렬로 아무것도 맞히지 못하므로 여기서 갱신한다.
+    world.updateMatrixWorld(true);
   }
   function canvasPointer(clientX, clientY) {
     const box = canvas.getBoundingClientRect();
@@ -607,8 +610,19 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
     raycaster.setFromCamera(pointer, camera);
     return raycaster.intersectObjects(pickables, false).find(({ object }) => object.userData.placementId)?.object.userData ?? null;
   }
+  // 장비가 아닌 틀·기둥·라벨을 눌러도 랙 메뉴를 열 수 있게, 맞은 물체에서 부모를 따라 올라가 랙 ID를 찾는다.
+  function hitRack(clientX, clientY) {
+    if (!canvasPointer(clientX, clientY)) return null;
+    raycaster.setFromCamera(pointer, camera);
+    for (const { object } of raycaster.intersectObjects(world.children.slice(2), true)) {
+      for (let node = object; node; node = node.parent) if (node.userData.rackId) return { rackId: node.userData.rackId };
+    }
+    return null;
+  }
   function reportPlacementDrag(phase, placement, event) { onPlacementDrag({ phase, rackId: placement.rackId, placementId: placement.placementId, clientX: event.clientX, clientY: event.clientY }); }
   canvas.addEventListener('pointerdown', (event) => {
+    // 오른쪽 버튼은 랙 메뉴에 쓴다. 회전까지 받으면 메뉴를 열려고 누른 순간 시점이 흔들린다.
+    if (event.button !== 0) return;
     // 장비를 집었으면 카메라를 돌리지 않고 재배치 드래그로 넘긴다.
     const placement = onPlacementDrag ? hitPlacement(event.clientX, event.clientY) : null;
     dragging = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false, placement };
@@ -635,7 +649,7 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
   canvas.addEventListener('wheel', (event) => { event.preventDefault(); view.distance = THREE.MathUtils.clamp(view.distance * Math.exp(event.deltaY * .001), 9, 90); }, { passive: false });
   const observer = new ResizeObserver(resize); observer.observe(host); resize();
   return {
-    update, dropTarget, setDropPreview, setDropCandidates, placementAt: (clientX, clientY) => hitPlacement(clientX, clientY),
+    update, dropTarget, setDropPreview, setDropCandidates, placementAt: (clientX, clientY) => hitPlacement(clientX, clientY), rackAt: (clientX, clientY) => hitRack(clientX, clientY),
     setFace(next) { if (!['front', 'rear'].includes(next) || face === next) return; face = next; view.yaw = face === 'rear' ? Math.PI - .48 : -.48; },
     start() { if (active) return; active = true; resize(); frame = requestAnimationFrame(renderFrame); },
     stop() { active = false; cancelAnimationFrame(frame); },
