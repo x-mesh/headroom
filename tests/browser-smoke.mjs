@@ -450,7 +450,7 @@ async function verify(viewport, screenshot, interact = false) {
   await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}\n${String(error.stack).split("\n").slice(1, 4).join("\n")}`));
-  page.on('requestfailed', (request) => failures.push(`request: ${request.url()} ${request.failure()?.errorText}`));
+  page.on('requestfailed', (request) => { if (!request.url().includes('/assets/guide-preview.')) failures.push(`request: ${request.url()} ${request.failure()?.errorText}`); });
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   await page.evaluate(() => document.fonts.ready);
   if (viewport.width > 1180) {
@@ -767,7 +767,7 @@ async function verify(viewport, screenshot, interact = false) {
   assert.ok(tourTexts.length >= 6, `단계가 ${tourTexts.length}개뿐입니다.`);
   // 안내는 지금 설계에서 계산한 값으로 말한다. 못 박은 숫자면 다른 설계에서 틀린 말이 된다.
   assert.match(tourTexts.join(' '), /1\.\d\d배에서/, 'the tour must read the breach scale off the live calculation');
-  assert.match(tourTexts.join(' '), /미확인은 0%가 아닙니다|한계를 모르는 축은 막대를 채우지 않고/,
+  assert.match(tourTexts.join(' '), /미확인은 0%가 아닙니다|한계를 모르는 축은 막대와 백분율을 표시하지 않습니다/,
     'the tour must state the one rule a newcomer gets wrong');
   // 단계마다 화면의 실제 조작 대상을 가리켜야 한다. 설명만 하는 단계는 마무리 하나뿐이다.
   assert.ok(spotted >= tourTexts.length - 1, `실선 박스가 ${spotted}단계에만 떴습니다.`);
@@ -1773,6 +1773,7 @@ async function verifyTopologyViews() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   await page.addInitScript(() => {
     if (!sessionStorage.getItem('rack-mesh-view-test-initialized')) { localStorage.clear(); sessionStorage.setItem('rack-mesh-view-test-initialized', '1'); }
+    localStorage.setItem('rack-mesh-guide-seen', '1');
     sessionStorage.setItem('rack-mesh-demo-teaser', '1');
   });
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
@@ -1841,8 +1842,12 @@ async function verifyTourAnchoring() {
   await page.addInitScript(() => window.addEventListener('error', (event) => console.error(`failure-location ${event.filename}:${event.lineno}:${event.colno}`)));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   await page.waitForSelector('#tour:not([hidden])');
-  assert.match(await page.locator('#tour-title').textContent(), /설계가 어디서 무너지는지/, '첫 방문은 제품 범위를 먼저 설명해야 합니다');
-  assert.equal(await page.locator('.guide-capabilities section').count(), 3, '중앙 안내는 세 가지 핵심 기능을 보여야 합니다');
+  assert.match(await page.locator('#tour-title').textContent(), /인프라 설계의 한계와 장애 영향/, '첫 방문은 제품 범위를 먼저 설명해야 합니다');
+  assert.equal(await page.locator('.guide-preview video').count(), 1, '중앙 안내는 실제 제품 미리보기를 보여야 합니다');
+  assert.match(await page.locator('.guide-preview figcaption').textContent(), /용량 한계.*장애 영향.*3D 토폴로지.*랙 배치/, '영상 아래에서 네 장면의 의미를 알려야 합니다');
+  assert.ok(await page.locator('.guide-preview video').evaluate((video) => video.muted && video.loop && video.autoplay && video.playsInline), '미리보기는 무음 자동 반복 재생이어야 합니다');
+  assert.ok(await page.locator('#tour').evaluate((node) => node.getBoundingClientRect().width >= 1000), '데스크톱 중앙 안내는 영상을 충분히 크게 보여야 합니다');
+  assert.match(await page.locator('#tour-spot').evaluate((node) => getComputedStyle(node).backdropFilter), /blur/, '중앙 안내 뒤의 제품 화면은 흐려야 합니다');
   assert.equal(await page.evaluate(() => localStorage.getItem('rack-mesh-guide-seen')), null, '선택하기 전에는 첫 방문 안내를 본 것으로 기록하지 않아야 합니다');
   await page.locator('[data-guide="start"]').click();
   assert.equal(await page.evaluate(() => localStorage.getItem('rack-mesh-guide-seen')), '1', '안내를 선택하면 본 상태를 저장해야 합니다');

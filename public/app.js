@@ -2961,17 +2961,17 @@ function tourTargets() {
 // 좌표를 저장하면 레이아웃이 바뀔 때마다 엉뚱한 곳을 가리킨다. 상자 자리는 매번 다시 잰다.
 const TOUR_STEPS = [
   {
-    title: '설계 템플릿',
+    title: '템플릿으로 시작하기',
     target: '#new-design-button',
     // 개수를 못 박으면 설계를 더할 때마다 안내가 틀린 말을 한다. 목록에서 센다.
-    text: () => `설계 시작에서 출발합니다. ${templates.length}개 설계가 들어 있고 각각 먼저 차는 축이 다릅니다. 3-tier 웹, DMZ 이중 방화벽, IoT 게이트웨이처럼 실제 구성을 골라 열 수 있습니다.`,
+    text: () => `'설계 시작'에서 템플릿을 고릅니다. ${templates.length}개 설계는 각각 가장 먼저 한계에 닿는 축이 다릅니다. 3-tier 웹, DMZ 이중 방화벽, IoT 게이트웨이 같은 구성을 바로 열 수 있습니다.`,
   },
   {
     title: '워크로드 배율',
     target: '.scale-control',
     text: ({ rung }) => (rung
-      ? `부하를 통째로 올리고 내립니다. 지금 설계는 ${rung.breachScale.toFixed(2)}배에서 ${resourceName(resourceById(rung.resourceId)) || rung.resourceId} 의 ${withParticle(axisCatalog[rung.axis]?.label || rung.axis, 'subject')} 먼저 넘습니다. 그 지점 너머로 올려 두었습니다.`
-      : '부하를 통째로 올리고 내립니다. 끄는 동안은 가벼운 계산만 돌고, 손을 떼면 전체가 다시 돕니다.'),
+      ? `전체 부하를 한꺼번에 조절합니다. 이 설계는 ${rung.breachScale.toFixed(2)}배에서 ${resourceName(resourceById(rung.resourceId)) || rung.resourceId}의 ${withParticle(axisCatalog[rung.axis]?.label || rung.axis, 'subject')} 가장 먼저 한계를 넘습니다. 지금은 그 변화를 볼 수 있도록 한계보다 조금 높여 두었습니다.`
+      : '전체 부하를 한꺼번에 조절합니다. 슬라이더를 움직이는 동안에는 빠르게 계산하고, 손을 떼면 전체 결과를 다시 계산합니다.'),
     run: ({ rung }) => {
       if (!rung) return;
       state.scale = Math.min(1.8, Math.round((rung.breachScale + 0.05) * 20) / 20);
@@ -2979,16 +2979,16 @@ const TOUR_STEPS = [
     },
   },
   {
-    title: '무엇이 먼저 차는가',
+    title: '무엇이 먼저 한계에 닿는가',
     target: '#topology-heading',
-    text: () => '캔버스 제목은 질문이 아니라 답입니다. 병목 자원과 그 축, 사용률을 말합니다. 바로 아래 줄이 몇 배에서 넘고 그다음은 어디인지 알려 줍니다.',
+    text: () => '캔버스 제목에서 병목 자원과 제한 축, 사용률을 바로 확인할 수 있습니다. 아래 설명은 부하가 몇 배일 때 한계를 넘는지와 다음 병목을 알려 줍니다.',
   },
   {
-    title: '축 미터로 용량을 정합니다',
+    title: '축별 한계값 조정',
     target: ({ spread }) => spread ? '[data-axis-drag="' + CSS.escape(spread.high[0]) + '"][data-axis-resource="' + CSS.escape(spread.device.id) + '"]' : '[data-axis-drag]',
     text: ({ spread }) => (spread
-      ? `${withParticle(resourceName(spread.device), 'object')} 골랐습니다. ${axisCatalog[spread.low[0]]?.label || spread.low[0]} ${formatPercent(spread.low[1].utilization)} 인데 ${axisCatalog[spread.high[0]]?.label || spread.high[0]} ${formatPercent(spread.high[1].utilization)} 입니다. 같은 장비인데 축마다 다릅니다. 이 막대는 읽기만 하는 그림이 아니라 좌우로 끌면 그 축의 목표 사용률이 정해지고 거기서 나온 한계값이 저장됩니다. 한계를 모르는 축은 막대를 채우지 않고 백분율도 적지 않습니다. 방향키로도 됩니다.`
-      : '검사기의 축 막대는 좌우로 끌 수 있습니다. 그 축을 몇 %에 두겠다는 목표가 정해지고 거기서 나온 한계값이 저장됩니다. 한계를 모르는 축은 막대를 채우지 않고 백분율도 적지 않습니다.'),
+      ? `${withParticle(resourceName(spread.device), 'object')} 선택했습니다. ${axisCatalog[spread.low[0]]?.label || spread.low[0]} 사용률은 ${formatPercent(spread.low[1].utilization)}이고, ${axisCatalog[spread.high[0]]?.label || spread.high[0]} 사용률은 ${formatPercent(spread.high[1].utilization)}입니다. 같은 장비도 축마다 여유가 다릅니다. 막대를 좌우로 끌면 목표 사용률에 맞춰 한계값을 저장합니다. 한계를 모르는 축은 막대와 백분율을 표시하지 않습니다. 방향키로도 조절할 수 있습니다.`
+      : '장비 검사의 축 막대를 좌우로 끌어 목표 사용률과 한계값을 정할 수 있습니다. 한계를 모르는 축은 막대와 백분율을 표시하지 않습니다.'),
     run: ({ spread }) => {
       if (!spread) return;
       state.selectedId = spread.device.id;
@@ -3000,34 +3000,34 @@ const TOUR_STEPS = [
     title: '장애 주입',
     target: '[data-panel-tab="failure"]',
     text: ({ fault }) => {
-      const tail = '이 목록은 자원을 하나씩 끈 결과를 미리 계산해 둔 것입니다. 끊는 것, 남은 쪽이 넘치는 것, 견디는 것으로 나뉩니다.';
+      const tail = '이 목록은 자원을 하나씩 껐을 때의 결과를 미리 계산합니다. 결과는 서비스 단절, 남은 자원의 과부하, 정상 수용으로 나뉩니다.';
       if (!fault) return `${tail} 지금 설계에는 끌 자원이 아직 없습니다.`;
       const name = resourceName(resourceById(fault.id)) || fault.id;
       const verdict = fault.verdict === 'severs' ? '트래픽이 끊깁니다'
         : fault.verdict === 'overloads' ? '남은 쪽이 한계를 넘습니다' : '남은 쪽이 받아냅니다';
-      return `${tail} ${withParticle(name, 'object')} 껐습니다 — ${verdict}.`;
+      return `${tail} ${withParticle(name, 'object')} 끄면 ${verdict}`;
     },
     run: ({ fault }) => { setLeftPanel('failure'); if (fault) state.disabledDevices.add(fault.id); },
   },
   {
     title: '장비 바꾸기',
     target: '.mesh-node',
-    text: () => '노드를 오른쪽 클릭하면 데이터시트 장비를 고를 수 있습니다. 목록은 장비가 아니라 측정 조건 단위입니다 — 같은 방화벽도 1518바이트에서 20 Gbps 이고 위협 방어를 켜면 1 Gbps 입니다. 삭제, 복제, 링크 시작도 같은 메뉴에 있습니다.',
+    text: () => '노드를 오른쪽 클릭하면 데이터시트 장비를 고를 수 있습니다. 목록의 각 항목은 장비가 아니라 측정 조건을 나타냅니다. 같은 방화벽도 1518바이트 조건에서는 20 Gbps이지만, 위협 방어를 켜면 1 Gbps입니다. 삭제, 복제, 링크 연결도 같은 메뉴에서 할 수 있습니다.',
   },
   {
     title: '워크로드 조건',
     target: '#analysis-menu-button',
-    text: () => '데이터시트 숫자는 특정 조건에서 잰 값입니다. 우리 트래픽의 프레임 크기와 전송 계층을 여기 적어야 그 값을 이 설계에 쓸 수 있는지 판정합니다. 적지 않으면 그 축은 미확인으로 남습니다 — 모르는 것을 안전으로 바꾸지 않습니다.',
+    text: () => '데이터시트 수치는 특정 조건에서 측정한 값입니다. 현재 트래픽의 프레임 크기와 전송 계층을 입력하면 그 수치를 설계에 적용할 수 있는지 판단합니다. 조건을 입력하지 않은 축은 미확인으로 남습니다. 모르는 값은 안전하다고 판단하지 않습니다.',
   },
   {
     title: '결과 내보내기',
     target: '#export-menu-button',
-    text: () => '내보낸 그림에는 배율, 주입한 장애, 엔진 버전, 판정, 미확인 축 수가 함께 찍힙니다. 그래야 위키에 붙인 그림이 어느 조건에서 나온 것인지 남습니다. 프로젝트 저장은 근거와 보정까지 담은 JSON 을 냅니다.',
+    text: () => '내보낸 그림에는 배율, 주입한 장애, 엔진 버전, 판정, 미확인 축 수가 포함됩니다. 위키에 붙인 뒤에도 어떤 조건에서 나온 결과인지 확인할 수 있습니다. 프로젝트를 저장하면 근거와 보정값을 담은 JSON 파일을 만듭니다.',
   },
   {
-    title: '다 됐습니다',
+    title: '안내를 마쳤습니다',
     target: null,
-    text: () => '설계는 안내를 시작하기 전으로 되돌렸습니다. 논리 구성은 3D 토폴로지로 돌려 볼 수 있고, 실제 장비의 U 위치와 전력은 랙 배치에서 확인할 수 있습니다. 이 안내는 헤더에서 언제든 다시 열 수 있습니다.',
+    text: () => '설계를 안내 시작 전 상태로 되돌렸습니다. 3D 토폴로지에서는 논리 구성을 돌려 볼 수 있고, 랙 배치에서는 장비의 U 위치와 전력을 확인할 수 있습니다. 이 안내는 헤더에서 언제든 다시 열 수 있습니다.',
   },
 ];
 
@@ -3044,6 +3044,7 @@ function closeGuideIntro() {
   element('tour').innerHTML = '';
   delete element('tour').dataset.intro;
   element('tour-spot').hidden = true;
+  element('tour-spot').classList.remove('guide-backdrop');
 }
 
 function showGuideIntro() {
@@ -3051,24 +3052,25 @@ function showGuideIntro() {
   closeTopMenus();
   closeEditorPanel();
   guideIntroOpen = true;
+  element('tour-spot').classList.add('guide-backdrop');
+  element('tour-spot').hidden = false;
   const box = element('tour');
   box.hidden = false;
   box.dataset.intro = '';
   box.innerHTML = `<p class="tour-count">RACK MESH GUIDE</p>
-    <h2 id="tour-title">설계가 어디서 무너지는지 확인합니다</h2>
-    <p class="tour-text">용량 한계와 장애 영향을 계산하고, 같은 장비를 논리 토폴로지와 실제 랙 배치에서 함께 봅니다.</p>
-    <div class="guide-capabilities">
-      <section><b>01</b><strong>용량 한계 찾기</strong><span>어떤 장비의 어떤 축이 먼저 차는지 찾습니다.</span></section>
-      <section><b>02</b><strong>장애 영향 검증</strong><span>장비, 링크, 전원 장애 뒤의 단절과 과부하를 계산합니다.</span></section>
-      <section><b>03</b><strong>논리·물리 구성 보기</strong><span>토폴로지를 3D로 돌리고 장비를 랙의 U 위치에 배치합니다.</span></section>
-    </div>
-    <div class="guide-intro-destinations" aria-label="기능 바로 열기">
-      <button type="button" data-guide-destination="spatial">3D 토폴로지</button>
-      <button type="button" data-guide-destination="rack">랙 배치</button>
-    </div>
+    <h2 id="tour-title">인프라 설계의 한계와 장애 영향을 미리 살펴보세요</h2>
+    <p class="tour-text">영상은 용량 한계, 장애 이후의 변화, 3D 토폴로지, 실제 랙 배치를 차례로 보여 줍니다.</p>
+    <figure class="guide-preview">
+      <video autoplay muted loop playsinline preload="metadata" poster="./assets/guide-preview.webp" aria-label="용량 한계, 장애 주입, 3D 토폴로지와 랙 배치 미리보기">
+        <source src="./assets/guide-preview.webm" type="video/webm">
+        <source src="./assets/guide-preview.mp4" type="video/mp4">
+      </video>
+      <img src="./assets/guide-preview.webp" alt="3D 토폴로지에서 용량 한계를 확인하는 화면">
+      <figcaption><span>용량 한계</span><i></i><span>장애 영향</span><i></i><span>3D 토폴로지</span><i></i><span>랙 배치</span></figcaption>
+    </figure>
     <div class="tour-actions">
       <button type="button" data-guide="dismiss">직접 둘러보기</button>
-      <button type="button" data-guide="start">9단계 안내 시작</button>
+      <button type="button" data-guide="start">9단계 안내 보기</button>
     </div>`;
   box.querySelector('[data-guide="start"]').focus();
 }

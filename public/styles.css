@@ -199,25 +199,23 @@ button { color: inherit; }
 .tour[data-vertical="top"] { bottom: auto; top: 22px; }
 /* 대상 옆에 설 때는 구석 고정을 푼다. 자리는 그릴 때마다 다시 재어 인라인으로 넣는다. */
 .tour[data-anchored] { inset-inline-end: auto; inset-inline-start: auto; bottom: auto; transition: left 160ms ease-out, top 160ms ease-out; }
-.tour[data-intro] { inset: 50% auto auto 50%; width: min(720px, calc(100vw - 44px)); padding: 24px; box-shadow: 0 0 0 9999px color-mix(in srgb, var(--panel-deep) 42%, transparent), 0 18px 44px color-mix(in srgb, var(--panel-deep) 45%, transparent); transform: translate(-50%, -50%); }
-.tour[data-intro] h2 { max-width: 560px; font-size: 22px; }
+.tour[data-intro] { inset: 50% auto auto 50%; width: min(1080px, calc(100vw - 32px)); max-height: calc(100dvh - 24px); overflow: auto; padding: 30px; box-shadow: 0 24px 70px color-mix(in srgb, var(--panel-deep) 62%, transparent); transform: translate(-50%, -50%); }
+.tour[data-intro] h2 { max-width: 680px; font-size: 22px; }
 .tour[data-intro] .tour-text { max-width: 600px; }
-.guide-capabilities { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 18px; border-block: 1px solid var(--on-deep-line); }
-.guide-capabilities section { min-width: 0; padding: 15px 14px; border-right: 1px solid var(--on-deep-line); }
-.guide-capabilities section:last-child { border-right: 0; }
-.guide-capabilities b, .guide-capabilities strong, .guide-capabilities span { display: block; }
-.guide-capabilities b { color: var(--signal); font: 700 9px/1 var(--font-data); letter-spacing: .12em; }
-.guide-capabilities strong { margin-top: 10px; font: 600 13px/1.35 var(--font-ui); }
-.guide-capabilities span { margin-top: 6px; color: var(--on-deep-muted); font: 400 10px/1.5 var(--font-ui); }
-.guide-intro-destinations { display: flex; gap: 7px; margin-top: 14px; }
-.guide-intro-destinations button { min-height: 32px; padding: 0 12px; border: 1px solid var(--on-deep-line); background: transparent; color: var(--on-deep); font: 600 10px/1 var(--font-ui); cursor: pointer; }
-.guide-intro-destinations button:hover { border-color: var(--signal); color: var(--signal); }
+.guide-preview { position: relative; margin: 18px 0 0; overflow: hidden; border: 1px solid var(--on-deep-line); background: var(--panel-mid); }
+.guide-preview video, .guide-preview img { display: block; width: 100%; aspect-ratio: 8 / 5; object-fit: cover; }
+.guide-preview img { display: none; }
+.guide-preview::after { content: ''; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--on-deep) 8%, transparent); }
+.guide-preview figcaption { position: absolute; inset: auto 0 0; display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 34px; padding: 0 12px; background: color-mix(in srgb, var(--panel-deep) 88%, transparent); color: var(--on-deep-muted); font: 600 8px/1 var(--font-data); letter-spacing: .06em; }
+.guide-preview figcaption i { width: 14px; height: 1px; background: var(--signal); opacity: .7; }
 .tour[data-intro] .tour-actions [data-guide="start"] { margin-left: auto; border-color: var(--signal); background: var(--signal); color: var(--action-ink); }
 /* 설명하는 대상에 씌우는 실선 박스. 바깥을 그늘로 덮어 그 안만 남긴다. 클릭은 통과시킨다. */
 .tour-spot { position: fixed; z-index: 80; border: 2px solid var(--signal); border-radius: 0; box-shadow: 0 0 0 9999px color-mix(in srgb, var(--panel-deep) 42%, transparent); pointer-events: none; }
+.tour-spot.guide-backdrop { inset: 0; width: auto !important; height: auto !important; border: 0; background: color-mix(in srgb, var(--panel-deep) 32%, transparent); box-shadow: none; backdrop-filter: blur(8px) saturate(.72); }
 @media (prefers-reduced-motion: reduce) { .tour-spot { transition: none; } }
 @media (max-width: 760px) { .tour, .tour[data-side="left"] { inset-inline: 12px; bottom: 12px; top: auto; width: auto; } .tour[data-vertical="top"] { top: 12px; bottom: auto; } }
-@media (max-width: 760px) { .tour[data-intro] { inset: 12px; width: auto; max-height: calc(100dvh - 24px); overflow: auto; transform: none; }.guide-capabilities { grid-template-columns: 1fr; }.guide-capabilities section { padding: 11px 4px; border-right: 0; border-bottom: 1px solid var(--on-deep-line); }.guide-capabilities section:last-child { border-bottom: 0; }.guide-capabilities strong { margin-top: 5px; }.guide-intro-destinations { flex-wrap: wrap; } }
+@media (prefers-reduced-motion: reduce) { .guide-preview video { display: none; }.guide-preview img { display: block; } }
+@media (max-width: 760px) { .tour[data-intro] { inset: 12px; width: auto; max-height: calc(100dvh - 24px); padding: 20px; overflow: auto; transform: none; }.tour[data-intro] h2 { font-size: 18px; }.guide-preview { margin-top: 14px; }.guide-preview figcaption { gap: 5px; padding: 0 6px; }.guide-preview figcaption i { width: 7px; }.tour-spot.guide-backdrop { backdrop-filter: blur(5px) saturate(.78); } }
 
 .failure-grade[data-stale] { text-decoration: underline dotted var(--unknown); text-underline-offset: 3px; }
 #failure-list[data-stale] .failure-forecast { opacity: .45; text-decoration: line-through; }
