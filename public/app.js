@@ -1015,7 +1015,7 @@ function cancelTeaser() {
 
 function startTeaser() {
   const eligible = !restoredWorkingCopy && topology.template?.id === 'demo' && state.scale === 1 && !state.disabledDevices.size && !state.disabledLinks.size
-    && !state.disabledDomains.size && !reducedMotion.matches && !document.hidden;
+    && !state.disabledDomains.size && !reducedMotion.matches && !document.hidden && !tour;
   if (!eligible) return;
   try { if (sessionStorage.getItem('rack-mesh-demo-teaser')) return; sessionStorage.setItem('rack-mesh-demo-teaser', '1'); } catch { return; }
   teaserActive = true;
@@ -2962,9 +2962,9 @@ function tourTargets() {
 const TOUR_STEPS = [
   {
     title: '설계 템플릿',
-    target: '#project-menu-button',
+    target: '#new-design-button',
     // 개수를 못 박으면 설계를 더할 때마다 안내가 틀린 말을 한다. 목록에서 센다.
-    text: () => `프로젝트 메뉴에서 시작합니다. ${templates.length}개 설계가 들어 있고 각각 먼저 차는 축이 다릅니다. 3-tier 웹, DMZ 이중 방화벽, IoT 게이트웨이처럼 실제 구성을 골라 열 수 있습니다.`,
+    text: () => `설계 시작에서 출발합니다. ${templates.length}개 설계가 들어 있고 각각 먼저 차는 축이 다릅니다. 3-tier 웹, DMZ 이중 방화벽, IoT 게이트웨이처럼 실제 구성을 골라 열 수 있습니다.`,
   },
   {
     title: '워크로드 배율',
@@ -2985,7 +2985,7 @@ const TOUR_STEPS = [
   },
   {
     title: '축 미터로 용량을 정합니다',
-    target: '[data-axis-drag]',
+    target: ({ spread }) => spread ? '[data-axis-drag="' + CSS.escape(spread.high[0]) + '"][data-axis-resource="' + CSS.escape(spread.device.id) + '"]' : '[data-axis-drag]',
     text: ({ spread }) => (spread
       ? `${withParticle(resourceName(spread.device), 'object')} 골랐습니다. ${axisCatalog[spread.low[0]]?.label || spread.low[0]} ${formatPercent(spread.low[1].utilization)} 인데 ${axisCatalog[spread.high[0]]?.label || spread.high[0]} ${formatPercent(spread.high[1].utilization)} 입니다. 같은 장비인데 축마다 다릅니다. 이 막대는 읽기만 하는 그림이 아니라 좌우로 끌면 그 축의 목표 사용률이 정해지고 거기서 나온 한계값이 저장됩니다. 한계를 모르는 축은 막대를 채우지 않고 백분율도 적지 않습니다. 방향키로도 됩니다.`
       : '검사기의 축 막대는 좌우로 끌 수 있습니다. 그 축을 몇 %에 두겠다는 목표가 정해지고 거기서 나온 한계값이 저장됩니다. 한계를 모르는 축은 막대를 채우지 않고 백분율도 적지 않습니다.'),
@@ -3027,22 +3027,73 @@ const TOUR_STEPS = [
   {
     title: '다 됐습니다',
     target: null,
-    text: () => '설계는 안내를 시작하기 전으로 되돌렸습니다. 캔버스 아래 줄이 지금 무엇이 막고 있는지 계속 말해 줍니다. 이 안내는 헤더의 사용 안내로 언제든 다시 열 수 있습니다.',
+    text: () => '설계는 안내를 시작하기 전으로 되돌렸습니다. 논리 구성은 3D 토폴로지로 돌려 볼 수 있고, 실제 장비의 U 위치와 전력은 랙 배치에서 확인할 수 있습니다. 이 안내는 헤더에서 언제든 다시 열 수 있습니다.',
   },
 ];
 
 let tour = null;
+let guideIntroOpen = false;
+
+function markGuideSeen() {
+  try { localStorage.setItem('rack-mesh-guide-seen', '1'); } catch { /* 저장소 접근이 막혀도 현재 선택은 실행한다 */ }
+}
+
+function closeGuideIntro() {
+  guideIntroOpen = false;
+  element('tour').hidden = true;
+  element('tour').innerHTML = '';
+  delete element('tour').dataset.intro;
+  element('tour-spot').hidden = true;
+}
+
+function showGuideIntro() {
+  if (tour) endTour();
+  closeTopMenus();
+  closeEditorPanel();
+  guideIntroOpen = true;
+  const box = element('tour');
+  box.hidden = false;
+  box.dataset.intro = '';
+  box.innerHTML = `<p class="tour-count">RACK MESH GUIDE</p>
+    <h2 id="tour-title">설계가 어디서 무너지는지 확인합니다</h2>
+    <p class="tour-text">용량 한계와 장애 영향을 계산하고, 같은 장비를 논리 토폴로지와 실제 랙 배치에서 함께 봅니다.</p>
+    <div class="guide-capabilities">
+      <section><b>01</b><strong>용량 한계 찾기</strong><span>어떤 장비의 어떤 축이 먼저 차는지 찾습니다.</span></section>
+      <section><b>02</b><strong>장애 영향 검증</strong><span>장비, 링크, 전원 장애 뒤의 단절과 과부하를 계산합니다.</span></section>
+      <section><b>03</b><strong>논리·물리 구성 보기</strong><span>토폴로지를 3D로 돌리고 장비를 랙의 U 위치에 배치합니다.</span></section>
+    </div>
+    <div class="guide-intro-destinations" aria-label="기능 바로 열기">
+      <button type="button" data-guide-destination="spatial">3D 토폴로지</button>
+      <button type="button" data-guide-destination="rack">랙 배치</button>
+    </div>
+    <div class="tour-actions">
+      <button type="button" data-guide="dismiss">직접 둘러보기</button>
+      <button type="button" data-guide="start">9단계 안내 시작</button>
+    </div>`;
+  box.querySelector('[data-guide="start"]').focus();
+}
 
 function startTour() {
+  closeGuideIntro();
   closeTopMenus();
   closeEditorPanel();
   // 안내가 바꾸는 것은 시나리오 상태뿐이라 그대로 되돌릴 수 있다. 설계 자체는 건드리지 않는다.
   tour = {
     index: 0,
     restore: { scale: state.scale, devices: [...state.disabledDevices], links: [...state.disabledLinks],
-      selectedId: state.selectedId, leftPanel: state.leftPanel },
+      selectedId: state.selectedId, leftPanel: state.leftPanel,
+      scrollLeft: document.querySelector('.topology-scroll').scrollLeft, scrollTop: document.querySelector('.topology-scroll').scrollTop },
   };
   runTourStep(0);
+}
+
+function maybeStartTour() {
+  try {
+    if (localStorage.getItem('rack-mesh-guide-seen')) return;
+  } catch {
+    return;
+  }
+  showGuideIntro();
 }
 
 function endTour() {
@@ -3056,8 +3107,11 @@ function endTour() {
   closeMobileInspector();
   setLeftPanel(restore.leftPanel);
   element('tour-spot').hidden = true;
-  element('tour').hidden = true; element('tour').innerHTML = '';
+  element('tour').hidden = true; element('tour').innerHTML = ''; delete element('tour').dataset.intro;
   recalculate();
+  const scroll = document.querySelector('.topology-scroll');
+  scroll.scrollLeft = restore.scrollLeft;
+  scroll.scrollTop = restore.scrollTop;
 }
 
 function runTourStep(index) {
@@ -3074,19 +3128,24 @@ function runTourStep(index) {
   sweep = sweepSingleFaults(topology, { scale: state.scale }); sweepScale = state.scale;
   const targets = tourTargets();
   step.run?.(targets);
+  tour.target = typeof step.target === 'function' ? step.target(targets) : step.target;
   recalculate();
   const box = element('tour');
   box.hidden = false;
   box.innerHTML = `<p class="tour-count">${index + 1} / ${TOUR_STEPS.length}</p>
     <h2 id="tour-title">${escapeText(step.title)}</h2>
     <p class="tour-text">${escapeText(step.text(targets))}</p>
+    ${index === TOUR_STEPS.length - 1 ? `<div class="tour-destinations" aria-label="다른 작업 공간 둘러보기">
+      <button type="button" data-tour-destination="spatial"><strong>3D 토폴로지 보기</strong><span>논리 연결을 공간에서 회전합니다</span></button>
+      <button type="button" data-tour-destination="rack"><strong>랙 배치 보기</strong><span>U 위치, 전력, 케이블을 확인합니다</span></button>
+    </div>` : ''}
     <div class="tour-actions">
       <button type="button" data-tour="skip">건너뛰기</button>
       <button type="button" data-tour="prev"${index === 0 ? ' disabled' : ''}>이전</button>
       <button type="button" data-tour="next">${index === TOUR_STEPS.length - 1 ? '닫기' : '다음'}</button>
     </div>`;
   box.querySelector('[data-tour="next"]').focus();
-  const target = step.target ? document.querySelector(step.target) : null;
+  const target = tour.target ? document.querySelector(tour.target) : null;
   // 가운데로 올려야 화면 안에 든다. nearest 는 밖에 둔 채로 끝난다.
   if (target) target.scrollIntoView({ block: 'center', behavior: reducedMotion.matches ? 'auto' : 'smooth' });
   placeTourSpot();
@@ -3098,7 +3157,7 @@ function placeTourSpot() {
   const spot = element('tour-spot');
   const box = element('tour');
   const step = tour ? TOUR_STEPS[tour.index] : null;
-  const target = step?.target ? document.querySelector(step.target) : null;
+  const target = tour?.target ? document.querySelector(tour.target) : null;
   const rect = target?.getBoundingClientRect();
   // 화면 밖이라고 숨기지 않는다 — 부드러운 스크롤이 끝나면 제자리로 온다. 숨기면 그 사이에
   // 박스가 깜박이고, 스크롤이 끝난 뒤에도 다시 나타나지 않는 순간이 생긴다.
@@ -3478,6 +3537,7 @@ function applyTemplate(id) {
     documentHistory.reset(topology); recalculate(); showToast('이전 설계로 되돌렸습니다.');
     focusCanvas(current.summary.bindingResourceId);
   });
+  if (id === 'blank') setLeftPanel('palette');
   if (id === 'rack-power') {
     rackView.mode = '2d'; rackView.selectedRackId = topology.racks?.[0]?.id || null; rackView.selectedPlacementId = null;
     setWorkspace('rack');
@@ -4460,8 +4520,25 @@ element('link-layer').addEventListener('keydown', (event) => {
   if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.target.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
 });
 element('capture-baseline-button').addEventListener('click', captureBaseline);
-element('guide-button').addEventListener('click', startTour);
+element('guide-button').addEventListener('click', showGuideIntro);
 element('tour').addEventListener('click', (event) => {
+  const guideAction = event.target.closest('[data-guide]')?.dataset.guide;
+  const guideDestination = event.target.closest('[data-guide-destination]')?.dataset.guideDestination;
+  if ((guideAction || guideDestination) && guideIntroOpen) {
+    markGuideSeen();
+    closeGuideIntro();
+    if (guideAction === 'start') startTour();
+    if (guideDestination === 'rack') setWorkspace('rack');
+    if (guideDestination === 'spatial') { setWorkspace('topology'); setTopologyView('spatial'); }
+    return;
+  }
+  const destination = event.target.closest('[data-tour-destination]')?.dataset.tourDestination;
+  if (destination && tour) {
+    endTour();
+    if (destination === 'rack') setWorkspace('rack');
+    if (destination === 'spatial') { setWorkspace('topology'); setTopologyView('spatial'); }
+    return;
+  }
   const action = event.target.closest('[data-tour]')?.dataset.tour;
   if (!action || !tour) return;
   if (action === 'skip') { endTour(); return; }
@@ -4470,6 +4547,7 @@ element('tour').addEventListener('click', (event) => {
 window.addEventListener('resize', () => { if (tour) placeTourSpot(); });
 window.addEventListener('scroll', () => { if (tour) placeTourSpot(); }, true);
 document.addEventListener('keydown', (event) => {
+  if (guideIntroOpen && event.key === 'Escape') { event.preventDefault(); markGuideSeen(); closeGuideIntro(); return; }
   if (!tour) return;
   if (event.key === 'Escape') { event.preventDefault(); endTour(); }
   if (event.key === 'ArrowRight') { event.preventDefault(); runTourStep(tour.index + 1); }
@@ -5515,7 +5593,10 @@ document.querySelector('.app-shell').dataset.workspace = state.workspace;
 renderRackWorkspace();
 centerOnContent();
 startTelemetry();
-startTeaser();
+let guideSeen = false;
+try { guideSeen = localStorage.getItem('rack-mesh-guide-seen') !== null; } catch { /* 저장소 접근이 막히면 자동 안내를 생략한다 */ }
+if (guideSeen) startTeaser();
+else maybeStartTour();
 // 작업 사본이 커도 현재 시나리오를 먼저 보여 준다. 전수 분석은 첫 화면 뒤에 시작한다.
 const initialAnalysisRun = analysisRun;
 scheduleAnalysis(() => { if (analysisRun !== initialAnalysisRun) return; startAnalysis(); render(); });

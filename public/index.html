@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#e7f0ea">
+    <meta name="description" content="Rack Mesh models infrastructure constraints, capacity limits, and failure impact.">
+    <meta property="og:title" content="Rack Mesh · Infrastructure constraint simulator">
+    <meta property="og:description" content="Model infrastructure constraints, capacity limits, and failure impact.">
+    <meta property="og:type" content="website">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Cg fill='none' stroke='%23c8f135' stroke-width='1.5'%3E%3Cpath d='M6 8h24M6 18h24M6 28h24M10 5v26M26 5v26'/%3E%3C/g%3E%3Cg fill='%23c8f135'%3E%3Ccircle cx='10' cy='8' r='2'/%3E%3Ccircle cx='26' cy='18' r='2'/%3E%3Ccircle cx='10' cy='28' r='2'/%3E%3C/g%3E%3C/svg%3E">
     <title>Rack Mesh · Infrastructure constraint simulator</title>
     <link rel="stylesheet" href="./styles.css">
   </head>
@@ -40,9 +45,9 @@
           </div>
         </div>
         <div class="topbar-context">
-          <div class="workspace-switch" role="tablist" aria-label="작업 공간">
+          <div class="workspace-switch" role="tablist" aria-label="설계 작업 공간">
             <button type="button" role="tab" data-workspace="topology" aria-selected="true">토폴로지</button>
-            <button type="button" role="tab" data-workspace="rack" aria-selected="false">랙</button>
+            <button type="button" role="tab" data-workspace="rack" aria-selected="false">랙 배치</button>
           </div>
           <div class="scenario-copy">
             <strong id="scenario-title">계산 중</strong>
@@ -55,7 +60,7 @@
           </label>
         </div>
         <div class="top-actions">
-          <button class="text-button" id="guide-button" type="button" aria-label="이 도구를 읽는 법"><span class="action-icon icon-help" aria-hidden="true"></span><span class="action-label">사용 안내</span></button>
+          <button class="solid-button" id="guide-button" type="button" aria-label="이 도구를 읽는 법"><span class="action-icon icon-help" aria-hidden="true"></span><span class="action-label">사용 안내</span></button>
           <div class="top-menu-wrap">
             <button class="text-button top-menu-trigger" id="project-menu-button" type="button" aria-expanded="false" aria-controls="project-menu" aria-label="프로젝트 메뉴"><span class="action-icon icon-project" aria-hidden="true"></span><span class="action-label">프로젝트</span> <span class="menu-chevron" aria-hidden="true"></span></button>
             <div class="top-menu" id="project-menu" role="menu" aria-label="프로젝트" hidden>
@@ -87,7 +92,7 @@
             </div>
           </div>
           <div class="top-menu-wrap">
-            <button class="solid-button top-menu-trigger" id="export-menu-button" type="button" aria-expanded="false" aria-controls="export-menu" aria-label="결과 내보내기 메뉴"><span class="action-icon icon-export" aria-hidden="true"></span><span class="action-label">결과 내보내기</span> <span class="menu-chevron" aria-hidden="true"></span></button>
+            <button class="text-button top-menu-trigger" id="export-menu-button" type="button" aria-expanded="false" aria-controls="export-menu" aria-label="결과 내보내기 메뉴"><span class="action-icon icon-export" aria-hidden="true"></span><span class="action-label">결과 내보내기</span> <span class="menu-chevron" aria-hidden="true"></span></button>
             <div class="top-menu" id="export-menu" role="menu" aria-label="결과 내보내기" hidden>
               <p class="top-menu-heading">결과 내보내기<span id="export-view-state">이미지는 현재 캔버스 보기(전체)를 따릅니다.</span></p>
               <div class="top-menu-section">
@@ -191,9 +196,9 @@
                 <button type="button" data-zoom="in" aria-label="확대">+</button>
                 <button type="button" data-zoom="fit">맞춤</button>
               </div>
-              <div class="topology-view-control" id="topology-view-control" role="group" aria-label="토폴로지 표시 방식">
+              <div class="topology-view-choice"><span>보기</span><div class="topology-view-control" id="topology-view-control" role="group" aria-label="토폴로지 표시 방식">
                 <button type="button" data-topology-view="classic">기본</button><button type="button" data-topology-view="voxel">Voxel</button><button type="button" data-topology-view="spatial">3D</button>
-              </div>
+              </div></div>
               <div class="topology-live-status"><span><i></i> DETERMINISTIC MODEL</span><div class="path-readout" id="path-readout">2 DEMANDS · 4 ACTIVE PATHS</div></div>
               <button type="button" class="mobile-inspector-open" id="mobile-inspector-open">선택 장비 검사</button>
               <details class="view-settings"><summary>보기</summary><div class="layout-control" id="class-control" aria-label="클래스 배지 표시"></div></details>

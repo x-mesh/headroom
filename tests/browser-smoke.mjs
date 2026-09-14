@@ -33,7 +33,7 @@ async function clickEditorAction(page, action) {
 // 캔버스 편집은 선택·스크롤·설계를 모두 바꾸므로 깨끗한 페이지에서 따로 확인한다.
 async function verifyCanvasEditing() {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } });
-  await page.addInitScript(() => localStorage.clear());
+  await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}\n${String(error.stack).split("\n").slice(1, 4).join("\n")}`));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
@@ -387,7 +387,7 @@ async function verifyCanvasEditing() {
 // 사용자는 장비를 그려 놓고 왜 0 인지 알 수 없다 — 붙이기 전과 후를 한 페이지에서 본다.
 async function verifyBackendPool() {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } });
-  await page.addInitScript(() => localStorage.clear());
+  await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`pool console: ${message.text()}`); });
   page.on('pageerror', (error) => failures.push(`pool pageerror: ${error.message}`));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
@@ -428,7 +428,7 @@ async function verifyBackendPool() {
 
 async function verifySharedPowerTemplate() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  await page.addInitScript(() => localStorage.clear());
+  await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
   page.on('pageerror', (error) => failures.push(`shared power template pageerror: ${error.message}`));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   await page.locator('#new-design-button').click();
@@ -447,7 +447,7 @@ async function verifySharedPowerTemplate() {
 
 async function verify(viewport, screenshot, interact = false) {
   const page = await browser.newPage({ viewport });
-  await page.addInitScript(() => localStorage.clear());
+  await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}\n${String(error.stack).split("\n").slice(1, 4).join("\n")}`));
   page.on('requestfailed', (request) => failures.push(`request: ${request.url()} ${request.failure()?.errorText}`));
@@ -638,6 +638,7 @@ async function verify(viewport, screenshot, interact = false) {
   await page.locator('[data-device-id="fw-a"]').click();
   for (const id of ['fw-b', 'spine-a']) await page.locator(`[data-device-id="${id}"]`).click({ modifiers: ['Shift'] });
   const startSpots = await spots();
+  await page.locator('[data-device-id="fw-a"]').evaluate((node) => node.scrollIntoView({ block: 'center', inline: 'center' }));
   const grab = await page.locator('[data-device-id="fw-a"]').boundingBox();
   await page.mouse.move(grab.x + grab.width / 2, grab.y + 20);
   await page.mouse.down();
@@ -648,7 +649,7 @@ async function verify(viewport, screenshot, interact = false) {
   const endSpots = await spots();
   const shift = (from, to, id) => [to[id][0] - from[id][0], to[id][1] - from[id][1]];
   const led = shift(startSpots, midSpots, 'fw-a');
-  assert.ok(led[0] > 40, `끄는 동안 잡은 노드가 따라와야 한다: ${led}`);
+  assert.ok(led[0] > 40, `끄는 동안 잡은 노드가 따라와야 한다: ${led}, start=${JSON.stringify(startSpots)}, mid=${JSON.stringify(midSpots)}, grab=${JSON.stringify(grab)}`);
   for (const id of ['fw-b', 'spine-a']) {
     assert.deepEqual(shift(startSpots, midSpots, id), led, `${id} 가 끄는 동안 함께 움직여야 한다`);
     assert.deepEqual(shift(startSpots, endSpots, id), shift(startSpots, endSpots, 'fw-a'), `${id} 가 놓은 뒤에도 같은 만큼 옮겨져야 한다`);
@@ -729,6 +730,7 @@ async function verify(viewport, screenshot, interact = false) {
   }));
   await page.locator('#guide-button').click();
   await page.waitForFunction(() => document.querySelector('#tour')?.hidden === false);
+  await page.locator('[data-guide="start"]').click();
   assert.match(await page.locator('.tour-count').textContent(), /^1 \/ \d+$/);
   const tourTexts = [];
   let spotted = 0;
@@ -1838,8 +1840,19 @@ async function verifyTourAnchoring() {
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.stack || error.message}`));
   await page.addInitScript(() => window.addEventListener('error', (event) => console.error(`failure-location ${event.filename}:${event.lineno}:${event.colno}`)));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('#tour:not([hidden])');
+  assert.match(await page.locator('#tour-title').textContent(), /설계가 어디서 무너지는지/, '첫 방문은 제품 범위를 먼저 설명해야 합니다');
+  assert.equal(await page.locator('.guide-capabilities section').count(), 3, '중앙 안내는 세 가지 핵심 기능을 보여야 합니다');
+  assert.equal(await page.evaluate(() => localStorage.getItem('rack-mesh-guide-seen')), null, '선택하기 전에는 첫 방문 안내를 본 것으로 기록하지 않아야 합니다');
+  await page.locator('[data-guide="start"]').click();
+  assert.equal(await page.evaluate(() => localStorage.getItem('rack-mesh-guide-seen')), '1', '안내를 선택하면 본 상태를 저장해야 합니다');
+  await page.locator('[data-tour="skip"]').click();
+  await page.waitForFunction(() => document.querySelector('#tour')?.hidden === true);
   await page.locator('#guide-button').click();
   await page.waitForSelector('.tour');
+  await page.locator('[data-guide="start"]').click();
+  assert.equal(await page.locator('.workspace-switch [data-workspace="rack"]').textContent(), '랙 배치', '랙 기능은 상단 진입점에서 용도를 밝혀야 합니다');
+  assert.equal(await page.locator('.topology-view-choice > span').textContent(), '보기', '3D는 토폴로지 표시 방식임을 밝혀야 합니다');
   // 안내 문구가 못 박은 개수를 말하면 설계를 더할 때마다 틀린 말이 된다.
   assert.match(await page.locator('.tour-text').textContent(), new RegExp(`${templateCount}개 설계`),
     '첫 단계가 실제 설계 개수를 말해야 한다');
@@ -1868,12 +1881,22 @@ async function verifyTourAnchoring() {
     if (!(await next.isEnabled())) break;
     await next.click();
   }
+  await page.locator('#guide-button').click();
+  await page.locator('[data-guide="start"]').click();
+  for (let step = 1; step < 9; step += 1) await page.locator('[data-tour="next"]').click();
+  await page.locator('[data-tour-destination="spatial"]').click();
+  assert.equal(await page.locator('[data-topology-view="spatial"]').getAttribute('aria-pressed'), 'true', '완료 화면에서 3D 토폴로지를 열어야 합니다');
+  await page.locator('#guide-button').click();
+  await page.locator('[data-guide="start"]').click();
+  for (let step = 1; step < 9; step += 1) await page.locator('[data-tour="next"]').click();
+  await page.locator('[data-tour-destination="rack"]').click();
+  assert.equal(await page.locator('.workspace-switch [data-workspace="rack"]').getAttribute('aria-selected'), 'true', '완료 화면에서 랙 배치를 열어야 합니다');
   await page.close();
 }
 
 async function verifyVirtualFailureList() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  await page.addInitScript(() => localStorage.clear());
+  await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   const project = await page.evaluate(() => {
@@ -1905,7 +1928,7 @@ async function verifyVirtualFailureList() {
 
 async function verifyInferredSwapSlot() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  await page.addInitScript(() => localStorage.clear());
+  await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
   page.on('pageerror', (error) => failures.push(`swap slot pageerror: ${error.message}`));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
   const project = await page.evaluate(() => JSON.stringify({ schemaVersion: 3, product: 'Rack Mesh', topology: {
@@ -1949,6 +1972,7 @@ try {
     await verifyVirtualFailureList();
     await verifyInferredSwapSlot();
     const reducedPage = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+    await reducedPage.addInitScript(() => localStorage.setItem('rack-mesh-guide-seen', '1'));
     await reducedPage.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
     await reducedPage.locator('button[data-topology-view="spatial"]').click();
   assert.equal(await reducedPage.locator('.packet-dot').first().evaluate((node) => getComputedStyle(node).display), 'none');
