@@ -45,7 +45,7 @@ async function verifyLocales() {
     await page.waitForFunction((value) => document.documentElement.lang === value, locale);
     assert.equal(await page.locator('[data-language-select]').inputValue(), locale);
     assert.equal(await page.locator('#new-design-button').textContent(), expected[locale].start);
-    assert.match(await page.title(), /Rack Mesh/);
+    assert.match(await page.title(), /Headroom/);
     assert.equal(await page.locator('meta[name="description"]').getAttribute('content') !== '', true);
     if (locale !== 'ko') {
       const koreanSystemText = await page.evaluate(() => {

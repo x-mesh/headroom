@@ -1,8 +1,8 @@
-# Rack Mesh
+# Headroom
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-Rack Mesh는 토폴로지를 작성하고 인프라 제약을 분석하는 브라우저 도구입니다.
+Headroom은 토폴로지를 작성하고 인프라 제약을 분석하는 브라우저 도구입니다.
 축별 용량 한계, 장애 영향, 3D 토폴로지, 2D 및 3D 랙 배치를 보여 줍니다.
 
 실행 사이트: https://x-mesh.github.io/headroom/

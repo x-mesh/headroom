@@ -46,4 +46,14 @@ messages.content.template['ai-inference-pod'] = {
   action: 'GPU RACK 21 PDU障害を試す',
   observe: 'GPU 01からGPU 04までが同時に停止し、推論リクエスト4件が切断されます。このモデルはNIC、fabric、U、電力、宣言した電源ドメインだけを計算します。GPU演算性能、冗長PSU、冷却は計算しません。',
 };
+messages.meta = {
+  title: 'Headroom · インフラ容量と復元力の計画',
+  description: 'Headroomはインフラの制約、容量の限界、障害の影響をモデル化します。',
+  ogTitle: 'Headroom · インフラ容量と復元力の計画',
+  ogDescription: 'インフラの制約、容量の限界、障害の影響をモデル化します。',
+};
+messages.navigation.openProjectHint = 'Headroom設計ファイルを読み込みます。 · JSON';
+messages.navigation.importDeviceHint = 'HeadroomまたはNetBoxの機器情報を読み込みます。 · JSON';
+messages.report.title = 'Headroomレポート';
+messages.report.reportProduct = 'Headroom分析レポート';
 export default messages;

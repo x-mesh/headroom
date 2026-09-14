@@ -1,4 +1,4 @@
-name: Deploy Rack Mesh to GitHub Pages
+name: Deploy Headroom to GitHub Pages
 
 on:
   push:

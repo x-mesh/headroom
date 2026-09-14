@@ -12,6 +12,14 @@ test('round trips topology and scenario without changing calculation', () => {
   assert.deepEqual(calculateScenario(restored.topology, restored.scenario), calculateScenario(topology, scenario));
 });
 
+test('writes Headroom projects and keeps Rack Mesh project files compatible', () => {
+  const current = createProject(cloneTopology());
+  assert.equal(current.product, 'Headroom');
+  const legacy = { ...current, product: 'Rack Mesh' };
+  assert.deepEqual(parseProject(legacy).topology, current.topology);
+  assert.throws(() => parseProject({ ...current, product: 'Unknown product' }), /Headroom/);
+});
+
 test('rejects future schema and unknown disabled resources', () => {
   const project = createProject(cloneTopology());
   assert.throws(() => parseProject({ ...project, schemaVersion: 4 }), /newer/);

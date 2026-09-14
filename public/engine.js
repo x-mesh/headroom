@@ -1157,7 +1157,7 @@ export function createExport(topology, scenario, baseline, options = {}) {
     })),
   };
   return {
-    schemaVersion: 3, engineVersion: ENGINE_VERSION, product: 'Rack Mesh',
+    schemaVersion: 3, engineVersion: ENGINE_VERSION, product: 'Headroom',
     exportedAt: new Date().toISOString(), synthetic: Boolean(topology.synthetic),
     topology: { ...structuredClone(topology), deviceCount: topology.devices.length, linkCount: topology.links.length, demandCount: topology.demands.length },
     ...(topology.observedLoad ? { observedLoad: structuredClone(topology.observedLoad) } : {}),

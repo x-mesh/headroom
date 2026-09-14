@@ -15,6 +15,13 @@ try {
     assert.equal(response.status, 200, `${path} must load`);
     assert.ok((await response.text()).length > 100, `${path} must have content`);
   }
+  const document = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const baseHref = document.match(/<base href="([^"]+)">/)?.[1];
+  assert.equal(baseHref, './', 'the document must resolve assets from its deployed directory');
+  for (const asset of document.matchAll(/<(?:link|script) [^>]+(?:href|src)="([^"]+)"/g)) {
+    const resolved = new URL(asset[1], `${base}/headroom/`);
+    if (asset[1].startsWith('./')) assert.equal(resolved.pathname.startsWith('/headroom/'), true, `${asset[1]} must retain the Pages project path`);
+  }
   // 서버가 내주는 것과 배포 이미지가 담는 것이 같아야 한다. 예전에는 /vendor/three.module.js
   // 를 node_modules 에서 대신 내줘서, 스모크는 통과하는데 운영에서는 404 가 났다.
   const shipped = ['/vendor/three.module.js', '/vendor/three.core.js', '/vendor/mx-edge-style.js', '/fonts/Pretendard-Regular.woff2'];

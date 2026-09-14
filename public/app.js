@@ -3787,13 +3787,13 @@ async function exportPng(anonymize = false) {
     const context = canvas.getContext('2d'); context.scale(canvas.width / image.naturalWidth, canvas.height / image.naturalHeight); context.drawImage(image, 0, 0);
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
     if (!blob) throw new Error('PNG 인코딩에 실패했습니다.');
-    const pngUrl = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = pngUrl; anchor.download = anonymize ? 'rack-mesh-diagram-anonymized.png' : 'rack-mesh-diagram.png'; anchor.click(); setTimeout(() => URL.revokeObjectURL(pngUrl), 0);
+    const pngUrl = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = pngUrl; anchor.download = anonymize ? 'headroom-diagram-anonymized.png' : 'headroom-diagram.png'; anchor.click(); setTimeout(() => URL.revokeObjectURL(pngUrl), 0);
     showToast(anonymize ? '장비명을 익명화한 PNG로 내보냈습니다.' : '설계 화면을 PNG로 내보냈습니다.');
   } finally { URL.revokeObjectURL(url); }
 }
 
 function saveProject() {
-  downloadText('rack-mesh-project.json', serializeProject(topology, { ...state, baseline: baselineSnapshot }));
+  downloadText('headroom-project.json', serializeProject(topology, { ...state, baseline: baselineSnapshot }));
   documentHistory.markSaved();
   showToast('프로젝트 JSON을 저장했습니다.');
 }
@@ -3834,11 +3834,11 @@ function handleEditorAction(action) {
   if (action === 'fill-capacity') { openCapacityFill(); return; }
   if (action === 'export-svg') {
     if (analysisProgress && detailView.level !== 'off') showToast(`${analysisProgress.label} 계산 중 ${analysisProgress.completed}/${analysisProgress.total} · 완료 후 내보낼 수 있습니다.`);
-    else { downloadText('rack-mesh-diagram.svg', diagramSvg(), 'image/svg+xml'); showToast(`현재 ${detailView.level === 'off' ? '구성도' : detailView.level === 'brief' ? '요약' : '전체'} 보기로 SVG를 내보냈습니다.`); }
+    else { downloadText('headroom-diagram.svg', diagramSvg(), 'image/svg+xml'); showToast(`현재 ${detailView.level === 'off' ? '구성도' : detailView.level === 'brief' ? '요약' : '전체'} 보기로 SVG를 내보냈습니다.`); }
   }
   if (action === 'export-svg-anonymized') {
     if (analysisProgress && detailView.level !== 'off') showToast(`${analysisProgress.label} 계산 중 ${analysisProgress.completed}/${analysisProgress.total} · 완료 후 내보낼 수 있습니다.`);
-    else { downloadText('rack-mesh-diagram-anonymized.svg', diagramSvg(true), 'image/svg+xml'); showToast('현재 보기에서 장비명을 익명화한 SVG를 내보냈습니다.'); }
+    else { downloadText('headroom-diagram-anonymized.svg', diagramSvg(true), 'image/svg+xml'); showToast('현재 보기에서 장비명을 익명화한 SVG를 내보냈습니다.'); }
   }
   if (action === 'export-png') {
     if (analysisProgress && detailView.level !== 'off') showToast(`${analysisProgress.label} 계산 중 ${analysisProgress.completed}/${analysisProgress.total} · 완료 후 내보낼 수 있습니다.`);
@@ -3914,7 +3914,7 @@ function exportResult() {
   const payload = createExport(topology, current, baseline, { survivalMultiplier: survival, sweep, domainSweep });
   const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
   const anchor = document.createElement('a');
-  anchor.href = url; anchor.download = 'rack-mesh-scenario.json'; anchor.click();
+  anchor.href = url; anchor.download = 'headroom-scenario.json'; anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 0);
   showToast('결과 JSON을 내보냈습니다.');
 }
@@ -3922,7 +3922,7 @@ function exportResult() {
 function exportReport(format) {
   if (analysisProgress) { showToast(analysisProgress.label + ' 계산 중 ' + analysisProgress.completed + '/' + analysisProgress.total + ' · 완료 후 내보낼 수 있습니다.'); return; }
   const model = buildReportModel(topology, current, baseline, state.namedScenarios, scenarioOptions(), { survivalMultiplier: survival, domainSweep });
-  const renderers = { markdown: [renderReportMarkdown, 'rack-mesh-report.md', 'text/markdown'], html: [renderReportHtml, 'rack-mesh-report.html', 'text/html'], json: [renderReportJson, 'rack-mesh-report.json', 'application/json'] };
+  const renderers = { markdown: [renderReportMarkdown, 'headroom-report.md', 'text/markdown'], html: [renderReportHtml, 'headroom-report.html', 'text/html'], json: [renderReportJson, 'headroom-report.json', 'application/json'] };
   const [render, filename, type] = renderers[format];
   downloadText(filename, render(model), type);
   showToast('분석 보고서 ' + format.toUpperCase() + '을 내보냈습니다.');

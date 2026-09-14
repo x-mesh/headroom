@@ -1,8 +1,8 @@
-# Rack Mesh
+# Headroom
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-Rack Mesh is a browser tool for topology authoring and infrastructure constraint analysis.
+Headroom is a browser tool for topology authoring and infrastructure constraint analysis.
 It shows independent capacity axes, fault impact, 3D topology, and 2D or 3D rack placement.
 
 Live site: https://x-mesh.github.io/headroom/
@@ -13,7 +13,7 @@ You can draw a topology, set workload conditions, inject faults, and inspect the
 You can place topology devices and standalone equipment in 2D or 3D racks.
 You can export a project file, a diagram, and human-readable reports.
 
-Rack Mesh keeps calculations local to the browser.
+Headroom keeps calculations local to the browser.
 It uses synthetic demonstration data unless you import your own project or evidence.
 
 ## Limits

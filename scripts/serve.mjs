@@ -48,5 +48,5 @@ function watchRoot() {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (dev) watchRoot();
-  server.listen(port, host, () => console.log(`Rack Mesh: http://${host}:${port}${dev ? ' (reload on)' : ''}`));
+  server.listen(port, host, () => console.log(`Headroom: http://${host}:${port}${dev ? ' (reload on)' : ''}`));
 }

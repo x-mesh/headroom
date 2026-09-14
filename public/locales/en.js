@@ -191,5 +191,15 @@ messages.dynamic.overloadedState = 'over capacity';
 messages.dynamic.tightState = 'the tightest point';
 messages.dynamic.poolShareExact = 'Pool {size} devices · {percent}%';
 messages.dynamic.poolShareRange = 'Pool {size} devices · {low}–{high}%';
+messages.meta = {
+  title: 'Headroom · Infrastructure capacity and resilience planning',
+  description: 'Headroom models infrastructure constraints, capacity limits, and failure impact.',
+  ogTitle: 'Headroom · Infrastructure capacity and resilience planning',
+  ogDescription: 'Model infrastructure constraints, capacity limits, and failure impact.',
+};
+messages.navigation.openProjectHint = 'Load a Headroom project file. · JSON';
+messages.navigation.importDeviceHint = 'Read Headroom or NetBox device data. · JSON';
+messages.report.title = 'Headroom report';
+messages.report.reportProduct = 'Headroom analysis report';
 
 export default messages;

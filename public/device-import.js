@@ -26,7 +26,7 @@ function performanceTemplate(profile, options) {
   return {
     schema: 'rack-mesh-performance', id: String(profile.profile_id || ref.model || 'imported-device').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
     name: [ref.manufacturer, ref.model].filter(Boolean).join(' ') || 'Imported device', vendor: ref.manufacturer || '', model: ref.model || '', kind: profile.class || 'switch', zone: 'UNASSIGNED', limits,
-    source: { type: profile.limits[0]?.source?.type || 'estimate', label: 'Rack Mesh performance profile', condition: 'Imported conditions are preserved in metadata' },
+    source: { type: profile.limits[0]?.source?.type || 'estimate', label: 'Headroom performance profile', condition: 'Imported conditions are preserved in metadata' },
     metadata: { deviceRef: ref, revision: profile.revision || null, limits: structuredClone(profile.limits), records, digest: evidenceDigest(records), ...(options.conditionId ? { conditionSelection: 'explicit-profile' } : {}) },
   };
 }
@@ -59,5 +59,5 @@ export function importDeviceDefinition(value, options = {}) {
   if (input.schema === 'rack-mesh-device' && input.name && object(input.limits)) {
     return { ...structuredClone(input), id: String(input.id || input.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') };
   }
-  throw new Error('Unsupported device definition. Use Rack Mesh performance, Rack Mesh device, or NetBox device type JSON');
+  throw new Error('Unsupported device definition. Use Headroom performance, Headroom device, or NetBox device type JSON');
 }

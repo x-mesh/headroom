@@ -6,6 +6,7 @@ import { canonicalDrawioSvgAsset } from './drawio-import.js';
 
 export const PROJECT_SCHEMA_VERSION = 3;
 const SUPPORTED_SCHEMAS = new Set([1, 2, 3]);
+const PROJECT_PRODUCTS = new Set(['Headroom', 'Rack Mesh']);
 
 // v1 은 링크 용량을 양방향 합산으로 읽히던 파일이다. 숫자는 그대로 두고 의미만 바로잡는다.
 // 인스펙터가 처음부터 그 입력을 방향별 용량이라고 라벨링해 왔으므로 값이 틀린 게 아니다.
@@ -201,7 +202,7 @@ function validateRackPlacements(topology, deviceIds) {
 
 export function createProject(topology, scenario = {}) {
   const project = {
-    schemaVersion: PROJECT_SCHEMA_VERSION, product: 'Rack Mesh',
+    schemaVersion: PROJECT_SCHEMA_VERSION, product: 'Headroom',
     topology: structuredClone(topology),
     scenario: {
       scale: scenario.scale ?? 1,
@@ -223,7 +224,7 @@ export function validateProject(input) {
     if (Number(input.schemaVersion) > PROJECT_SCHEMA_VERSION) throw new Error(`Project schema ${input.schemaVersion} is newer than supported schema ${PROJECT_SCHEMA_VERSION}`);
     throw new Error(`Unsupported project schema ${input.schemaVersion}`);
   }
-  if (input.product !== 'Rack Mesh') throw new Error('Project product must be Rack Mesh');
+  if (!PROJECT_PRODUCTS.has(input.product)) throw new Error('Project product must be Headroom');
   if (!plainObject(input.topology)) throw new Error('Project topology is required');
   const topology = structuredClone(input.topology);
   if (!Array.isArray(topology.devices) || !Array.isArray(topology.links) || !Array.isArray(topology.demands)) throw new Error('Topology requires devices, links, and demands');
@@ -329,7 +330,7 @@ export function validateProject(input) {
   if (disabledLinks.some((id) => !linkIds.has(id))) throw new Error('disabledLinks contains an unknown link');
   calculateScenario(topology, { scale, disabledDevices, disabledLinks, disabledDomains });
   return {
-    schemaVersion: PROJECT_SCHEMA_VERSION, product: 'Rack Mesh',
+    schemaVersion: PROJECT_SCHEMA_VERSION, product: 'Headroom',
     ...(input.schemaVersion === PROJECT_SCHEMA_VERSION ? {} : { migratedFrom: input.schemaVersion }),
     topology,
     scenario: { scale, disabledDevices, disabledLinks, disabledDomains, viewMode, selectedId: scenario.selectedId == null ? null : String(scenario.selectedId), ...(baseline ? { baseline } : {}), ...(namedScenarios ? { namedScenarios } : {}) },

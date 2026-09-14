@@ -34,6 +34,16 @@ messages.content.bundled = { 'pdu-3': 'PDU-3 SPINE 공용 전원' };
 messages.dynamic.overloadedState = '한계를 넘었습니다';
 messages.dynamic.tightState = '가장 빠듯합니다';
 messages.dynamic.unreachable = '경로 단절';
+messages.meta = {
+  title: 'Headroom · 인프라 용량 및 복원력 계획',
+  description: 'Headroom은 인프라 제약, 용량 한계, 장애 영향을 모델링합니다.',
+  ogTitle: 'Headroom · 인프라 용량 및 복원력 계획',
+  ogDescription: '인프라 제약, 용량 한계, 장애 영향을 모델링합니다.',
+};
+messages.navigation.openProjectHint = 'Headroom 설계 파일을 불러옵니다. · JSON';
+messages.navigation.importDeviceHint = 'Headroom 또는 NetBox 장비 정보를 읽습니다. · JSON';
+messages.report.title = 'Headroom 보고서';
+messages.report.reportProduct = 'Headroom 분석 보고서';
 messages.content.template['ai-inference-pod'] = {
   name: 'AI 추론 Pod',
   summary: 'GPU 8대가 두 랙, 두 팹릭 plane, 랙별 PDU 하나에 배치된 추론 구성입니다.',

@@ -4,12 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#e7f0ea">
-    <meta name="description" content="Rack Mesh models infrastructure constraints, capacity limits, and failure impact.">
-    <meta property="og:title" content="Rack Mesh · Infrastructure constraint simulator">
+    <meta name="description" content="Headroom models infrastructure constraints, capacity limits, and failure impact.">
+    <meta property="og:title" content="Headroom · Infrastructure capacity and resilience planning">
     <meta property="og:description" content="Model infrastructure constraints, capacity limits, and failure impact.">
     <meta property="og:type" content="website">
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Cg fill='none' stroke='%23c8f135' stroke-width='1.5'%3E%3Cpath d='M6 8h24M6 18h24M6 28h24M10 5v26M26 5v26'/%3E%3C/g%3E%3Cg fill='%23c8f135'%3E%3Ccircle cx='10' cy='8' r='2'/%3E%3Ccircle cx='26' cy='18' r='2'/%3E%3Ccircle cx='10' cy='28' r='2'/%3E%3C/g%3E%3C/svg%3E">
-    <title data-i18n-title="meta.title">Rack Mesh · Infrastructure constraint simulator</title>
+    <base href="./">
+    <title data-i18n-title="meta.title">Headroom · Infrastructure capacity and resilience planning</title>
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
@@ -17,14 +18,14 @@
     <main class="app-shell" id="workspace">
       <header class="topbar">
         <div class="brand-area">
-          <div class="brand" aria-label="Rack Mesh">
+          <div class="brand" aria-label="Headroom">
             <svg class="brand-mark" viewBox="0 0 36 36" aria-hidden="true">
               <path d="M6 8h24M6 18h24M6 28h24M10 5v26M26 5v26"/>
               <circle cx="10" cy="8" r="2"/><circle cx="26" cy="18" r="2"/><circle cx="10" cy="28" r="2"/>
             </svg>
             <div>
-              <strong>RACK MESH</strong>
-              <span>INFRASTRUCTURE CONSTRAINT SIMULATOR</span>
+              <strong>HEADROOM</strong>
+              <span>CAPACITY &amp; RESILIENCE PLANNING</span>
             </div>
           </div>
           <div class="top-menu-wrap start-design-wrap">
@@ -75,7 +76,7 @@
               <div class="top-menu-section">
                 <details class="top-menu-disclosure">
                   <summary>고급 가져오기 <small>외부 장비와 관측 자료를 적용합니다. · 4개</small></summary>
-                  <button type="button" role="menuitem" data-editor-action="import-device"><strong>장비 데이터</strong><small>Rack Mesh 또는 NetBox 장비 정보를 읽습니다. · JSON</small></button>
+                  <button type="button" role="menuitem" data-editor-action="import-device"><strong>장비 데이터</strong><small data-i18n="navigation.importDeviceHint">Headroom 또는 NetBox 장비 정보를 읽습니다. · JSON</small></button>
                   <button type="button" role="menuitem" data-editor-action="import-measured-limits"><strong>실측 한계</strong><small>포화 증거가 있는 한계만 적용합니다. · JSON</small></button>
                   <button type="button" role="menuitem" data-editor-action="import-observed-load"><strong>관측 부하</strong><small>현재 자원 부하 스냅샷을 적용합니다. · JSON</small></button>
                   <button type="button" role="menuitem" data-editor-action="import-zabbix-observed-load"><strong>Zabbix 관측 부하</strong><small>공식 템플릿 key 또는 명시한 host·item key 매핑만 적용합니다. · JSON</small></button>
