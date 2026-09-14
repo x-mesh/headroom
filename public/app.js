@@ -1,3 +1,4 @@
+import { formatNumber as formatLocaleNumber, initializeI18n, localizeError, localizedBundledLabel, localizedTemplate, localizeRenderedDocument, selectLocale, t } from './i18n.js';
 import { axisCatalog, behaviorCatalog, cloneTopology, failureDomainKinds } from './data.js';
 import { calculateScenario, calculateSurvivalMultiplier, compareScenarios, createExport, createFailureDomainSweepTask, createSingleFaultSweepTask, createSurvivalMultiplierTask, ENGINE_VERSION, rackUsage, sweepFailureDomains, sweepSingleFaults } from './engine.js';
 import { acceptEvidence, addDemand, addDevice, addLink, applySpec, applySpecToKind, clearEvidenceAcceptance, moveDevice, normalizeId, promoteConnector, removeDemand, removeDevice, removeLink, setDevicePower, setLimitOverride, setWorkloadConditions, updateDemand, updateDevice, updateLink } from './editor.js';
@@ -101,24 +102,25 @@ let rackDragPreviewFrame = null;
 let rackDropPreviewKey = '';
 
 const element = (id) => document.getElementById(id);
+initializeI18n();
 if (mobileLayout.matches) document.querySelector('.view-settings')?.removeAttribute('open');
-const formatPercent = (value, signed = false) => value == null ? '미확인' : `${signed && value > 0 ? '+' : ''}${Math.round(value * 100)}%`;
+const formatPercent = (value, signed = false) => value == null ? t('common.unknown') : `${signed && value > 0 ? '+' : ''}${formatLocaleNumber(value, { style: 'percent', maximumFractionDigits: 0 })}`;
 // reference 는 자릿수와 단위를 정하는 기준이다. 떨리는 값이 그것까지 정하면 1 Gbps 언저리에서
 // Mbps 와 Gbps 를 오가며 글자 수가 바뀐다. 값만 흔들리고 모양은 고정돼야 읽힌다.
 const formatCompact = (value, unit, reference = value) => {
-  if (value == null) return '미확인';
+  if (value == null) return t('common.unknown');
   const anchor = reference ?? value;
   if (unit === 'bps') return anchor >= 1e9 ? `${(value / 1e9).toFixed(anchor >= 10e9 ? 0 : 1)} Gbps` : `${(value / 1e6).toFixed(0)} Mbps`;
   if (unit === 'pps') return anchor >= 1e6 ? `${(value / 1e6).toFixed(2)} Mpps` : `${(value / 1e3).toFixed(0)} Kpps`;
   if (unit === 'cps') return `${(value / 1e3).toFixed(0)} Kcps`;
   if (unit === 'sessions') return `${(value / 1e3).toFixed(0)} K`;
-  return new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 1 }).format(value);
+  return formatLocaleNumber(value, { maximumFractionDigits: 1 });
 };
 
 function deviceById(id) { return current.devices.find((item) => item.id === id); }
 function linkById(id) { return current.links.find((item) => item.id === id); }
 function resourceById(id) { return deviceById(id) || linkById(id); }
-function stateLabel(status) { return ({ healthy: '정상', warning: '주의', overloaded: '용량 초과', unknown: '한계 미확인', invalid: '입력 오류' })[status] || status; }
+function stateLabel(status) { return t('status.' + status) || status; }
 
 // light 는 배율 슬라이더를 끄는 동안만 쓴다. 자원 하나씩 끄는 훑기와 자동 저장을 건너뛰므로
 // 장애 예보가 한 배율 뒤처진다. 그 사실을 화면에 표시하고, 슬라이더에서 손을 떼면 전체 경로가 돈다.
@@ -265,7 +267,7 @@ function withParticle(word, kind) {
 }
 
 function resourceName(resource) {
-  if (resource.name) return resource.name;
+  if (resource.name) return localizedBundledLabel(resource.id, resource.name, topology.synthetic && ['demo', 'dual-fabric'].includes(topology.template?.id));
   if (resource.source && resource.target) {
     const endpoint = (id) => current.devices.find((device) => device.id === id)?.name || id.toUpperCase();
     return `${endpoint(resource.source)} → ${endpoint(resource.target)}`;
@@ -285,7 +287,7 @@ function redundancySentence() {
   if (sweep.severs > 0) {
     const first = sweep.resources.find(({ verdict, endpoint }) => verdict === 'severs' && !endpoint);
     const name = resourceName(resourceById(first.id) || first);
-    return `단일 장애점이 ${sweep.severs}개 있습니다. ${name} 하나만 죽어도 트래픽이 끊깁니다.`;
+    return t('dynamic.singlePointSentence', { count: sweep.severs, name });
   }
   if (sweep.overloads > 0) {
     const worst = sweep.resources
@@ -293,23 +295,23 @@ function redundancySentence() {
       .sort((a, b) => a.minDeliveredRatio - b.minDeliveredRatio)[0];
     const name = resourceName(resourceById(worst.id) || worst);
     return worst.minDeliveredRatio < 1
-      ? `끊기는 자원은 없습니다. 다만 ${name}를 끄면 ${Math.round(worst.minDeliveredRatio * 100)}%만 전달됩니다.`
-      : `끊기는 자원은 없습니다. 다만 ${name}를 끄면 남은 쪽이 한계를 넘습니다.`;
+      ? t('dynamic.overloadSentence', { name, percent: formatPercent(worst.minDeliveredRatio) })
+      : t('dynamic.overloadCapacitySentence', { name });
   }
-  if (sweep.bounded > 0) return '어느 하나가 죽어도 견디는 것으로 보이나, 한계를 모르는 축이 남아 있습니다.';
-  return '어느 자원 하나가 죽어도 남은 쪽이 견딥니다.';
+  if (sweep.bounded > 0) return t('dynamic.boundedSentence');
+  return t('dynamic.survivesSentence');
 }
 
 function renderBottleneck() {
   const parts = [];
-  if (current.summary.evaluationStatus === 'invalid') parts.push('입력 오류가 있어 설계 생존성을 판정할 수 없습니다.');
-  else if (current.summary.evaluationStatus === 'not-ready') parts.push('서비스 수요 또는 검증 대상이 없어 생존성 판정을 시작할 수 없습니다.');
-  else if (current.summary.evaluationStatus === 'unknown') parts.push(`미확인 제약 ${current.summary.unknownCount || 0}개 때문에 통과 판정은 보류됩니다.`);
+  if (current.summary.evaluationStatus === 'invalid') parts.push(t('dynamic.invalidInput'));
+  else if (current.summary.evaluationStatus === 'not-ready') parts.push(t('dynamic.notReady'));
+  else if (current.summary.evaluationStatus === 'unknown') parts.push(t('dynamic.unknownConstraint', { count: current.summary.unknownCount || 0 }));
   const binding = current.summary.bindingResourceId
     ? [...current.devices, ...current.links].find(({ id }) => id === current.summary.bindingResourceId)
     : null;
   if (!binding) {
-    parts.push('한계를 아는 축이 없습니다. 장비를 눌러 한계값을 넣으면 어디가 먼저 차는지 계산합니다.');
+    parts.push(t('dynamic.noKnownLimit'));
   } else {
     const axisKey = current.summary.bindingAxis;
     const axis = binding.axes[axisKey];
@@ -317,17 +319,18 @@ function renderBottleneck() {
     const direction = binding.bindingDirection ? `${binding.bindingDirection === 'forward' ? '정방향 ' : '역방향 '}` : '';
     const suffix = AXIS_UNIT_SUFFIX[catalog.unit] || '';
     const scale = `${formatCompact(axis.load, catalog.unit)} / ${formatCompact(axis.limit, catalog.unit)}${suffix}`;
-    parts.push(`${resourceName(binding)}의 ${withParticle(`${direction}${catalog.label}`, 'subject')} ${axis.status === 'overloaded' ? '한계를 넘었습니다' : '가장 빠듯합니다'}.`);
-    parts.push(`${withParticle(scale, 'instrumental')} ${formatPercent(axis.utilization)}입니다.`);
+    const stateText = axis.status === 'overloaded' ? t('dynamic.overloadedState') : t('dynamic.tightState');
+    parts.push(t('dynamic.bottleneck', { name: resourceName(binding), axis: `${direction}${catalog.label}`, state: stateText }));
+    parts.push(t('dynamic.utilization', { scale, percent: formatPercent(axis.utilization) }));
   }
-  if (current.summary.droppedLoadBps > 0) parts.push(`용량 병목에서 ${formatCompact(current.summary.droppedLoadBps, 'bps')}가 드롭됩니다.`);
-  if (current.summary.refusedSessionsPerSec > 0) parts.push(`신규 세션 ${formatCompact(current.summary.refusedSessionsPerSec, 'cps')}가 거절됩니다. 이미 맺힌 연결은 계속 흐릅니다.`);
-  if (current.summary.unreachableCount > 0) parts.push(`경로 단절로 ${formatCompact(current.summary.unreachableLoadBps, 'bps')}가 미전달되고 demand ${current.summary.unreachableCount}개가 끊겼습니다.`);
+  if (current.summary.droppedLoadBps > 0) parts.push(t('dynamic.droppedSentence', { value: formatCompact(current.summary.droppedLoadBps, 'bps') }));
+  if (current.summary.refusedSessionsPerSec > 0) parts.push(t('dynamic.refusedSentence', { value: formatCompact(current.summary.refusedSessionsPerSec, 'cps') }));
+  if (current.summary.unreachableCount > 0) parts.push(t('dynamic.unreachableSentence', { value: formatCompact(current.summary.unreachableLoadBps, 'bps'), count: current.summary.unreachableCount }));
   if (current.demands.some(({ deliveredRatioBound }) => deliveredRatioBound === 'upper')) {
-    parts.push('한계를 모르는 축이 있어 전달률은 상한값입니다.');
+    parts.push(t('dynamic.upperBoundSentence'));
   }
   if (current.demands.some(({ deliveredRatioBound }) => deliveredRatioBound === 'indeterminate')) {
-    parts.push('동일 비용 경로가 계산 한도를 넘어 일부만 열거했습니다. 이 결과로 생존성을 판정할 수 없습니다.');
+    parts.push(t('dynamic.indeterminateSentence'));
   }
   if (!['invalid', 'not-ready'].includes(current.summary.evaluationStatus)) parts.push(redundancySentence());
   element('bottleneck-note').textContent = parts.filter(Boolean).join(' ');
@@ -428,11 +431,11 @@ function renderClassControl() {
       <span>${escapeText(label)}</span>
       ${choices.map(([value, text]) => `<button type="button" data-${attribute}="${value}" aria-pressed="${current === value}">${escapeText(text)}</button>`).join('')}
     </div>`;
-  element('class-control').innerHTML = group('배지', 'class-badge', classView.badge, [['off', '끔'], ['on', '켬']])
-    + group('미확정 표시', 'number-motion', motionView.drift, [['off', '끔'], ['on', '켬']])
-    + group('표시 정보', 'node-detail', detailView.level, [['off', '구성도'], ['brief', '요약'], ['full', '전체']])
-    + group('선', 'link-route', routeView.mode, [['straight', '직선'], ['orthogonal', '직각'], ['curved', '곡선']]);
-  element('export-view-state').textContent = `이미지는 현재 캔버스 보기(${({ off: '구성도', brief: '요약', full: '전체' })[detailView.level]})를 따릅니다.`;
+  element('class-control').innerHTML = group(t('dynamic.badges'), 'class-badge', classView.badge, [['off', t('common.none')], ['on', t('common.apply')]])
+    + group(t('dynamic.motion'), 'number-motion', motionView.drift, [['off', t('common.none')], ['on', t('common.apply')]])
+    + group(t('dynamic.details'), 'node-detail', detailView.level, [['off', t('dynamic.diagram')], ['brief', t('dynamic.summary')], ['full', t('dynamic.full')]])
+    + group(t('dynamic.line'), 'link-route', routeView.mode, [['straight', t('dynamic.straight')], ['orthogonal', t('dynamic.orthogonal')], ['curved', t('dynamic.curved')]]);
+  element('export-view-state').textContent = t('dynamic.exportView', { view: ({ off: t('dynamic.diagram'), brief: t('dynamic.summary'), full: t('dynamic.full') })[detailView.level] });
 }
 
 function applyTopologyView() {
@@ -523,7 +526,7 @@ function renderLearningPanel() {
   const cliff = evidenceCliff();
   if (cliff) {
     panel.hidden = false;
-    panel.innerHTML = `<strong>다음에 할 일</strong>${escapeText(cliff.text)}
+    panel.innerHTML = `<strong>${escapeText(t('guide.nextAction'))}</strong>${escapeText(cliff.text)}
       <div><button type="button" data-lesson-action="workload">${escapeText(cliff.label)}</button></div>`;
     return;
   }
@@ -539,19 +542,18 @@ function renderLearningPanel() {
     observe: forecast ? faultForecast(forecast, { includeBoundary: true }) : '장애 결과를 계산합니다.',
   } : lesson.experiment;
   panel.hidden = false;
-  panel.innerHTML = `<strong>이 설계에서 확인할 것</strong>${escapeText(lesson.teaches)}
+  panel.innerHTML = `<strong>${escapeText(t('guide.lessonHeading'))}</strong>${escapeText(lesson.teaches)}
     ${experiment ? `<div><span>${escapeText(experiment.prompt)}</span><br><button type="button" data-lesson-action="${escapeAttribute(experiment.action.type)}" data-lesson-id="${escapeAttribute(experiment.action.id || '')}" data-lesson-value="${escapeAttribute(experiment.action.value ?? '')}">${escapeText(experiment.action.label)}</button><output${lessonRevealed ? '' : ' hidden'}>${escapeText(experiment.observe)}</output></div>` : ''}`;
 }
 
 // 헤더는 지금 열려 있는 설계를 말해야 한다. 시작 복원과 undo/redo 는 loadTopology 를 거치지
 // 않으므로 불러오기가 아니라 렌더에서 갱신한다.
 function renderScenarioCopy() {
-  element('scenario-title').textContent = topology.template?.name || topology.name || '이름 없는 설계';
+  element('scenario-title').textContent = topology.template?.name || topology.name || t('common.unknown');
+  const copyKey = topology.synthetic ? 'dynamic.syntheticDemo' : 'dynamic.userDesign';
   element('scenario-subtitle').textContent = [
-    topology.synthetic ? '합성 데모' : '사용자 설계',
-    `장비 ${topology.devices.length} · 링크 ${topology.links.length}`,
-    '정상 상태 계산',
-  ].join(' · ');
+    t(copyKey, { devices: topology.devices.length, links: topology.links.length }),
+  ].join('');
   // 경로 몫은 경로 수로 1/N 이 아니라 홉마다의 갈래 수로 나눈다. 범례가 엔진과 같은 말을 해야 한다.
   element('calculation-note').textContent = `DETERMINISTIC · HOP-BRANCH WEIGHTED · ENGINE ${ENGINE_VERSION}`;
 }
@@ -579,6 +581,7 @@ function render() {
   previousBindingKey = bindingKey;
   document.querySelector('[data-editor-action="undo"]').disabled = !documentHistory.canUndo;
   document.querySelector('[data-editor-action="redo"]').disabled = !documentHistory.canRedo;
+  localizeRenderedDocument();
 }
 
 function currentRack() { return (topology.racks || []).find(({ id }) => id === rackView.selectedRackId) || null; }
@@ -624,13 +627,13 @@ function renderRackEquipmentPalette() {
   element('rack-equipment-palette').innerHTML = `<section><h3>토폴로지 장비 <span>${available.length}</span></h3>${mapped}</section><section><h3>랙 전용 장비</h3>${standalone}</section>`;
 }
 
-const POWER_BASIS_LABEL = Object.freeze({ nameplate: '명판값', typical: '일반 부하', measured: '실측' });
+const POWER_BASIS_LABEL = Object.freeze({ nameplate: t('report.nameplate'), typical: t('report.typical'), measured: t('report.measured') });
 // 도메인은 정체성이지 상태가 아니다. 경고와 초과가 쓰는 앰버와 빨강은 쓰지 않는다.
 const POWER_DOMAIN_COLORS = Object.freeze(['#077165', '#3d6ea8', '#7a4c86', '#6b4a2f', '#4a5e6b', '#2f6b5a']);
 
 function powerDomains() {
   return (topology.failureDomains || []).filter(({ kind }) => kind === 'power')
-    .map((domain, index) => ({ ...domain, color: POWER_DOMAIN_COLORS[index % POWER_DOMAIN_COLORS.length], down: state.disabledDomains.has(domain.id) }));
+    .map((domain, index) => ({ ...domain, name: localizedBundledLabel(domain.id, domain.name, topology.synthetic && ['demo', 'dual-fabric'].includes(topology.template?.id)), color: POWER_DOMAIN_COLORS[index % POWER_DOMAIN_COLORS.length], down: state.disabledDomains.has(domain.id) }));
 }
 
 // 한 장비가 여러 전원 도메인에 걸려 있으면 먼저 선언된 것을 쓴다. 색은 하나만 줄 수 있다.
@@ -689,7 +692,7 @@ function renderRackElevations() {
     const summary = rackSummary(topology, rack);
     const views = rackPlacementViews(rack);
     const marks = Array.from({ length: rack.capacityU }, (_, index) => index + 1).filter((unit) => unit === 1 || unit === rack.capacityU || unit % 5 === 0).map((unit) => `<span style="bottom:calc((${unit} - .5) * var(--rack-u))">${unit}U</span>`).join('');
-    const devices = views.map((view) => `<button type="button" class="rack-device" data-rack-id="${escapeAttribute(rack.id)}" data-rack-placement="${escapeAttribute(view.id)}" data-mapped="${view.mapped}" data-active="${view.active}"${view.domainId ? ` data-domain="${escapeAttribute(view.domainId)}" style="--rack-start:${view.startU};--rack-height:${view.uHeight};--domain-color:${escapeAttribute(view.domainColor)}"` : ` style="--rack-start:${view.startU};--rack-height:${view.uHeight}"`} aria-pressed="${rack.id === rackView.selectedRackId && view.id === rackView.selectedPlacementId}"><strong>${escapeText(view.name)}</strong><span>${view.down ? '정지' : `U${view.startU}–${view.startU + view.uHeight - 1}`}</span>${view.uHeight > 1 ? `<small>${escapeText(view.domainName && rackView.domains ? view.domainName : view.model || view.kind)}${view.mapped && !rackView.domains ? ' · 토폴로지 연결' : ''}</small>` : ''}</button>`).join('');
+    const devices = views.map((view) => `<button type="button" class="rack-device" data-rack-id="${escapeAttribute(rack.id)}" data-rack-placement="${escapeAttribute(view.id)}" data-mapped="${view.mapped}" data-active="${view.active}"${view.domainId ? ` data-domain="${escapeAttribute(view.domainId)}" style="--rack-start:${view.startU};--rack-height:${view.uHeight};--domain-color:${escapeAttribute(view.domainColor)}"` : ` style="--rack-start:${view.startU};--rack-height:${view.uHeight}"`} aria-pressed="${rack.id === rackView.selectedRackId && view.id === rackView.selectedPlacementId}"><strong>${escapeText(view.name)}</strong><span>${view.down ? t('status.severed') : `U${view.startU}–${view.startU + view.uHeight - 1}`}</span>${view.uHeight > 1 ? `<small>${escapeText(view.domainName && rackView.domains ? view.domainName : view.model || view.kind)}${view.mapped && !rackView.domains ? ` · ${escapeText(t('ui.topologyDevice'))}` : ''}</small>` : ''}</button>`).join('');
     return `<section class="rack-elevation-wrap"><header class="rack-elevation-head"><strong>${escapeText(rack.name)}</strong><span>${summary.usedU}/${rack.capacityU}U</span>${rackGauges(rack, rackUsage(topology, rack))}</header><div class="rack-elevation" data-rack-id="${escapeAttribute(rack.id)}" style="--rack-capacity:${rack.capacityU}"><div class="rack-u-labels">${marks}</div>${devices}</div><span class="rack-rail-label">FRONT ELEVATION</span></section>`;
   }).join('');
 }
@@ -722,7 +725,7 @@ function devicePowerFields(rack, view) {
 
 function renderRackInspector() {
   const rack = currentRack(); const placement = selectedRackPlacement(); const target = element('rack-inspector-content');
-  if (!rack) { target.innerHTML = '<p class="panel-note">랙을 추가해 시작하세요.</p>'; return; }
+  if (!rack) { target.innerHTML = `<p class="panel-note">${escapeText(t('ui.noRacksStart'))}</p>`; return; }
   const summary = rackSummary(topology, rack);
   if (!placement) {
     const usage = rackUsage(topology, rack);
@@ -756,12 +759,12 @@ function renderRackWorkspace() {
   for (const button of document.querySelectorAll('[data-rack-view]')) button.setAttribute('aria-pressed', String(button.dataset.rackView === rackView.mode));
   element('rack-3d-controls').hidden = rackView.mode !== '3d';
   for (const button of document.querySelectorAll('[data-rack-face]')) button.setAttribute('aria-pressed', String(button.dataset.rackFace === rackView.face));
-  const cableToggle = document.querySelector('[data-rack-cables]'); cableToggle.setAttribute('aria-pressed', String(rackView.cables)); cableToggle.textContent = `케이블 ${rackView.cables ? '켬' : '끔'}`;
+  const cableToggle = document.querySelector('[data-rack-cables]'); cableToggle.setAttribute('aria-pressed', String(rackView.cables)); cableToggle.textContent = rackView.cables ? t('ui.cableOn') : t('ui.cableOff');
   document.querySelector('[data-rack-domains]').setAttribute('aria-pressed', String(rackView.domains));
   renderPowerDomains();
-  element('rack-cable-note').textContent = rackView.cables ? '토폴로지 논리 링크 · 실제 배선 아님' : '케이블 표시 끔';
+  element('rack-cable-note').textContent = rackView.cables ? t('ui.logicalCable') : t('ui.cableOff');
   const total = racks.reduce((sum, item) => sum + rackPlacements(topology, item).length, 0);
-  element('rack-workspace-summary').textContent = racks.length ? `랙 ${racks.length}개 · 배치 장비 ${total}대 · 토폴로지와 독립 저장` : '랙을 추가해 시작하세요.';
+  element('rack-workspace-summary').textContent = racks.length ? t('ui.rackSummary', { racks: racks.length, placements: total }) : t('ui.noRacksStart');
   if (rackView.mode === '2d') renderRackElevations(); renderRackInspector(); syncRackScene();
 }
 
@@ -1031,29 +1034,29 @@ function renderSummary() {
   element('summary-headroom').dataset.baseValue = String(summary.minHeadroom ?? '');
   element('summary-headroom').textContent = formatPercent(summary.minHeadroom);
   element('summary-overloaded').textContent = String(summary.overloadedCount);
-  element('summary-warning').textContent = `${summary.warningCount}개 자원 주의`;
+  element('summary-warning').textContent = t('ui.warningResources', { count: summary.warningCount });
   element('summary-unreachable').textContent = String(summary.unreachableCount);
-  element('summary-unreachable-load').textContent = `${formatCompact(summary.unreachableLoadBps, 'bps')} 미전달`;
+  element('summary-unreachable-load').textContent = `${formatCompact(summary.unreachableLoadBps, 'bps')} ${t('ui.unreachable')}`;
   element('summary-dropped-load').textContent = formatCompact(summary.droppedLoadBps, 'bps');
   const growthRung = summary.growthLadder?.rungs?.[0];
-  const growth = summary.overloadedCount > 0 ? '초과'
-    : summary.growthLadder?.indeterminate ? '미확정'
+  const growth = summary.overloadedCount > 0 ? t('status.overloaded')
+    : summary.growthLadder?.indeterminate ? t('common.unknown')
       : growthRung ? `${growthRung.breachScale.toFixed(2)}×` : '—';
-  const growthBinding = summary.overloadedCount > 0 ? '현재 용량 초과'
-    : summary.growthLadder?.indeterminate ? '성장 한계 미확정'
-      : growthRung ? `다음 병목 ${resourceName(resourceById(growthRung.resourceId)) || growthRung.resourceId} · ${axisCatalog[growthRung.axis]?.shortLabel || growthRung.axis}` : '다음 한계 없음';
+  const growthBinding = summary.overloadedCount > 0 ? t('dynamic.overloadedNow')
+    : summary.growthLadder?.indeterminate ? t('common.unknown')
+      : growthRung ? `${t('ui.warningResources', { count: 1 })} · ${resourceName(resourceById(growthRung.resourceId)) || growthRung.resourceId} · ${axisCatalog[growthRung.axis]?.shortLabel || growthRung.axis}` : t('dynamic.noMoreLimit');
   element('summary-growth').textContent = growth;
   element('summary-growth-binding').textContent = growthBinding;
-  const survivalText = analysisProgress ? `계산 중 ${analysisProgress.completed}/${analysisProgress.total}` : survival.multiplier == null ? '미확정' : survival.multiplier === 0 ? '불가' : `${survival.multiplier < 0.005 ? survival.multiplier.toPrecision(2) : survival.multiplier.toFixed(2)}×${survival.bounded ? ' 이하' : ''}`;
+  const survivalText = analysisProgress ? t('dynamic.calculating', analysisProgress) : survival.multiplier == null ? t('common.unknown') : survival.multiplier === 0 ? t('status.unavailable') : `${survival.multiplier < 0.005 ? survival.multiplier.toPrecision(2) : survival.multiplier.toFixed(2)}×${survival.bounded ? ' ' + t('dynamic.lowerBound') : ''}`;
   const failedService = survival.services?.find(({ status }) => status === 'fail');
   const unknownService = !failedService && survival.services?.find(({ status }) => status !== 'pass');
   const failedServiceRatio = failedService && Math.min(failedService.deliveredRatio ?? 1, failedService.admissionRatio ?? 1);
   const serviceLabel = failedService
-    ? `${failedService.name} 불통과 · 최악 장애에서 ${formatPercent(failedServiceRatio)} 수용`
-    : unknownService ? `${unknownService.name} 통과 보류 · 한계 미확인` : '';
+    ? t('dynamic.failedService', { name: failedService.name, percent: formatPercent(failedServiceRatio) })
+    : unknownService ? t('dynamic.pendingService', { name: unknownService.name }) : '';
   const survivalLabel = analysisProgress ? `${analysisProgress.label} · 전수 계산 중` : survival.worstFault
-    ? `${survival.status === 'severed' ? '단절' : survival.status === 'capacity-insufficient' ? '현재 부하 미달' : '견딤'} · 생존 ${survivalText} · 최악 ${resourceName(resourceById(survival.worstFault.id)) || survival.worstFault.id}`
-    : '생존 배수 · 장애 후보 없음';
+    ? `${stateLabel(survival.status)} · ${t('dynamic.survival', { multiplier: survivalText, name: resourceName(resourceById(survival.worstFault.id)) || survival.worstFault.id })}`
+    : t('dynamic.noFaultCandidates');
   // 다음 병목은 상단 판정 문장이 이미 말하므로 여기서 또 반복하지 않는다. 그쪽이 비면만 대신 적는다.
   element('summary-growth-binding').textContent = [serviceLabel, survivalLabel].filter(Boolean).join(' · ') || growthBinding;
   const singlePoints = sweep.resources.filter(({ verdict, endpoint }) => verdict === 'severs' && !endpoint);
@@ -1066,33 +1069,33 @@ function renderSummary() {
   })[0];
   const survivalTile = element('summary-survival');
   if (summary.activeFaults) {
-    element('summary-fault-label').textContent = '활성 장애';
+    element('summary-fault-label').textContent = t('dynamic.activeFault');
     element('summary-faults').textContent = String(summary.activeFaults);
-    element('summary-delta').textContent = `${severedDomains.length ? `도메인 단절 ${severedDomains.length}개 · ` : ''}headroom ${formatPercent(comparison.minHeadroomDelta, true)}`;
-    survivalTile.setAttribute('aria-label', `활성 장애 ${summary.activeFaults}개${severedDomains.length ? `. 도메인 단절 ${severedDomains.length}개` : ''}. 장애 목록 열기`);
+    element('summary-delta').textContent = `${severedDomains.length ? `${t('dynamic.domainFaults', { count: severedDomains.length })} · ` : ''}${t('dynamic.headroom')} ${formatPercent(comparison.minHeadroomDelta, true)}`;
+    survivalTile.setAttribute('aria-label', `${t('dynamic.activeFault')} ${summary.activeFaults}${severedDomains.length ? `. ${t('dynamic.domainFaults', { count: severedDomains.length })}` : ''}.`);
   } else if (analysisProgress) {
-    element('summary-fault-label').textContent = '생존성';
+    element('summary-fault-label').textContent = t('dynamic.resilience');
     element('summary-faults').textContent = '…';
-    element('summary-delta').textContent = `${analysisProgress.label} 계산 중`;
-    survivalTile.setAttribute('aria-label', `${analysisProgress.label} 계산 중. 장애 목록 열기`);
+    element('summary-delta').textContent = t('dynamic.calculating', analysisProgress);
+    survivalTile.setAttribute('aria-label', t('dynamic.calculating', analysisProgress));
   } else {
-    element('summary-fault-label').textContent = '단일 장애점';
-    element('summary-faults').textContent = singlePoints.length && severedDomains.length ? `${singlePoints.length} + 도메인 ${severedDomains.length}` : singlePoints.length ? String(singlePoints.length) : `도메인 ${severedDomains.length}`;
+    element('summary-fault-label').textContent = t('dynamic.singleFault');
+    element('summary-faults').textContent = singlePoints.length && severedDomains.length ? `${singlePoints.length} + ${t('dynamic.domainFaults', { count: severedDomains.length })}` : singlePoints.length ? String(singlePoints.length) : t('dynamic.domainFaults', { count: severedDomains.length });
     element('summary-delta').textContent = representativeDomain
       ? `${resourceName(representativeDomain)}${invalidDomains.some(({ id }) => id === representativeDomain.id) ? ' · 이중화 무효' : ''}`
-      : singlePoints.length ? `${resourceName(resourceById(singlePoints[0].id)) || singlePoints[0].id}` : '단일 장애점 없음';
-    survivalTile.setAttribute('aria-label', `단일 장애점 ${singlePoints.length}개${severedDomains.length ? `. 도메인 단절 ${severedDomains.length}개` : ''}. 장애 목록 열기`);
+      : singlePoints.length ? `${resourceName(resourceById(singlePoints[0].id)) || singlePoints[0].id}` : t('dynamic.noSingleFault');
+    survivalTile.setAttribute('aria-label', `${t('dynamic.singleFault')} ${t('common.items', { count: formatLocaleNumber(singlePoints.length) })}${severedDomains.length ? `. ${t('dynamic.domainFaults', { count: severedDomains.length })}` : ''}.`);
   }
   // 엔진은 0.8 을 넘으면 warning 으로 판정하고 그 수를 summary.warningCount 에 담는데,
   // 상단 상태가 그 값을 보지 않아 주의 자원이 있어도 'BASELINE STABLE' 이라고 말했다.
-  const runState = summary.evaluationStatus === 'invalid' ? { text: '모델 입력 오류', tone: 'danger' }
-    : summary.evaluationStatus === 'not-ready' ? { text: '판정 준비 안 됨', tone: 'unknown' }
-    : summary.unreachableCount ? { text: '경로 단절', tone: 'danger' }
-    : summary.overloadedCount ? { text: '용량 초과', tone: 'danger' }
-    : summary.warningCount ? { text: `자원 주의 ${summary.warningCount}개`, tone: 'amber' }
-    : summary.activeFaults ? { text: '장애 견딜', tone: 'amber' }
-    : { text: '기준 상태 안정', tone: 'signal' };
-  const evidence = summary.evaluationStatus === 'unknown' ? { text: `한계 미확인 ${summary.unknownCount || 0}개`, tone: 'unknown' } : { text: '한계 확인됨', tone: 'signal' };
+  const runState = summary.evaluationStatus === 'invalid' ? { text: t('status.invalid'), tone: 'danger' }
+    : summary.evaluationStatus === 'not-ready' ? { text: t('status.unknown'), tone: 'unknown' }
+    : summary.unreachableCount ? { text: t('dynamic.unreachable'), tone: 'danger' }
+    : summary.overloadedCount ? { text: t('status.overloaded'), tone: 'danger' }
+    : summary.warningCount ? { text: t('ui.warningResources', { count: summary.warningCount }), tone: 'amber' }
+    : summary.activeFaults ? { text: stateLabel('survives'), tone: 'amber' }
+    : { text: stateLabel('healthy'), tone: 'signal' };
+  const evidence = summary.evaluationStatus === 'unknown' ? { text: `${t('dynamic.unknownLimit')} ${t('common.items', { count: formatLocaleNumber(summary.unknownCount || 0) })}`, tone: 'unknown' } : { text: t('status.healthy'), tone: 'signal' };
   const capacity = { text: runState.text, tone: runState.tone === 'amber' ? 'warning' : runState.tone };
   for (const [id, value] of [['evidence-state', evidence], ['capacity-state', capacity]]) {
     const chip = element(id); chip.querySelector('span').textContent = value.text; chip.dataset.tone = value.tone;
@@ -1112,12 +1115,12 @@ function renderSummary() {
 // 장애 목록은 이미 나쁘 순서로 정렬되지만, 정렬만으로는 어디에서 단절이 끝나고 용량
 // 부족이 시작되는지 보이지 않아 수십 줄을 위에서부터 읽어야 했다. 그 경계를 제목으로 집는다.
 const FAILURE_TIER_LABEL = {
-  severs: '단절 · 서비스가 끊깁니다',
-  overloads: '용량 부족 · 일부만 전달됩니다',
-  absorbs: '견딤 · 남은 경로가 흡수합니다',
-  endpoint: '출발지·목적지 · 자기 트래픽만 끊깁니다',
-  unknown: '한계 미확인 · 결과를 단정할 수 없습니다',
-  none: '판정 없음',
+  severs: () => `${t('dynamic.severed')} · ${t('status.severs')}`,
+  overloads: () => `${t('dynamic.capacityShortfall')} · ${t('status.overloads')}`,
+  absorbs: () => `${t('dynamic.absorbed')} · ${t('status.absorbs')}`,
+  endpoint: () => t('status.severed'),
+  unknown: () => `${t('dynamic.unknownLimit')} · ${t('common.unknown')}`,
+  none: () => t('common.none'),
 };
 
 // 같은 판정이 이어지는 구간만 모은다. 다시 정렬하지 않는다.
@@ -1212,7 +1215,7 @@ function renderFailures() {
     { title: '자원 N-1 · 링크', items: order(topology.links), set: state.disabledLinks, type: 'link' },
     { title: '도메인 N-1', items: order(topology.failureDomains || []), set: state.disabledDomains, type: 'domain' },
   ];
-  element('failure-count').textContent = `주입한 장애 ${state.disabledDevices.size + state.disabledLinks.size + state.disabledDomains.size}`;
+  element('failure-count').textContent = t('ui.activeFaults', { count: state.disabledDevices.size + state.disabledLinks.size + state.disabledDomains.size });
   if (analysisProgress) {
     element('failure-grade').textContent = `${analysisProgress.label} 계산 중 ${analysisProgress.completed}/${analysisProgress.total} · 완료 전에는 판정을 표시하지 않습니다.`;
     element('failure-grade').dataset.grade = 'unknown';
@@ -1226,8 +1229,8 @@ function renderFailures() {
   const invalidDomainSummary = invalidDomains.map(({ name, reason, deliveryDrop }) => reason === 'delivery-drop'
     ? name + ' (전달률 ' + formatPercent(deliveryDrop) + 'p 저하)' : name).join(', ');
   element('failure-grade').textContent = sweep.resources.length
-    ? `단일 장애점 ${sweep.severs}개 · 용량 부족 ${sweep.overloads}개 · 여유 ${sweep.absorbs}개${invalidDomains.length ? ` · 이중화 무효 ${invalidDomainSummary}` : ''}${stale ? ` · ${sweepScale.toFixed(2)}배 기준` : ''}`
-    : '끌 자원이 아직 없습니다.';
+    ? `${t('dynamic.failureGrade', { severs: sweep.severs, overloads: sweep.overloads, absorbs: sweep.absorbs })}${invalidDomains.length ? ` · ${t('report.redundancyInvalid')} ${invalidDomainSummary}` : ''}${stale ? ` · ${sweepScale.toFixed(2)}×` : ''}`
+    : t('dynamic.noFaultTargets');
   element('failure-grade').dataset.grade = sweep.grade;
   element('failure-grade').toggleAttribute('data-stale', stale);
   // 등급 한 줄만 표시하면 자원별 예보는 옛 배율 값을 지금 값처럼 말한다. 목록 전체에 건다.
@@ -1251,9 +1254,9 @@ function renderFailures() {
   const filteredRows = allRows.filter(({ item, verdict }) => matchesFailureFilter(item, verdict));
   const filterActive = Boolean(failureFilter.query.trim()) || failureFilter.verdict !== 'all';
   const filterControls = `<form class="failure-filter" data-failure-filter>
-    <input type="search" value="${escapeAttribute(failureFilter.query)}" placeholder="이름 검색" aria-label="장애 대상 이름 검색">
-    <div role="group" aria-label="장애 판정 필터">${[['all', '전체'], ['severs', '단절'], ['overloads', '용량 부족'], ['absorbs', '견딤'], ['unknown', '한계 미확인']].map(([value, label]) => `<button type="button" data-failure-filter-verdict="${value}" aria-pressed="${failureFilter.verdict === value}">${label}</button>`).join('')}</div>
-    <p data-failure-filter-count>${filterActive ? '필터 적용 중 · ' : ''}전체 ${allRows.length}개 중 ${filteredRows.length}개 표시</p>
+    <input type="search" value="${escapeAttribute(failureFilter.query)}" placeholder="${escapeAttribute(t('dynamic.searchFaults'))}" aria-label="${escapeAttribute(t('dynamic.searchFaults'))}">
+    <div role="group" aria-label="${escapeAttribute(t('dynamic.faultScope'))}">${[['all', t('dynamic.all')], ['severs', t('dynamic.severed')], ['overloads', t('dynamic.capacityShortfall')], ['absorbs', t('dynamic.absorbed')], ['unknown', t('dynamic.unknownLimit')]].map(([value, label]) => `<button type="button" data-failure-filter-verdict="${value}" aria-pressed="${failureFilter.verdict === value}">${label}</button>`).join('')}</div>
+    <p data-failure-filter-count>${filterActive ? t('dynamic.filterApplied') : ''}${t('dynamic.shown', { total: allRows.length, shown: filteredRows.length })}</p>
   </form>`;
   failureVirtual.groups.clear();
   const renderFailure = (group, item, { index = null, key = '', total = 0 } = {}) => {
@@ -1282,7 +1285,7 @@ function renderFailures() {
     const absorbs = group.type === 'domain' ? [] : matching.filter((item) => verdicts.get(item.id)?.verdict === 'absorbs');
     const tiers = groupByVerdictRun(candidates, (item) => verdicts.get(item.id));
     const tierRows = tiers.map(({ tier, items }, index) => {
-      const label = FAILURE_TIER_LABEL[tier] || tier;
+      const label = (FAILURE_TIER_LABEL[tier] || (() => tier))();
       return `<h4 class="failure-tier" data-tier="${escapeAttribute(tier)}">${escapeText(label)}<span>${items.length}</span></h4>${renderFailureRows(group, items, `tier-${tier}-${index}`, label)}`;
     }).join('');
     return `<section class="failure-group">
@@ -1295,21 +1298,21 @@ function renderFailures() {
   const worstAxisRows = worstAxes.length ? worstAxes.map((item) => {
     const target = resourceById(item.resourceId);
     const label = `${resourceName(target) || item.resourceId} · ${item.direction === 'forward' ? '정방향 · ' : item.direction === 'reverse' ? '역방향 · ' : ''}${axisCatalog[item.axis]?.shortLabel || item.axis}`;
-    const value = item.utilization == null ? '미확인' : formatPercent(item.utilization);
-    const detail = item.faultId ? `${resourceName(resourceById(item.faultId)) || item.faultId} 장애 후 최악` : '최악 장애 미확인';
+    const value = item.utilization == null ? t('common.unknown') : formatPercent(item.utilization);
+    const detail = item.faultId ? t('dynamic.worstAfter', { name: resourceName(resourceById(item.faultId)) || item.faultId }) : t('dynamic.unknownLimit');
     // 사용률이 이 패널의 답이다. 같은 크기의 텍스트 12줄에서는 171과 73이 구분되지 않아, 막대로 길이를 먼저 읽게 한다.
     const tier = item.utilization == null ? 'unknown' : item.utilization >= 1 ? 'over' : item.utilization >= 0.8 ? 'warn' : 'ok';
     const bar = item.utilization == null ? '' : ` style="--worst-bar:${(Math.min(item.utilization, 1) * 100).toFixed(1)}%"`;
     return `<li data-tier="${tier}"${bar}><b>${escapeText(label)}</b><span>${escapeText(value)}${item.bounded ? `<i>이하</i>` : ''}</span><small>${escapeText(detail)}${item.unknown ? ' · 일부 미확인' : ''}</small></li>`;
-  }).join('') : '<li>완료된 단일 장애 스윕이 아직 없습니다.</li>';
+  }).join('') : `<li>${escapeText(t('dynamic.noFaultTargets'))}</li>`;
   // 여덟 줄을 한 번에 펼치면 읽을 사람이 없다. 최악 네 개만 남기고 나머지는 접어 둔다.
   const WORST_AXES_VISIBLE = 4;
   const worstAxisTail = Math.max(0, worstAxes.length - WORST_AXES_VISIBLE);
   const worstAxisToggle = worstAxisTail
-    ? `<button type="button" class="failure-collapse" data-failure-worst-toggle aria-expanded="${worstAxesExpanded}">${worstAxesExpanded ? '접기' : `나머지 ${worstAxisTail}개 펼치기`}</button>`
+    ? `<button type="button" class="failure-collapse" data-failure-worst-toggle aria-expanded="${worstAxesExpanded}">${worstAxesExpanded ? t('dynamic.collapse') : t('dynamic.expandRest', { count: worstAxisTail })}</button>`
     : '';
-  const worstAxisPanel = `<section class="failure-group failure-worst-axes"><h3>단일 장애 최악 사용률</h3><p class="failure-empty">각 자원·축에서 가장 나쁜 단일 장애와 사용률입니다.</p><ul${worstAxesExpanded || !worstAxisTail ? '' : ' data-worst-folded'}>${worstAxisRows}</ul>${worstAxisToggle}</section>`;
-  const scopeGuide = `<section class="failure-scope-guide" aria-label="장애 분석 범위"><p><b>자원 N-1</b><span>장비 또는 링크 하나의 장애입니다.</span></p><p><b>도메인 N-1</b><span>전원·공간·경로처럼 함께 실패할 수 있는 묶음 하나의 장애입니다.</span></p><p><b>도메인 N-2</b><span>서로 다른 장애 도메인 둘이 동시에 실패하는 경우입니다.</span></p></section>`;
+  const worstAxisPanel = `<section class="failure-group failure-worst-axes"><h3>${t('dynamic.worstUsage')}</h3><p class="failure-empty">${t('dynamic.worstUsageText')}</p><ul${worstAxesExpanded || !worstAxisTail ? '' : ' data-worst-folded'}>${worstAxisRows}</ul>${worstAxisToggle}</section>`;
+  const scopeGuide = `<section class="failure-scope-guide" aria-label="${escapeAttribute(t('dynamic.faultScope'))}"><p><b>${t('dynamic.resourceN1')}</b><span>${t('dynamic.resourceN1Text')}</span></p><p><b>${t('dynamic.domainN1')}</b><span>${t('dynamic.domainN1Text')}</span></p><p><b>${t('dynamic.domainN2')}</b><span>${t('dynamic.domainN2Text')}</span></p></section>`;
   element('failure-list').innerHTML = `${scopeGuide}${filterControls}${groups.map(renderGroup).join('')}${worstAxisPanel}<section class="failure-group failure-domain-pairs"><h3>도메인 N-2 · 동시 두 도메인</h3>${domainSweep.domainCount ? (() => {
       const matchingPairs = pairs.filter((item) => matchesFailureFilter(item, item));
       const critical = matchingPairs.filter(({ verdict }) => verdict !== 'absorbs');
@@ -1506,7 +1509,9 @@ function poolNote(entry) {
   if (!entry) return '';
   const low = Math.round(Math.min(...entry.shares) * 100);
   const high = Math.round(Math.max(...entry.shares) * 100);
-  return `풀 ${entry.size}대 · ${low === high ? `${high}%` : `${low}~${high}%`}`;
+  return low === high
+    ? t('dynamic.poolShareExact', { size: entry.size, percent: high })
+    : t('dynamic.poolShareRange', { size: entry.size, low, high });
 }
 
 function nodeAccessibleName(device) {
@@ -2132,7 +2137,7 @@ function renderTopology() {
     const domainSpof = detailView.level === 'off' ? null : (domainSweep.redundancyInvalid || []).find(({ memberIds }) => memberIds.includes(device.id));
     // 이미 죽은 장비에 "이게 죽으면 끊긴다"와 숨긴 축 개수를 붙이는 것은 소음이다.
     const spof = detailView.level !== 'off' && device.active && !sweepStale() && verdict?.verdict === 'severs' && !verdict.endpoint;
-    const spofLabel = spof ? 'SPOF' : domainSpof ? `SPOF · ${domainSpof.name}` : '';
+    const spofLabel = spof ? 'SPOF' : domainSpof ? `SPOF · ${resourceName(domainSpof)}` : '';
     const meta = [device.kind.toUpperCase(), behaviorToken(device), zonePath(device.zone).at(-1) || device.zone,
       spofLabel,
       // 없앰에서는 숨긴 개수를 말하지 않는다. 축 블록이 통째로 없어 +2 가 무엇의 2인지 알 수 없다.
@@ -2790,7 +2795,7 @@ function renderComparison() {
 function renderEditorMode() {
   // 여러 개를 고르는 두 손놀림이 화면 어디에도 적혀 있지 않아, 있는 줄 모르고 쓰지 못했다.
   // 빈 곳을 그냥 끌면 화면이 밀리고 Shift 를 누른 채 끌어야 선택 상자가 나온다.
-  const labels = { select: 'SELECT · DRAG TO BOX · RIGHT-DRAG TO PAN · SHIFT+CLICK TO ADD', connect: state.connectSource ? `CONNECT · ${state.connectSource.toUpperCase()} → SELECT TARGET` : 'CONNECT · SELECT SOURCE', annotation: annotationSource ? `ANNOTATION · ${annotationSource.toUpperCase()} → SELECT TARGET` : 'ANNOTATION · SELECT SOURCE' };
+  const labels = { select: t('dynamic.modeSelect'), connect: state.connectSource ? t('dynamic.modeConnectTarget', { source: state.connectSource.toUpperCase() }) : t('dynamic.modeConnect'), annotation: annotationSource ? t('dynamic.modeAnnotationTarget', { source: annotationSource.toUpperCase() }) : t('dynamic.modeAnnotation') };
   element('editor-mode').lastChild.textContent = labels[state.editorMode] || state.editorMode.toUpperCase();
   document.querySelector('[data-editor-action="connect"]')?.setAttribute('aria-pressed', String(state.editorMode === 'connect'));
   document.querySelector('[data-editor-action="annotation-connect"]')?.setAttribute('aria-pressed', String(state.editorMode === 'annotation'));
@@ -2800,11 +2805,11 @@ function renderEditorMode() {
   const selectedShape = count === 1 && state.selection[0].type === 'shape';
   const selectedGroup = state.selection.length === 1 && state.selection[0].type === 'group';
   const rules = {
-    group: [count >= 2, '장비 또는 도형을 2개 이상 선택하세요.'],
-    ungroup: [selectedGroup, '그룹 하나를 선택하세요.'],
-    'align-left': [count >= 2, '장비 또는 도형을 2개 이상 선택하세요.'],
-    'distribute-x': [count >= 3, '장비 또는 도형을 3개 이상 선택하세요.'],
-    'map-device': [selectedShape, '가져온 도형 하나를 선택하세요.'],
+    group: [count >= 2, t('dynamic.multiSelectHint')],
+    ungroup: [selectedGroup, t('dynamic.ungroup')],
+    'align-left': [count >= 2, t('dynamic.multiSelectHint')],
+    'distribute-x': [count >= 3, t('dynamic.multiSelectHint')],
+    'map-device': [selectedShape, t('dynamic.mapDevice')],
   };
   for (const [action, [enabled, hint]] of Object.entries(rules)) {
     const button = document.querySelector(`[data-editor-action="${action}"]`);
@@ -2813,8 +2818,8 @@ function renderEditorMode() {
     if (enabled) { button.removeAttribute('title'); button.removeAttribute('aria-describedby'); }
     else { button.title = hint; button.setAttribute('aria-describedby', 'editor-selection-hint'); }
   }
-  const selectedLabel = count ? `${count}개 선택됨` : '선택 없음';
-  element('editor-selection-hint').textContent = `${selectedLabel}. 그룹과 정렬은 여러 요소를 선택해야 합니다.`;
+  const selectedLabel = count ? t('dynamic.selected', { count }) : t('dynamic.noSelection');
+  element('editor-selection-hint').textContent = `${selectedLabel}. ${t('dynamic.multiSelectHint')}`;
 }
 
 // 데이터시트 값은 특정 조건에서 잰 숫자다. 그 조건과 대조할 우리 워크로드를 적지 않으면
@@ -2902,7 +2907,7 @@ function openDrawioPreview(document, { fileName = '' } = {}) {
 }
 
 function closeEditorPanel() { element('editor-panel').hidden = true; element('editor-panel-content').innerHTML = ''; }
-function formError(form, message) { const target = form.querySelector('.editor-error'); if (target) target.textContent = message; }
+function formError(form, message) { const target = form.querySelector('.editor-error'); if (target) target.textContent = localizeError({ message }); }
 function deviceOptions(selected = '') { return topology.devices.map(({ id, name }) => `<option value="${id}" ${id === selected ? 'selected' : ''}>${escapeAttribute(name)} · ${id}</option>`).join(''); }
 // 팔레트 클릭은 놓을 자리를 사용자가 고르지 않으므로 비어 있는 슬롯을 찾아 준다.
 const deviceSlot = (index) => ({ x: 130 + (index % 4) * 220, y: 110 + (Math.floor(index / 4) % 3) * 165 });
@@ -3058,23 +3063,23 @@ function showGuideIntro() {
   box.hidden = false;
   box.dataset.intro = '';
   box.innerHTML = `<p class="tour-count">RACK MESH GUIDE</p>
-    <h2 id="tour-title">설계의 한계와 장애 영향을 먼저 확인하세요</h2>
-    <p class="tour-text">구성도를 그리고, 부하와 장애를 바꾸고, 3D 랙에 서버를 배치합니다.</p>
+    <h2 id="tour-title">${escapeText(t('guide.introTitle'))}</h2>
+    <p class="tour-text">${escapeText(t('guide.introText'))}</p>
     <figure class="guide-preview">
-      <video autoplay muted loop playsinline preload="metadata" poster="./assets/guide-preview.webp" aria-label="용량 한계, 장애 주입, 3D 랙 배치 미리보기">
+      <video autoplay muted loop playsinline preload="metadata" poster="./assets/guide-preview.webp" aria-label="${escapeAttribute(t('guide.videoAlt'))}">
         <source src="./assets/guide-preview.webm" type="video/webm">
         <source src="./assets/guide-preview.mp4" type="video/mp4">
       </video>
-      <img src="./assets/guide-preview.webp" alt="3D 랙에서 용량 한계를 확인하는 화면">
-      <figcaption class="guide-features" aria-label="주요 기능 상태">
-        <span class="guide-feature"><strong>용량 한계</strong><b>현재 설계 111%</b></span>
-        <span class="guide-feature"><strong>장애 영향</strong><b>PDU-A · 서버 6대</b></span>
-        <span class="guide-feature"><strong>3D 랙 배치</strong><b>Drag &amp; drop</b></span>
+      <img src="./assets/guide-preview.webp" alt="${escapeAttribute(t('guide.posterAlt'))}">
+      <figcaption class="guide-features" aria-label="${escapeAttribute(t('guide.features'))}">
+        <span class="guide-feature"><strong>${escapeText(t('guide.featureCapacity'))}</strong><b>${escapeText(t('guide.featureCapacityValue'))}</b></span>
+        <span class="guide-feature"><strong>${escapeText(t('guide.featureFault'))}</strong><b>${escapeText(t('guide.featureFaultValue'))}</b></span>
+        <span class="guide-feature"><strong>${escapeText(t('guide.featureRack'))}</strong><b>${escapeText(t('guide.featureRackValue'))}</b></span>
       </figcaption>
     </figure>
     <div class="tour-actions">
-      <button type="button" data-guide="dismiss">직접 둘러보기</button>
-      <button type="button" data-guide="start">9단계 안내 보기</button>
+      <button type="button" data-guide="dismiss">${escapeText(t('guide.explore'))}</button>
+      <button type="button" data-guide="start">${escapeText(t('guide.start'))}</button>
     </div>`;
   box.querySelector('[data-guide="start"]').focus();
 }
@@ -3222,14 +3227,17 @@ function anchorTourBox(box, rect) {
 // 안내는 처음 한 번 뜨고 마는 것이 아니어야 한다. 작업 사본을 복원하면 첫 화면 설명이
 // 함께 오지 않고, 사용자가 만든 설계에는 애초에 가르칠 것이 없다. 그래서 언제든 여는 문을 둔다.
 function templateCard(item, groupLabel) {
+  const name = localizedTemplate(item.id, 'name', item.name);
+  const summary = localizedTemplate(item.id, 'summary', item.summary);
+  const teaches = item.teaches ? localizedTemplate(item.id, 'teaches', item.teaches) : '';
   const grade = templateGrade(item.id);
   const gradeLabel = grade ? `${GRADE_LABEL[grade.verdict]}${grade.verdict === 'single-point' ? ` ${grade.severs}` : ''}` : '';
   // 섹션 이름도 검색어가 된다. "보안"으로 찾으면 그 섹션이 통째로 나와야 자연스럽다.
-  const haystack = [item.name, item.summary, item.teaches, gradeLabel, groupLabel, ...(item.tags || [])].join(' ').toLowerCase();
+  const haystack = [name, summary, teaches, gradeLabel, groupLabel, ...(item.tags || [])].join(' ').toLowerCase();
   // 카드는 판정 → 이름 → 설명 → 배우는 점 순서로 읽힌다. 판정을 먼저 둔 건 카드를 훑을 때 그게 고르는 기준이기 때문이다.
   return `<button type="button" class="template-item" data-template="${escapeAttribute(item.id)}" data-search="${escapeAttribute(haystack)}">
       ${gradeLabel ? `<b class="template-grade" data-grade="${escapeAttribute(grade.verdict)}">${escapeText(gradeLabel)}</b>` : ''}
-      <strong>${escapeText(item.name)}</strong><span>${escapeText(item.summary)}</span>${item.teaches ? `<em>${escapeText(item.teaches)}</em>` : ''}
+      <strong>${escapeText(name)}</strong><span>${escapeText(summary)}</span>${teaches ? `<em>${escapeText(teaches)}</em>` : ''}
       ${(item.tags || []).length ? `<span class="template-tags">${item.tags.map((tag) => `<i>${escapeText(tag)}</i>`).join('')}</span>` : ''}
   </button>`;
 }
@@ -3239,14 +3247,15 @@ function openTemplatePicker() {
   const sections = templateGroups.map(({ id, label }) => {
     const members = templates.filter((item) => item.group === id);
     if (!members.length) return '';
-    return `<section class="template-section" data-group="${escapeAttribute(id)}"><h3>${escapeText(label)}</h3>
+    const groupName = t(`template.group.${id}`);
+    return `<section class="template-section" data-group="${escapeAttribute(id)}"><h3>${escapeText(groupName === `template.group.${id}` ? label : groupName)}</h3>
       <div class="template-list">${members.map((item) => templateCard(item, label)).join('')}</div></section>`;
   }).join('');
-  openEditorPanel('설계 템플릿', `<p class="editor-hint">템플릿마다 먼저 차는 축이 다릅니다. 불러온 뒤 장비를 눌러 어느 축이 병목인지 확인하세요.</p>
+  openEditorPanel(t('template.pickerTitle'), `<p class="editor-hint">${escapeText(t('template.pickerHint'))}</p>
     <div class="template-head">
-      <label class="template-search"><span class="visually-hidden">템플릿 검색</span>
-        <input type="search" id="template-search" placeholder="이름, 태그, 병목으로 검색 (예: TLS, 방화벽, 대역폭)" autocomplete="off"></label>
-      <p class="template-count" id="template-count" aria-live="polite">${templates.length}개</p>
+      <label class="template-search"><span class="visually-hidden">${escapeText(t('editor.templateSearch'))}</span>
+        <input type="search" id="template-search" data-i18n-placeholder="editor.templateSearchPlaceholder" placeholder="Name, tag, or bottleneck" autocomplete="off"></label>
+      <p class="template-count" id="template-count" aria-live="polite">${formatLocaleNumber(templates.length)}</p>
     </div>
     ${sections}`);
   element('template-search').focus();
@@ -3864,7 +3873,7 @@ let toastUndo = null;
 function showToast(message, undo = null) {
   const toast = element('toast');
   toastUndo = undo;
-  toast.innerHTML = `<span>${escapeText(message)}</span>${undo ? '<button type="button" data-toast-undo>되돌리기</button>' : ''}`;
+  toast.innerHTML = `<span>${escapeText(localizeError({ message }))}</span>${undo ? `<button type="button" data-toast-undo>${escapeText(t('common.undo'))}</button>` : ''}`;
   toast.classList.add('visible');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { toast.classList.remove('visible'); toastUndo = null; }, undo ? 6000 : 2200);
@@ -4599,6 +4608,10 @@ document.addEventListener('click', (event) => {
   if (!event.target.closest('.top-menu-wrap')) closeTopMenus();
 });
 document.addEventListener('change', (event) => {
+  if (event.target.matches('[data-language-select]')) {
+    selectLocale(event.target.value);
+    return;
+  }
   if (!event.target.matches('[data-comparison-demand]')) return;
   comparisonDemandId = event.target.value;
   renderComparison();

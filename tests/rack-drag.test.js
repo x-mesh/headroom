@@ -11,8 +11,8 @@ test('a full render keeps the rack palette drag and pointer capture alive', asyn
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
-    await page.addInitScript(() => localStorage.clear());
-    await page.goto('http://127.0.0.1:' + port, { waitUntil: 'networkidle' });
+    await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
+    await page.goto('http://127.0.0.1:' + port + '/?lang=ko', { waitUntil: 'networkidle' });
     await page.locator('[data-workspace="rack"]').click();
 
     const source = page.locator('.rack-palette-item[data-rack-palette-type="standalone"]').first();
@@ -53,8 +53,8 @@ test('the 3D rack view accepts a palette drop on the U the pointer is over', asy
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
-    await page.addInitScript(() => localStorage.clear());
-    await page.goto('http://127.0.0.1:' + port, { waitUntil: 'networkidle' });
+    await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
+    await page.goto('http://127.0.0.1:' + port + '/?lang=ko', { waitUntil: 'networkidle' });
     await page.locator('[data-workspace="rack"]').click();
     await page.locator('[data-rack-view="3d"]').click();
     await page.waitForFunction(() => window.__rackMeshRack3D?.debug().dropZones > 0);
@@ -108,8 +108,8 @@ test('the 2D rack stage moves a placed device and catches drops away from the ra
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
-    await page.addInitScript(() => localStorage.clear());
-    await page.goto('http://127.0.0.1:' + port, { waitUntil: 'networkidle' });
+    await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
+    await page.goto('http://127.0.0.1:' + port + '/?lang=ko', { waitUntil: 'networkidle' });
     await page.locator('[data-workspace="rack"]').click();
 
     const device = page.locator('.rack-elevation[data-rack-id="rack-04-budget"] .rack-device').first();
@@ -175,8 +175,8 @@ test('the 3D rack view drags a placed device to another U without orbiting', asy
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
-    await page.addInitScript(() => localStorage.clear());
-    await page.goto('http://127.0.0.1:' + port, { waitUntil: 'networkidle' });
+    await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
+    await page.goto('http://127.0.0.1:' + port + '/?lang=ko', { waitUntil: 'networkidle' });
     await page.locator('[data-workspace="rack"]').click();
     await page.locator('[data-rack-view="3d"]').click();
     await page.waitForFunction(() => window.__rackMeshRack3D?.debug().dropZones > 0);

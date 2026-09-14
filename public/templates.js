@@ -3,6 +3,7 @@
 import { cloneTopology } from './data.js';
 import { acceptEvidence, addDemand, addDevice, addLink, applySpec, createEmptyTopology, setWorkloadConditions } from './editor.js';
 import { buildSpec, catalogEntry, catalogProfile } from './devices/catalog.js';
+import { localizedTemplate } from './i18n.js';
 
 // 8-튜플은 짧아서 설계 하나가 한눈에 읽힌다. 그 성질을 버리지 않는다. 튜플에 담기지 않는 것
 // (랙 metadata, 외부망 표시, 데이터시트 근거, 포트)을 적어야 하는 장비만 객체로 쓰고, 한 함수가
@@ -1209,9 +1210,11 @@ export const buildTemplate = (id) => {
   const definition = templates.find((template) => template.id === id) || templates[0];
   const topology = definition.build();
   topology.synthetic = definition.id !== 'blank';
+  const copy = (field, fallback) => localizedTemplate(definition.id, field, fallback);
+  const experiment = definition.experiment ? { ...structuredClone(definition.experiment), prompt: copy('prompt', definition.experiment.prompt), observe: copy('observe', definition.experiment.observe), action: { ...definition.experiment.action, label: copy('action', definition.experiment.action.label) } } : null;
   topology.template = {
-    id: definition.id, name: definition.name, teaches: definition.teaches || '',
-    ...(definition.experiment ? { experiment: structuredClone(definition.experiment) } : {}),
+    id: definition.id, name: copy('name', definition.name), teaches: definition.teaches ? copy('teaches', definition.teaches) : '',
+    ...(experiment ? { experiment } : {}),
   };
   return topology;
 };

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,11 +9,11 @@
     <meta property="og:description" content="Model infrastructure constraints, capacity limits, and failure impact.">
     <meta property="og:type" content="website">
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Cg fill='none' stroke='%23c8f135' stroke-width='1.5'%3E%3Cpath d='M6 8h24M6 18h24M6 28h24M10 5v26M26 5v26'/%3E%3C/g%3E%3Cg fill='%23c8f135'%3E%3Ccircle cx='10' cy='8' r='2'/%3E%3Ccircle cx='26' cy='18' r='2'/%3E%3Ccircle cx='10' cy='28' r='2'/%3E%3C/g%3E%3C/svg%3E">
-    <title>Rack Mesh · Infrastructure constraint simulator</title>
+    <title data-i18n-title="meta.title">Rack Mesh · Infrastructure constraint simulator</title>
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
-    <a class="skip-link" href="#workspace">워크스페이스로 건너뛰기</a>
+    <a class="skip-link" href="#workspace" data-i18n="navigation.skipToWorkspace">Skip to workspace</a>
     <main class="app-shell" id="workspace">
       <header class="topbar">
         <div class="brand-area">
@@ -28,20 +28,20 @@
             </div>
           </div>
           <div class="top-menu-wrap start-design-wrap">
-            <button class="new-design-button" id="new-design-button" type="button" data-editor-action="new">설계 시작</button>
-            <button class="new-design-more top-menu-trigger" id="start-menu-button" type="button" aria-expanded="false" aria-controls="start-menu" aria-label="다른 설계 시작 방법"><span class="menu-chevron" aria-hidden="true"></span></button>
-            <div class="top-menu start-menu" id="start-menu" role="menu" aria-label="설계 시작" hidden>
-              <p class="top-menu-heading">설계 시작<span>처음이라면 템플릿으로 시작해 병목과 장애 영향을 바로 확인하세요.</span></p>
-              <div class="top-menu-section"><span>새 설계</span>
-                <button type="button" role="menuitem" data-editor-action="new"><strong>템플릿으로 시작</strong><small>검증할 구조를 골라 바로 분석합니다.</small></button>
-                <button type="button" role="menuitem" data-editor-action="new-blank"><strong>빈 설계</strong><small>장비와 링크를 직접 배치합니다.</small></button>
+            <button class="new-design-button" id="new-design-button" type="button" data-editor-action="new" data-i18n="navigation.startDesign">Start design</button>
+            <button class="new-design-more top-menu-trigger" id="start-menu-button" type="button" aria-expanded="false" aria-controls="start-menu" data-i18n-aria-label="navigation.otherStartMethods"><span class="menu-chevron" aria-hidden="true"></span></button>
+            <div class="top-menu start-menu" id="start-menu" role="menu" aria-label="Start design" data-i18n-aria-label="navigation.startDesign" hidden>
+              <p class="top-menu-heading" data-i18n="navigation.startDesign">Start design<span data-i18n="navigation.startHint">Start with a template to inspect bottlenecks and fault impact.</span></p>
+              <div class="top-menu-section"><span data-i18n="navigation.newDesign">New design</span>
+                <button type="button" role="menuitem" data-editor-action="new"><strong data-i18n="navigation.templateStart">Start with a template</strong><small data-i18n="navigation.templateStartHint">Choose a structure and analyze it.</small></button>
+                <button type="button" role="menuitem" data-editor-action="new-blank"><strong data-i18n="navigation.blankDesign">Blank design</strong><small data-i18n="navigation.blankDesignHint">Place devices and links yourself.</small></button>
               </div>
-              <div class="top-menu-section"><span>기존 설계</span>
-                <button type="button" role="menuitem" data-editor-action="open"><strong>프로젝트 열기</strong><small>Rack Mesh 설계 파일을 불러옵니다. · JSON</small></button>
+              <div class="top-menu-section"><span data-i18n="navigation.existingDesign">Existing design</span>
+                <button type="button" role="menuitem" data-editor-action="open"><strong data-i18n="navigation.openProject">Open project</strong><small data-i18n="navigation.openProjectHint">Load a Rack Mesh design file. · JSON</small></button>
                 <details class="top-menu-disclosure">
-                  <summary>고급 가져오기 <small>drawio와 장비 용량을 불러옵니다. · 2개</small></summary>
-                  <button type="button" role="menuitem" data-editor-action="import-drawio"><strong>drawio 다이어그램</strong><small>도형과 연결선을 편집 가능한 요소로 읽습니다. · XML</small></button>
-                  <button type="button" role="menuitem" data-editor-action="fill-capacity"><strong>가져온 장비 용량 채우기</strong><small>종류별로 데이터시트 모델을 골라 한 번에 붙입니다.</small></button>
+                  <summary><span data-i18n="navigation.advancedImport">Advanced import</span> <small data-i18n="navigation.advancedImportHint">Import drawio and device capacity. · 2 items</small></summary>
+                  <button type="button" role="menuitem" data-editor-action="import-drawio"><strong data-i18n="navigation.drawioDiagram">drawio diagram</strong><small data-i18n="navigation.drawioDiagramHint">Read shapes and links as editable elements. · XML</small></button>
+                  <button type="button" role="menuitem" data-editor-action="fill-capacity"><strong data-i18n="navigation.fillCapacity">Fill imported device capacity</strong><small data-i18n="navigation.fillCapacityHint">Choose datasheet models by type and apply them.</small></button>
                 </details>
               </div>
             </div>
@@ -49,21 +49,22 @@
         </div>
         <div class="topbar-context">
           <div class="workspace-switch" role="tablist" aria-label="설계 작업 공간">
-            <button type="button" role="tab" data-workspace="topology" aria-selected="true">토폴로지</button>
-            <button type="button" role="tab" data-workspace="rack" aria-selected="false">랙 배치</button>
+            <button type="button" role="tab" data-workspace="topology" aria-selected="true" data-i18n="navigation.topology">Topology</button>
+            <button type="button" role="tab" data-workspace="rack" aria-selected="false" data-i18n="navigation.rack">Rack placement</button>
           </div>
           <div class="scenario-copy">
             <strong id="scenario-title">계산 중</strong>
             <span id="scenario-subtitle">계산 중</span>
           </div>
           <label class="scale-control" for="scale-input">
-            <span>부하</span>
-            <input id="scale-input" type="range" min="50" max="180" value="100" step="5" aria-label="워크로드 부하 배율" aria-valuetext="1.00배">
+            <span data-i18n="analysis.load">Load</span>
+            <input id="scale-input" type="range" min="50" max="180" value="100" step="5" data-i18n-aria-label="analysis.workloadScale" aria-valuetext="1.00×">
             <output id="scale-output" for="scale-input">1.00×</output>
           </label>
         </div>
         <div class="top-actions">
-          <button class="solid-button" id="guide-button" type="button" aria-label="이 도구를 읽는 법"><span class="action-icon icon-help" aria-hidden="true"></span><span class="action-label">사용 안내</span></button>
+          <button class="solid-button" id="guide-button" type="button" data-i18n-aria-label="navigation.guideHelp"><span class="action-icon icon-help" aria-hidden="true"></span><span class="action-label" data-i18n="navigation.guide">Guide</span></button>
+          <label class="language-control"><span class="visually-hidden">Language</span><select data-language-select aria-label="Language"><option value="en">English</option><option value="ko">한국어</option><option value="ja">日本語</option></select></label>
           <div class="top-menu-wrap">
             <button class="text-button top-menu-trigger" id="project-menu-button" type="button" aria-expanded="false" aria-controls="project-menu" aria-label="프로젝트 메뉴"><span class="action-icon icon-project" aria-hidden="true"></span><span class="action-label">프로젝트</span> <span class="menu-chevron" aria-hidden="true"></span></button>
             <div class="top-menu" id="project-menu" role="menu" aria-label="프로젝트" hidden>

@@ -16,7 +16,7 @@ const browser = await chromium.launch();
 const setup = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 const setupPage = await setup.newPage();
 await setupPage.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
-await setupPage.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+await setupPage.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
 await setupPage.locator('.workspace-switch [data-workspace="rack"]').click();
 for (const name of ['EDGE RACK 08', 'COMPUTE RACK 09', 'STORAGE RACK 10']) {
   await setupPage.locator('.rack-sidebar [data-rack-action="new-rack"]').click();
@@ -35,7 +35,7 @@ const context = await browser.newContext({
 });
 const page = await context.newPage();
 
-await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
 await page.evaluate(() => document.fonts.ready);
 await page.waitForFunction(() => document.querySelector('#failure-grade')?.textContent.includes('단일 장애점'));
 await page.waitForTimeout(900);

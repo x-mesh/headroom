@@ -8,11 +8,17 @@ import { storageCatalog } from './storage.js';
 import { switchCatalog } from './switches.js';
 import { wirelessCatalog } from './wireless.js';
 import { buildSpec } from '../evidence.js';
+import { localizedCatalog, localizedSourceLabel } from '../i18n.js';
 export { buildSpec } from '../evidence.js';
+
+function localizeProfile(entry, profile) {
+  const source = { ...profile, records: buildSpec(entry, profile).records };
+  return { ...source, get label() { return localizedCatalog(entry.id, profile.id, 'label', profile.label ?? profile.id); }, get note() { return localizedCatalog(entry.id, profile.id, 'note', profile.note ?? ''); } };
+}
 
 export const deviceCatalog = Object.freeze([
   ...firewallCatalog, ...switchCatalog, ...routerCatalog, ...balancerCatalog, ...storageCatalog, ...wirelessCatalog, ...adapterCatalog,
-].map((entry) => ({ ...entry, profiles: entry.profiles.map((profile) => ({ ...profile, records: buildSpec(entry, profile).records })) })));
+].map((entry) => ({ ...entry, get source() { return entry.source ? { ...entry.source, label: localizedSourceLabel(entry.source.type, entry.source.label) } : entry.source; }, profiles: entry.profiles.map((profile) => localizeProfile(entry, profile)) })));
 
 export function catalogEntry(id) {
   return deviceCatalog.find((entry) => entry.id === id) || null;

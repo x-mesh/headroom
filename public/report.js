@@ -1,42 +1,45 @@
 import { axisCatalog } from './data.js';
 import { calculateScenario } from './engine.js';
 import { buildObservedLoadValidationReport, OBSERVED_LOAD_STALE_AFTER_DAYS, observedLoadIsStale } from './measured-import.js';
+import { formatCount, formatNumber, formatPercent, getLocale, t } from './i18n.js';
 
-const STATUS = Object.freeze({ healthy: '정상', warning: '주의', overloaded: '용량 초과', unknown: '미확인', invalid: '입력 오류' });
-const EVALUATION = Object.freeze({ pass: '통과', fail: '실패', unknown: '통과 보류', invalid: '입력 오류', 'not-ready': '수요 없음' });
-const SOURCE = Object.freeze({ datasheet: '데이터시트', third_party_test: '제3자 시험', user_measured: '실측', estimate: '추정', 'user-correction': '사용자 보정' });
-const SERVICE_STATUS = Object.freeze({ pass: '통과', fail: '실패', unknown: '통과 보류', invalid: '입력 오류' });
+const STATUS = Object.freeze({ healthy: 'healthy', warning: 'warning', overloaded: 'overloaded', unknown: 'unknown', invalid: 'invalid' });
+const EVALUATION = Object.freeze({ pass: 'pass', fail: 'fail', unknown: 'passPending', invalid: 'invalid', 'not-ready': 'notReady' });
+const SOURCE = Object.freeze({ datasheet: 'datasheet', third_party_test: 'thirdPartyTest', user_measured: 'measured', estimate: 'estimate', 'user-correction': 'userCorrection' });
+const SERVICE_STATUS = Object.freeze({ pass: 'pass', fail: 'fail', unknown: 'unknown', invalid: 'invalid' });
 const SERVICE_RANK = Object.freeze({ pass: 0, unknown: 1, fail: 2, invalid: 3 });
-const FAILURE_VERDICT = Object.freeze({ severs: '서비스 단절', overloads: '용량 부족', absorbs: '견딤', unknown: '미확인' });
-const SURVIVAL_STATUS = Object.freeze({ survives: '견딤', severed: '단절', 'capacity-insufficient': '현재 부하 미달', unavailable: '계산 불가', calculating: '계산 중' });
-const RACK_STATUS = Object.freeze({ pass: '통과', fail: '예산 초과', unknown: '미확인' });
-const RACK_BASIS = Object.freeze({ nameplate: '명판값', typical: '일반 부하', measured: '실측' });
+const FAILURE_VERDICT = Object.freeze({ severs: 'severs', overloads: 'overloads', absorbs: 'absorbs', unknown: 'unknown' });
+const SURVIVAL_STATUS = Object.freeze({ survives: 'survives', severed: 'severed', 'capacity-insufficient': 'capacity-insufficient', unavailable: 'unavailable', calculating: 'calculating' });
+const RACK_STATUS = Object.freeze({ pass: 'pass', fail: 'fail', unknown: 'unknown' });
+const RACK_BASIS = Object.freeze({ nameplate: 'nameplate', typical: 'typical', measured: 'measured' });
 
 function number(value, unit) {
-  if (!Number.isFinite(value)) return '미확인';
+  if (!Number.isFinite(value)) return t('common.unknown');
   if (unit === 'bps') return value >= 1e9 ? (value / 1e9).toFixed(value >= 10e9 ? 0 : 1) + ' Gbps' : (value / 1e6).toFixed(0) + ' Mbps';
   if (unit === 'pps') return value >= 1e6 ? (value / 1e6).toFixed(2) + ' Mpps' : (value / 1e3).toFixed(0) + ' Kpps';
   if (unit === 'cps') return (value / 1e3).toFixed(0) + ' Kcps';
   if (unit === 'sessions') return (value / 1e3).toFixed(0) + ' K';
-  return new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 1 }).format(value);
+  return formatNumber(value, { maximumFractionDigits: 1 });
 }
 
 function percent(value, signed = false) {
-  if (!Number.isFinite(value)) return '미확인';
-  return (signed && value > 0 ? '+' : '') + Math.round(value * 100) + '%';
+  if (!Number.isFinite(value)) return t('common.unknown');
+  return (signed && value > 0 ? '+' : '') + formatPercent(value, { maximumFractionDigits: 0 });
 }
+
+function itemCount(value) { return t('common.items', { count: formatCount(value) }); }
 
 function sourceFor(resource, axis) {
   const record = (resource.spec?.records || resource.metadata?.records || []).find((item) => item.axis === axis);
   const type = record?.source?.type || resource.source?.type || null;
-  return { type, label: SOURCE[type] || type || '미확인', conditions: record?.conditions ?? null };
+  return { type, label: t('report.' + (SOURCE[type] || 'unknown')) || type || t('common.unknown'), conditions: record?.conditions ?? null };
 }
 
 function axes(resources) {
   return resources.flatMap((resource) => Object.entries(resource.axes || {}).map(([axis, result]) => {
     const status = result.status || 'unknown';
     return { resourceId: resource.id, resourceName: resource.name || resource.id, axis, axisLabel: axisCatalog[axis]?.label || axis,
-      status, statusLabel: STATUS[status] || status, load: number(result.load, axisCatalog[axis]?.unit), limit: number(result.limit, axisCatalog[axis]?.unit),
+      status, statusLabel: t('status.' + STATUS[status]) || status, load: number(result.load, axisCatalog[axis]?.unit), limit: number(result.limit, axisCatalog[axis]?.unit),
       source: sourceFor(resource, axis), applicability: result.evidenceApplicability || null, reason: result.unknownReason || null,
       utilization: result.utilization == null ? null : Math.round(result.utilization * 100) + '%' };
   }));
@@ -50,26 +53,26 @@ function resourceLabel(scenario, id, axis = null) {
 
 function serviceCause(scenario, service) {
   const demands = (service.demandIds || []).map((id) => scenario.demands.find((demand) => demand.id === id)).filter(Boolean);
-  if (demands.some((demand) => demand.status === 'unreachable')) return '경로 단절';
+  if (demands.some((demand) => demand.status === 'unreachable')) return t('report.pathSevered');
   const admission = demands.find((demand) => demand.sessionAdmission?.limitedBy);
   if (admission) return resourceLabel(scenario, admission.sessionAdmission.limitedBy.resourceId, 'new_sessions_per_sec');
   const choke = demands.flatMap((demand) => demand.paths || []).find((path) => path.choke);
   if (choke) return resourceLabel(scenario, choke.choke.resourceId);
   if (scenario.summary.bindingResourceId) return resourceLabel(scenario, scenario.summary.bindingResourceId, scenario.summary.bindingAxis);
-  return '병목 없음';
+  return t('report.noBottleneck');
 }
 
 function baselineChange(status, baselineStatus) {
-  if (!baselineStatus) return '기준선에 없음';
-  if (status === baselineStatus) return '기준선 동일';
-  return SERVICE_RANK[status] > SERVICE_RANK[baselineStatus] ? '기준선 대비 악화' : '기준선 대비 개선';
+  if (!baselineStatus) return t('report.notInBaseline');
+  if (status === baselineStatus) return t('report.same');
+  return SERVICE_RANK[status] > SERVICE_RANK[baselineStatus] ? t('report.worsened') : t('report.improved');
 }
 
 export function buildServiceVerdicts(topology, scenario, baseline) {
   const baselineById = new Map((baseline.services || []).map((service) => [service.id, service]));
   return (scenario.services || []).map((service) => {
     const baselineService = baselineById.get(service.id);
-    return { id: service.id, name: service.name || service.id, status: service.status, statusLabel: SERVICE_STATUS[service.status] || service.status,
+    return { id: service.id, name: service.name || service.id, status: service.status, statusLabel: t('report.' + SERVICE_STATUS[service.status]) || service.status,
       cause: serviceCause(scenario, service), baselineStatus: baselineService?.status || null,
       baselineChange: baselineChange(service.status, baselineService?.status) };
   });
@@ -97,7 +100,7 @@ function reportResilience(topology, analysis = {}) {
   };
   return {
     survivalMultiplier: survival ? {
-      scope: '단일 자원 N-1', status: survival.status, statusLabel: SURVIVAL_STATUS[survival.status] || survival.status,
+      scope: t('report.singleResource'), status: survival.status, statusLabel: t('status.' + SURVIVAL_STATUS[survival.status]) || survival.status,
       multiplier: survival.multiplier, bounded: Boolean(survival.bounded), worstFault: survival.worstFault ? { ...survival.worstFault, name: resourceName(survival.worstFault.id) } : null,
       evaluated: survival.evaluated, candidates: survival.candidates, endpointCount: survival.endpointIds?.length || 0,
       unresolvedCount: survival.unresolvedCount || 0,
@@ -105,9 +108,9 @@ function reportResilience(topology, analysis = {}) {
     domainSweep: domainSweep ? {
       domainCount: domainSweep.domainCount, evaluated: domainSweep.evaluated,
       singles: domainSweep.singles.map((item) => ({ id: item.id, name: item.name, kind: item.kind, verdict: item.verdict,
-        verdictLabel: FAILURE_VERDICT[item.verdict] || item.verdict, bounded: Boolean(item.bounded), minDeliveredRatio: item.minDeliveredRatio })),
+        verdictLabel: t('status.' + FAILURE_VERDICT[item.verdict]) || item.verdict, bounded: Boolean(item.bounded), minDeliveredRatio: item.minDeliveredRatio })),
       pairs: domainSweep.pairs.map((item) => ({ id: item.id, name: item.name, verdict: item.verdict,
-        verdictLabel: FAILURE_VERDICT[item.verdict] || item.verdict, bounded: Boolean(item.bounded), minDeliveredRatio: item.minDeliveredRatio })),
+        verdictLabel: t('status.' + FAILURE_VERDICT[item.verdict]) || item.verdict, bounded: Boolean(item.bounded), minDeliveredRatio: item.minDeliveredRatio })),
       redundancyInvalid: domainSweep.redundancyInvalid.map((item) => ({ id: item.id, name: item.name, kind: item.kind,
         reason: item.reason || 'severs', deliveryDrop: item.deliveryDrop ?? null })),
     } : null,
@@ -120,25 +123,25 @@ function reportRacks(topology, scenario) {
     const powerKnown = rack.powerWatts != null && rack.powerRatio != null;
     const spaceKnown = rack.usedU != null && rack.spaceRatio != null;
     return {
-      id: rack.id, name: rack.name || rack.id, status: rack.status, statusLabel: RACK_STATUS[rack.status] || rack.status,
-      basisLabel: RACK_BASIS[rack.powerBasis] || rack.powerBasis,
-      power: powerKnown ? Math.round(rack.powerWatts) + ' / ' + rack.powerBudgetWatts + ' W · ' + percent(rack.powerRatio) : '미확인',
-      space: spaceKnown ? rack.usedU + ' / ' + rack.capacityU + 'U · ' + percent(rack.spaceRatio) : '미확인',
+      id: rack.id, name: rack.name || rack.id, status: rack.status, statusLabel: t('report.' + RACK_STATUS[rack.status]) || rack.status,
+      basisLabel: t('report.' + RACK_BASIS[rack.powerBasis]) || rack.powerBasis,
+      power: powerKnown ? formatNumber(Math.round(rack.powerWatts)) + ' / ' + formatNumber(rack.powerBudgetWatts) + ' W · ' + percent(rack.powerRatio) : t('common.unknown'),
+      space: spaceKnown ? formatNumber(rack.usedU) + ' / ' + formatNumber(rack.capacityU) + 'U · ' + percent(rack.spaceRatio) : t('common.unknown'),
       // 미확인은 여유가 아니다. 무엇이 비어서 합계를 못 내는지 이름으로 남긴다.
-      note: rack.unknownPower?.length ? '전력 미확인: ' + rack.unknownPower.join(', ')
-        : powerKnown && rack.powerRatio >= threshold && rack.status !== 'fail' ? '경고선 ' + percent(threshold) + ' 초과' : '',
+      note: rack.unknownPower?.length ? t('report.powerUnknown', { names: rack.unknownPower.join(', ') })
+        : powerKnown && rack.powerRatio >= threshold && rack.status !== 'fail' ? t('reportExtra.warningThreshold', { percent: percent(threshold) }) : '',
     };
   });
 }
 
 export function buildReportModel(topology, scenario, baseline, namedScenarios = [], options = {}, analysis = {}) {
   const summary = scenario.summary;
-  const evaluation = EVALUATION[summary.evaluationStatus] || summary.evaluationStatus;
+  const evaluation = t('report.' + (EVALUATION[summary.evaluationStatus] || summary.evaluationStatus));
   const constraints = axes([...scenario.devices, ...scenario.links]);
   const unknown = constraints.filter(({ status }) => status === 'unknown');
   const binding = summary.bindingResourceId ? constraints.find(({ resourceId, axis }) => resourceId === summary.bindingResourceId && axis === summary.bindingAxis) : null;
-  const firstLine = unknown.length ? '미확인 축 ' + unknown.length + '개가 있어 이 결과는 상한입니다.' : evaluation + '입니다.' + (binding ? ' 현재 병목은 ' + binding.resourceName + '의 ' + binding.axisLabel + '입니다.' : '');
-  return { schemaVersion: 1, product: 'Rack Mesh 분석 보고서', evaluation, firstLine,
+  const firstLine = unknown.length ? t('report.unknownAxis', { count: unknown.length }) : evaluation + (getLocale() === 'ko' ? '입니다.' : '.') + (binding ? ' ' + (getLocale() === 'ko' ? '현재 병목은 ' : 'Current bottleneck: ') + binding.resourceName + ' · ' + binding.axisLabel : '');
+  return { schemaVersion: 1, product: t('report.reportProduct'), evaluation, firstLine,
     scenario: { scale: scenario.scale, activeFaults: summary.activeFaults, evaluationStatus: summary.evaluationStatus, unknownCount: summary.unknownCount,
       observedLoad: topology.observedLoad ? { asOf: topology.observedLoad.asOf, aggregate: topology.observedLoad.aggregate, ...(topology.observedLoad.source ? { source: topology.observedLoad.source } : {}), stale: observedLoadIsStale(topology.observedLoad), staleAfterDays: OBSERVED_LOAD_STALE_AFTER_DAYS } : null },
     comparison: { bindingChanged: baseline.summary.bindingResourceId !== summary.bindingResourceId || baseline.summary.bindingAxis !== summary.bindingAxis,
@@ -151,60 +154,62 @@ export function buildReportModel(topology, scenario, baseline, namedScenarios = 
 
 function escape(value) { return String(value).replace(/[&<>\"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char]); }
 
-function observedValidationLabel(group) { return ({ matched: '조건 일치', mismatched: '조건 불일치', unrecorded: '조건 미기록' })[group] || '미확인'; }
+function observedValidationLabel(group) {
+  return ({ matched: t('reportExtra.conditionMatched'), mismatched: t('reportExtra.conditionMismatched'), unrecorded: t('reportExtra.conditionUnrecorded') })[group] || t('common.unknown');
+}
 
 function observedValidationMarkdown(validation) {
   if (!validation.available) return '';
-  const rows = validation.axes.map((axis) => '| ' + (axisCatalog[axis.axis]?.label || axis.axis) + ' | ' + axis.sampleCount + ' | ' + percent(axis.mape) + ' | ' + percent(axis.maxAbsolutePercentageError) + ' | ' + percent(axis.meanSignedPercentageError, true) + ' | 과소 ' + axis.signedError.underModelled + ' · 일치 ' + axis.signedError.exact + ' · 과대 ' + axis.signedError.overModelled + ' |').join('\n');
-  const table = rows ? '| 축 | 표본 | MAPE | 최대 오차 | 평균 부호 오차 | 분포 |\n| --- | ---: | ---: | ---: | ---: | --- |\n' + rows + '\n' : '비교할 수 있는 관측 축이 없습니다.\n';
-  return '\n## 관측 부하 검증\n\n- 조건 집단: ' + observedValidationLabel(validation.conditionGroup) + '\n- 비교 표본: ' + validation.sampleCount + '개\n\n' + table;
+  const rows = validation.axes.map((axis) => '| ' + (axisCatalog[axis.axis]?.label || axis.axis) + ' | ' + axis.sampleCount + ' | ' + percent(axis.mape) + ' | ' + percent(axis.maxAbsolutePercentageError) + ' | ' + percent(axis.meanSignedPercentageError, true) + ' | ' + t('reportExtra.underExactOver', { under: axis.signedError.underModelled, exact: axis.signedError.exact, over: axis.signedError.overModelled }) + ' |').join('\n');
+  const table = rows ? '| ' + [t('report.axis'), t('report.sampleCount'), 'MAPE', t('reportExtra.maxError'), t('reportExtra.meanSignedError'), t('reportExtra.distribution')].join(' | ') + ' |\n| --- | ---: | ---: | ---: | ---: | --- |\n' + rows + '\n' : t('report.noComparableAxes') + '\n';
+  return '\n## ' + t('report.observedValidation') + '\n\n- ' + t('report.conditionGroup') + ': ' + observedValidationLabel(validation.conditionGroup) + '\n- ' + t('report.sampleCount') + ': ' + validation.sampleCount + '\n\n' + table;
 }
 
 function observedValidationHtml(validation) {
   if (!validation.available) return '';
-  const rows = validation.axes.map((axis) => '<tr><td>' + escape(axisCatalog[axis.axis]?.label || axis.axis) + '</td><td>' + axis.sampleCount + '</td><td>' + percent(axis.mape) + '</td><td>' + percent(axis.maxAbsolutePercentageError) + '</td><td>' + percent(axis.meanSignedPercentageError, true) + '</td><td>과소 ' + axis.signedError.underModelled + ' · 일치 ' + axis.signedError.exact + ' · 과대 ' + axis.signedError.overModelled + '</td></tr>').join('');
-  const table = rows ? '<table><thead><tr><th>축</th><th>표본</th><th>MAPE</th><th>최대 오차</th><th>평균 부호 오차</th><th>분포</th></tr></thead><tbody>' + rows + '</tbody></table>' : '<p>비교할 수 있는 관측 축이 없습니다.</p>';
-  return '<h2>관측 부하 검증</h2><p>조건 집단: ' + escape(observedValidationLabel(validation.conditionGroup)) + ' · 비교 표본: ' + validation.sampleCount + '개</p>' + table;
+  const rows = validation.axes.map((axis) => '<tr><td>' + escape(axisCatalog[axis.axis]?.label || axis.axis) + '</td><td>' + axis.sampleCount + '</td><td>' + percent(axis.mape) + '</td><td>' + percent(axis.maxAbsolutePercentageError) + '</td><td>' + percent(axis.meanSignedPercentageError, true) + '</td><td>' + escape(t('reportExtra.underExactOver', { under: axis.signedError.underModelled, exact: axis.signedError.exact, over: axis.signedError.overModelled })) + '</td></tr>').join('');
+  const table = rows ? '<table><thead><tr>' + [t('report.axis'), t('report.sampleCount'), 'MAPE', t('reportExtra.maxError'), t('reportExtra.meanSignedError'), t('reportExtra.distribution')].map((value) => '<th>' + escape(value) + '</th>').join('') + '</tr></thead><tbody>' + rows + '</tbody></table>' : '<p>' + t('report.noComparableAxes') + '</p>';
+  return '<h2>' + t('report.observedValidation') + '</h2><p>' + t('report.conditionGroup') + ': ' + escape(observedValidationLabel(validation.conditionGroup)) + ' · ' + t('report.sampleCount') + ': ' + validation.sampleCount + '</p>' + table;
 }
 
 function resilienceMarkdown(resilience) {
   const survival = resilience.survivalMultiplier;
   const domains = resilience.domainSweep;
-  const survivalSection = survival ? '\n## N-1 생존 배수\n\n- 범위: ' + survival.scope + '\n- 결과: ' + survival.statusLabel + (survival.multiplier == null ? '' : survival.multiplier === 0 ? ' · 생존 불가' : ' · ' + survival.multiplier.toFixed(2) + '×' + (survival.bounded ? ' 이하' : '')) + '\n- 최악 장애: ' + (survival.worstFault?.name || survival.worstFault?.id || '없음') + '\n- 검사: ' + survival.evaluated + '/' + survival.candidates + '개' + (survival.unresolvedCount ? ' · 미확인 ' + survival.unresolvedCount + '개' : '') + '\n' : '';
+  const survivalSection = survival ? '\n## ' + t('reportExtra.survival') + '\n\n- ' + t('reportExtra.range') + ': ' + survival.scope + '\n- ' + t('reportExtra.result') + ': ' + survival.statusLabel + (survival.multiplier == null ? '' : survival.multiplier === 0 ? ' · ' + t('reportExtra.noService') : ' · ' + formatNumber(survival.multiplier, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '×' + (survival.bounded ? ' · ' + t('reportExtra.bounded') : '')) + '\n- ' + t('reportExtra.worstFault') + ': ' + (survival.worstFault?.name || survival.worstFault?.id || t('reportExtra.noWorstFault')) + '\n- ' + t('reportExtra.checks') + ': ' + formatCount(survival.evaluated) + '/' + formatCount(survival.candidates) + (survival.unresolvedCount ? ' · ' + t('reportExtra.unknown', { count: formatCount(survival.unresolvedCount) }) : '') + '\n' : '';
   if (!domains) return survivalSection;
-  const rows = (items) => items.length ? items.map((item) => '| ' + item.name + ' | ' + item.verdictLabel + (item.bounded ? ' · 한계 미확인' : '') + ' | ' + percent(item.minDeliveredRatio) + ' |').join('\n') + '\n' : '| 없음 | — | — |\n';
-  const invalid = domains.redundancyInvalid.length ? '\n- 이중화 무효: ' + domains.redundancyInvalid.map(({ name, reason, deliveryDrop }) => name + (reason === 'delivery-drop' ? ' (전달률 ' + percent(deliveryDrop) + 'p 저하)' : ' (서비스 단절)')).join(', ') + '\n' : '';
-  return survivalSection + '\n## 장애 도메인 스윕\n\n- 도메인: ' + domains.domainCount + '개 · 검사: ' + domains.evaluated + '개' + invalid + '\n### 도메인 N-1\n\n| 도메인 | 판정 | 최소 전달률 |\n| --- | --- | ---: |\n' + rows(domains.singles) + '\n### 도메인 N-2\n\n| 도메인 쌍 | 판정 | 최소 전달률 |\n| --- | --- | ---: |\n' + rows(domains.pairs);
+  const rows = (items) => items.length ? items.map((item) => '| ' + item.name + ' | ' + item.verdictLabel + (item.bounded ? ' · ' + t('reportExtra.bounded') : '') + ' | ' + percent(item.minDeliveredRatio) + ' |').join('\n') + '\n' : '| ' + t('reportExtra.noItems') + ' | — | — |\n';
+  const invalid = domains.redundancyInvalid.length ? '\n- ' + t('reportExtra.redundancyInvalid') + ': ' + domains.redundancyInvalid.map(({ name, reason, deliveryDrop }) => name + (reason === 'delivery-drop' ? ' (' + t('reportExtra.deliveryDrop') + ' ' + percent(deliveryDrop) + 'p)' : ' (' + t('reportExtra.serviceSevered') + ')')).join(', ') + '\n' : '';
+  return survivalSection + '\n## ' + t('reportExtra.domainSweep') + '\n\n- ' + t('reportExtra.domains') + ': ' + formatCount(domains.domainCount) + ' · ' + t('reportExtra.evaluated') + ': ' + formatCount(domains.evaluated) + invalid + '\n### ' + t('reportExtra.domainN1') + '\n\n| ' + t('reportExtra.domain') + ' | ' + t('reportExtra.verdict') + ' | ' + t('reportExtra.minimumDelivered') + ' |\n| --- | --- | ---: |\n' + rows(domains.singles) + '\n### ' + t('reportExtra.domainN2') + '\n\n| ' + t('reportExtra.domainPair') + ' | ' + t('reportExtra.verdict') + ' | ' + t('reportExtra.minimumDelivered') + ' |\n| --- | --- | ---: |\n' + rows(domains.pairs);
 }
 
 function resilienceHtml(resilience) {
   const survival = resilience.survivalMultiplier;
   const domains = resilience.domainSweep;
-  const survivalSection = survival ? '<h2>N-1 생존 배수</h2><dl><dt>범위</dt><dd>' + escape(survival.scope) + '</dd><dt>결과</dt><dd>' + escape(survival.statusLabel) + (survival.multiplier == null ? '' : survival.multiplier === 0 ? ' · 생존 불가' : ' · ' + escape(survival.multiplier.toFixed(2)) + '×' + (survival.bounded ? ' 이하' : '')) + '</dd><dt>최악 장애</dt><dd>' + escape(survival.worstFault?.name || survival.worstFault?.id || '없음') + '</dd><dt>검사</dt><dd>' + survival.evaluated + '/' + survival.candidates + '개' + (survival.unresolvedCount ? ' · 미확인 ' + survival.unresolvedCount + '개' : '') + '</dd></dl>' : '';
+  const survivalSection = survival ? '<h2>' + t('reportExtra.survival') + '</h2><dl><dt>' + t('reportExtra.range') + '</dt><dd>' + escape(survival.scope) + '</dd><dt>' + t('reportExtra.result') + '</dt><dd>' + escape(survival.statusLabel) + (survival.multiplier == null ? '' : survival.multiplier === 0 ? ' · ' + t('reportExtra.noService') : ' · ' + escape(formatNumber(survival.multiplier, { minimumFractionDigits: 2, maximumFractionDigits: 2 })) + '×' + (survival.bounded ? ' · ' + t('reportExtra.bounded') : '')) + '</dd><dt>' + t('reportExtra.worstFault') + '</dt><dd>' + escape(survival.worstFault?.name || survival.worstFault?.id || t('reportExtra.noWorstFault')) + '</dd><dt>' + t('reportExtra.checks') + '</dt><dd>' + formatCount(survival.evaluated) + '/' + formatCount(survival.candidates) + (survival.unresolvedCount ? ' · ' + escape(t('reportExtra.unknown', { count: formatCount(survival.unresolvedCount) })) : '') + '</dd></dl>' : '';
   if (!domains) return survivalSection;
-  const rows = (items) => items.length ? items.map((item) => '<tr><td>' + escape(item.name) + '</td><td>' + escape(item.verdictLabel + (item.bounded ? ' · 한계 미확인' : '')) + '</td><td>' + escape(percent(item.minDeliveredRatio)) + '</td></tr>').join('') : '<tr><td>없음</td><td>—</td><td>—</td></tr>';
-  const invalid = domains.redundancyInvalid.length ? '<p>이중화 무효: ' + escape(domains.redundancyInvalid.map(({ name, reason, deliveryDrop }) => name + (reason === 'delivery-drop' ? ' (전달률 ' + percent(deliveryDrop) + 'p 저하)' : ' (서비스 단절)')).join(', ')) + '</p>' : '';
-  return survivalSection + '<h2>장애 도메인 스윕</h2><p>도메인: ' + domains.domainCount + '개 · 검사: ' + domains.evaluated + '개</p>' + invalid + '<h3>도메인 N-1</h3><table><thead><tr><th>도메인</th><th>판정</th><th>최소 전달률</th></tr></thead><tbody>' + rows(domains.singles) + '</tbody></table><h3>도메인 N-2</h3><table><thead><tr><th>도메인 쌍</th><th>판정</th><th>최소 전달률</th></tr></thead><tbody>' + rows(domains.pairs) + '</tbody></table>';
+  const rows = (items) => items.length ? items.map((item) => '<tr><td>' + escape(item.name) + '</td><td>' + escape(item.verdictLabel + (item.bounded ? ' · ' + t('reportExtra.bounded') : '')) + '</td><td>' + escape(percent(item.minDeliveredRatio)) + '</td></tr>').join('') : '<tr><td>' + t('reportExtra.noItems') + '</td><td>—</td><td>—</td></tr>';
+  const invalid = domains.redundancyInvalid.length ? '<p>' + t('reportExtra.redundancyInvalid') + ': ' + escape(domains.redundancyInvalid.map(({ name, reason, deliveryDrop }) => name + (reason === 'delivery-drop' ? ' (' + t('reportExtra.deliveryDrop') + ' ' + percent(deliveryDrop) + 'p)' : ' (' + t('reportExtra.serviceSevered') + ')')).join(', ')) + '</p>' : '';
+  return survivalSection + '<h2>' + t('reportExtra.domainSweep') + '</h2><p>' + t('reportExtra.domains') + ': ' + formatCount(domains.domainCount) + ' · ' + t('reportExtra.evaluated') + ': ' + formatCount(domains.evaluated) + '</p>' + invalid + '<h3>' + t('reportExtra.domainN1') + '</h3><table><thead><tr><th>' + t('reportExtra.domain') + '</th><th>' + t('reportExtra.verdict') + '</th><th>' + t('reportExtra.minimumDelivered') + '</th></tr></thead><tbody>' + rows(domains.singles) + '</tbody></table><h3>' + t('reportExtra.domainN2') + '</h3><table><thead><tr><th>' + t('reportExtra.domainPair') + '</th><th>' + t('reportExtra.verdict') + '</th><th>' + t('reportExtra.minimumDelivered') + '</th></tr></thead><tbody>' + rows(domains.pairs) + '</tbody></table>';
 }
 
 export function renderReportMarkdown(model) {
   const rows = model.constraints.map((item) => '| ' + item.resourceName + ' | ' + item.axisLabel + ' | ' + item.statusLabel + ' | ' + item.load + ' | ' + item.limit + ' | ' + item.source.label + ' | ' + (item.applicability || '—') + ' |').join('\n');
   const scenarioRows = model.namedScenarios.flatMap((scenario) => scenario.services.map((service) => '| ' + scenario.name + ' | ' + service.name + ' | ' + service.statusLabel + ' | ' + service.cause + ' | ' + service.baselineChange + ' |')).join('\n');
-  const observed = model.scenario.observedLoad ? '- 관측 부하: ' + model.scenario.observedLoad.aggregate.toUpperCase() + ' · ' + model.scenario.observedLoad.asOf + (model.scenario.observedLoad.source === 'zabbix' ? ' · Zabbix' : '') + (model.scenario.observedLoad.stale ? ' · 경고: 관측 시점이 ' + model.scenario.observedLoad.staleAfterDays + '일을 넘었습니다.' : '') + '\n' : '';
-  const scenarios = scenarioRows ? '\n## 저장 시나리오 서비스 판정\n\n| 시나리오 | 서비스 | 판정 | 원인 | 기준선 비교 |\n| --- | --- | --- | --- | --- |\n' + scenarioRows + '\n' : '';
+  const observed = model.scenario.observedLoad ? '- ' + t('reportExtra.observedHeading') + ': ' + model.scenario.observedLoad.aggregate.toUpperCase() + ' · ' + model.scenario.observedLoad.asOf + (model.scenario.observedLoad.source === 'zabbix' ? ' · Zabbix' : '') + (model.scenario.observedLoad.stale ? ' · ' + t('reportExtra.stale', { days: model.scenario.observedLoad.staleAfterDays }) : '') + '\n' : '';
+  const scenarios = scenarioRows ? '\n## ' + t('reportExtra.scenarioHeading') + '\n\n| ' + [t('reportExtra.scenario'), t('reportExtra.service'), t('reportExtra.verdict'), t('reportExtra.cause'), t('reportExtra.baselineChange')].join(' | ') + ' |\n| --- | --- | --- | --- | --- |\n' + scenarioRows + '\n' : '';
   const rackRows = model.racks.map((rack) => '| ' + rack.name + ' | ' + rack.statusLabel + ' | ' + rack.power + ' | ' + rack.space + ' | ' + rack.basisLabel + ' | ' + (rack.note || '—') + ' |').join('\n');
-  const racks = rackRows ? '\n## 랙 수용량\n\n| 랙 | 판정 | 전력 | 공간 | 전력 기준 | 비고 |\n| --- | --- | ---: | ---: | --- | --- |\n' + rackRows + '\n' : '';
-  return '# Rack Mesh 분석 보고서\n\n' + model.firstLine + '\n\n- 판정: ' + model.evaluation + '\n- 배율: ' + model.scenario.scale.toFixed(2) + '×\n- 활성 장애: ' + model.scenario.activeFaults + '개\n' + observed + resilienceMarkdown(model.resilience) + '\n## 축별 근거와 판정\n\n| 자원 | 축 | 상태 | 부하 | 한계 | 출처 | 적용 판정 |\n| --- | --- | --- | ---: | ---: | --- | --- |\n' + rows + '\n' + observedValidationMarkdown(model.observedLoadValidation) + racks + scenarios;
+  const racks = rackRows ? '\n## ' + t('reportExtra.rackHeading') + '\n\n| ' + [t('reportExtra.rack'), t('reportExtra.verdict'), t('reportExtra.power'), t('reportExtra.space'), t('reportExtra.basis'), t('reportExtra.note')].join(' | ') + ' |\n| --- | --- | ---: | ---: | --- | --- |\n' + rackRows + '\n' : '';
+  return '# ' + t('report.title') + '\n\n' + model.firstLine + '\n\n- ' + t('report.evaluation') + ': ' + model.evaluation + '\n- ' + t('report.scale') + ': ' + formatNumber(model.scenario.scale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '×\n- ' + t('report.activeFaults') + ': ' + itemCount(model.scenario.activeFaults) + '\n' + observed + resilienceMarkdown(model.resilience) + '\n## ' + t('reportExtra.constraintsHeading') + '\n\n| ' + [t('reportExtra.resource'), t('reportExtra.axis'), t('reportExtra.status'), t('reportExtra.load'), t('reportExtra.limit'), t('reportExtra.source'), t('reportExtra.applicability')].join(' | ') + ' |\n| --- | --- | --- | ---: | ---: | --- | --- |\n' + rows + '\n' + observedValidationMarkdown(model.observedLoadValidation) + racks + scenarios;
 }
 
 export function renderReportHtml(model) {
   const rows = model.constraints.map((item) => '<tr><td>' + escape(item.resourceName) + '</td><td>' + escape(item.axisLabel) + '</td><td>' + escape(item.statusLabel) + '</td><td>' + escape(item.load) + '</td><td>' + escape(item.limit) + '</td><td>' + escape(item.source.label) + '</td><td>' + escape(item.applicability || '—') + '</td></tr>').join('');
   const scenarioRows = model.namedScenarios.flatMap((scenario) => scenario.services.map((service) => '<tr><td>' + escape(scenario.name) + '</td><td>' + escape(service.name) + '</td><td>' + escape(service.statusLabel) + '</td><td>' + escape(service.cause) + '</td><td>' + escape(service.baselineChange) + '</td></tr>')).join('');
-  const scenarios = scenarioRows ? '<h2>저장 시나리오 서비스 판정</h2><table><thead><tr><th>시나리오</th><th>서비스</th><th>판정</th><th>원인</th><th>기준선 비교</th></tr></thead><tbody>' + scenarioRows + '</tbody></table>' : '';
+  const scenarios = scenarioRows ? '<h2>' + t('reportExtra.scenarioHeading') + '</h2><table><thead><tr>' + [t('reportExtra.scenario'), t('reportExtra.service'), t('reportExtra.verdict'), t('reportExtra.cause'), t('reportExtra.baselineChange')].map((value) => '<th>' + escape(value) + '</th>').join('') + '</tr></thead><tbody>' + scenarioRows + '</tbody></table>' : '';
   const rackRows = model.racks.map((rack) => '<tr><td>' + escape(rack.name) + '</td><td>' + escape(rack.statusLabel) + '</td><td>' + escape(rack.power) + '</td><td>' + escape(rack.space) + '</td><td>' + escape(rack.basisLabel) + '</td><td>' + escape(rack.note || '—') + '</td></tr>').join('');
-  const racks = rackRows ? '<h2>랙 수용량</h2><table><thead><tr><th>랙</th><th>판정</th><th>전력</th><th>공간</th><th>전력 기준</th><th>비고</th></tr></thead><tbody>' + rackRows + '</tbody></table>' : '';
-  const observed = model.scenario.observedLoad ? '<p>관측 부하: ' + escape(model.scenario.observedLoad.aggregate.toUpperCase()) + ' · ' + escape(model.scenario.observedLoad.asOf) + (model.scenario.observedLoad.source === 'zabbix' ? ' · Zabbix' : '') + (model.scenario.observedLoad.stale ? ' · 경고: 관측 시점이 ' + escape(model.scenario.observedLoad.staleAfterDays) + '일을 넘었습니다.' : '') + '</p>' : '';
-  return '<!doctype html><html lang="ko"><meta charset="utf-8"><title>Rack Mesh 분석 보고서</title><body><h1>Rack Mesh 분석 보고서</h1><p>' + escape(model.firstLine) + '</p><dl><dt>판정</dt><dd>' + escape(model.evaluation) + '</dd><dt>배율</dt><dd>' + escape(model.scenario.scale.toFixed(2)) + '×</dd><dt>활성 장애</dt><dd>' + escape(model.scenario.activeFaults) + '개</dd></dl>' + observed + resilienceHtml(model.resilience) + '<h2>축별 근거와 판정</h2><table><thead><tr><th>자원</th><th>축</th><th>상태</th><th>부하</th><th>한계</th><th>출처</th><th>적용 판정</th></tr></thead><tbody>' + rows + '</tbody></table>' + observedValidationHtml(model.observedLoadValidation) + racks + scenarios + '</body></html>';
+  const racks = rackRows ? '<h2>' + t('reportExtra.rackHeading') + '</h2><table><thead><tr>' + [t('reportExtra.rack'), t('reportExtra.verdict'), t('reportExtra.power'), t('reportExtra.space'), t('reportExtra.basis'), t('reportExtra.note')].map((value) => '<th>' + escape(value) + '</th>').join('') + '</tr></thead><tbody>' + rackRows + '</tbody></table>' : '';
+  const observed = model.scenario.observedLoad ? '<p>' + t('reportExtra.observedHeading') + ': ' + escape(model.scenario.observedLoad.aggregate.toUpperCase()) + ' · ' + escape(model.scenario.observedLoad.asOf) + (model.scenario.observedLoad.source === 'zabbix' ? ' · Zabbix' : '') + (model.scenario.observedLoad.stale ? ' · ' + escape(t('reportExtra.stale', { days: model.scenario.observedLoad.staleAfterDays })) : '') + '</p>' : '';
+  return '<!doctype html><html lang="' + getLocale() + '"><meta charset="utf-8"><title>' + escape(t('report.title')) + '</title><body><h1>' + escape(t('report.title')) + '</h1><p>' + escape(model.firstLine) + '</p><dl><dt>' + t('report.evaluation') + '</dt><dd>' + escape(model.evaluation) + '</dd><dt>' + t('report.scale') + '</dt><dd>' + escape(formatNumber(model.scenario.scale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })) + '×</dd><dt>' + t('report.activeFaults') + '</dt><dd>' + escape(itemCount(model.scenario.activeFaults)) + '</dd></dl>' + observed + resilienceHtml(model.resilience) + '<h2>' + t('reportExtra.constraintsHeading') + '</h2><table><thead><tr>' + [t('reportExtra.resource'), t('reportExtra.axis'), t('reportExtra.status'), t('reportExtra.load'), t('reportExtra.limit'), t('reportExtra.source'), t('reportExtra.applicability')].map((value) => '<th>' + escape(value) + '</th>').join('') + '</tr></thead><tbody>' + rows + '</tbody></table>' + observedValidationHtml(model.observedLoadValidation) + racks + scenarios + '</body></html>';
 }
 
 export function renderReportJson(model) { return JSON.stringify(model, null, 2); }

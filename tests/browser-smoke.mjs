@@ -30,13 +30,64 @@ async function clickEditorAction(page, action) {
   if (inEditorMenu) await page.locator('.editor-menu').evaluate((menu) => { menu.open = false; });
 }
 
+async function verifyLocales() {
+  const expected = {
+    en: { start: 'Start design', guide: 'Inspect design limits and fault impact first' },
+    ko: { start: '설계 시작', guide: '설계의 한계와 장애 영향을 먼저 확인하세요' },
+    ja: { start: '設計を始める', guide: '設計の限界と障害の影響を先に確認' },
+  };
+  for (const locale of ['en', 'ko', 'ja']) {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    const warnings = [];
+    await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
+    page.on('console', (message) => { if (message.type() === 'error' || message.text().startsWith('[i18n]')) warnings.push(message.text()); });
+    await page.goto('http://127.0.0.1:' + port + '/?lang=' + locale, { waitUntil: 'networkidle' });
+    await page.waitForFunction((value) => document.documentElement.lang === value, locale);
+    assert.equal(await page.locator('[data-language-select]').inputValue(), locale);
+    assert.equal(await page.locator('#new-design-button').textContent(), expected[locale].start);
+    assert.match(await page.title(), /Rack Mesh/);
+    assert.equal(await page.locator('meta[name="description"]').getAttribute('content') !== '', true);
+    if (locale !== 'ko') {
+      const koreanSystemText = await page.evaluate(() => {
+        const excluded = 'script,style,textarea,input,option,[contenteditable=true],[data-content-owned]';
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        const values = [];
+        while (walker.nextNode()) {
+          const node = walker.currentNode;
+          if (node.parentElement?.closest(excluded) || node.parentElement?.closest('[hidden]')) continue;
+          const value = node.nodeValue.trim();
+          if (value && /[가-힣]/.test(value)) values.push(value);
+        }
+        return values;
+      });
+      assert.deepEqual(koreanSystemText, [], locale + ' default screen has Korean system text');
+      const poolLabels = await page.locator('.node-pool').allTextContents();
+      assert.equal(poolLabels.some((value) => value.includes(locale === 'en' ? 'Pool' : 'プール')), true, locale + ' localizes bundled pool labels');
+      assert.equal(await page.locator('.node-meta').filter({ hasText: locale === 'en' ? 'shared spine power' : '共有電源' }).count() > 0, true, locale + ' localizes the bundled power domain');
+    }
+    await page.locator('#guide-button').evaluate((button) => button.click());
+    await page.waitForSelector('#tour:not([hidden])');
+    assert.equal(await page.locator('#tour-title').textContent(), expected[locale].guide);
+    assert.deepEqual(warnings, [], locale + ' has console localization errors');
+    await page.close();
+  }
+  const persistence = await browser.newPage({ viewport: { width: 900, height: 700 } });
+  await persistence.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-locale', 'ko'); localStorage.setItem('rack-mesh-guide-seen', '1'); });
+  await persistence.goto('http://127.0.0.1:' + port + '/?lang=ja#locale-test', { waitUntil: 'networkidle' });
+  assert.equal(await persistence.evaluate(() => document.documentElement.lang), 'ja');
+  await persistence.locator('[data-language-select]').selectOption('en');
+  await persistence.waitForFunction(() => document.documentElement.lang === 'en');
+  assert.equal(await persistence.evaluate(() => location.hash), '#locale-test');
+  await persistence.close();
+}
+
 // 캔버스 편집은 선택·스크롤·설계를 모두 바꾸므로 깨끗한 페이지에서 따로 확인한다.
 async function verifyCanvasEditing() {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } });
   await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}\n${String(error.stack).split("\n").slice(1, 4).join("\n")}`));
-  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+  await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
   await page.evaluate(() => document.fonts.ready);
   await page.waitForFunction(() => document.querySelector('#failure-grade')?.textContent.includes('단일 장애점'));
   const survivalTile = page.locator('#summary-survival');
@@ -435,7 +486,7 @@ async function verifyBackendPool() {
   await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`pool console: ${message.text()}`); });
   page.on('pageerror', (error) => failures.push(`pool pageerror: ${error.message}`));
-  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+  await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
   await page.locator('#new-design-button').click();
   assert.equal(await page.locator('[data-template="dual-fabric"]').count(), 1, '공유 전원 템플릿을 설계 목록에서 열 수 있어야 합니다');
   await page.locator('[data-template="dual-stack"]').click();
@@ -475,7 +526,7 @@ async function verifySharedPowerTemplate() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
   page.on('pageerror', (error) => failures.push(`shared power template pageerror: ${error.message}`));
-  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+  await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
   await page.locator('#new-design-button').click();
   const template = page.locator('[data-template="dual-fabric"]');
   await template.waitFor();
@@ -496,7 +547,7 @@ async function verify(viewport, screenshot, interact = false) {
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}\n${String(error.stack).split("\n").slice(1, 4).join("\n")}`));
   page.on('requestfailed', (request) => { if (!request.url().includes('/assets/guide-preview.')) failures.push(`request: ${request.url()} ${request.failure()?.errorText}`); });
-  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+  await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
   await page.evaluate(() => document.fonts.ready);
   if (viewport.width > 1180) {
     const canvasWidth = await page.locator('.topology-panel').evaluate((node) => node.getBoundingClientRect().width);
@@ -535,7 +586,7 @@ async function verify(viewport, screenshot, interact = false) {
   await scenarioForm.locator('button[type="submit"]').click();
   const savedScenario = page.locator('.saved-scenario', { hasText: '기준 시나리오' });
   await savedScenario.waitFor();
-  assert.match(await savedScenario.textContent(), /Public API[\s\S]*(통과|통과 보류|실패|입력 오류)[\s\S]*기준선 동일/,
+  assert.match(await savedScenario.textContent(), /Public API[\s\S]*(통과|통과 보류|실패|입력 오류|미확인|Pass|Fail|Unknown)[\s\S]*(기준선 동일|Baseline unchanged)/,
     'saved scenarios show a service verdict and its baseline comparison');
   await page.locator('[data-verification-tab="domain"]').click();
   const headroomBeforeSuggestion = await page.locator('#summary-headroom').textContent();
@@ -773,7 +824,7 @@ async function verify(viewport, screenshot, interact = false) {
   const beforeTour = await page.evaluate(() => ({
     scale: document.querySelector('#scale-input').value, faults: document.querySelector('#summary-faults').textContent,
   }));
-  await page.locator('#guide-button').click();
+  await page.locator('#guide-button').evaluate((button) => button.click());
   await page.waitForFunction(() => document.querySelector('#tour')?.hidden === false);
   await page.locator('[data-guide="start"]').click();
   assert.match(await page.locator('.tour-count').textContent(), /^1 \/ \d+$/);
@@ -1722,10 +1773,10 @@ async function verify(viewport, screenshot, interact = false) {
 // 왜 움직이는지 설명할 수 없다.
 async function verifyNumberMotion() {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } });
-  await page.addInitScript(() => localStorage.clear());
+  await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}\n${String(error.stack).split("\n").slice(1, 4).join("\n")}`));
-  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+  await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
   await page.locator('.view-settings > summary').click();
 
   assert.equal(await page.locator('[data-number-motion="on"]').getAttribute('aria-pressed'), 'true',
@@ -1824,7 +1875,7 @@ async function verifyTopologyViews() {
   });
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`console: ${message.text()}`); });
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
-  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+  await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
 
   assert.equal(await page.locator('button[data-topology-view="voxel"]').getAttribute('aria-pressed'), 'true', 'Voxel 도면은 기본 표시 방식이어야 합니다');
   const paletteKinds = await page.locator('[data-palette-kind]').evaluateAll((items) => [...new Set(items.map((item) => item.dataset.paletteKind))]);
@@ -1886,7 +1937,7 @@ async function verifyTourAnchoring() {
   await page.addInitScript(() => localStorage.clear());
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.stack || error.message}`));
   await page.addInitScript(() => window.addEventListener('error', (event) => console.error(`failure-location ${event.filename}:${event.lineno}:${event.colno}`)));
-  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+  await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
   await page.waitForSelector('#tour:not([hidden])');
   assert.match(await page.locator('#tour-title').textContent(), /설계의 한계와 장애 영향/, '첫 방문은 제품 범위를 먼저 설명해야 합니다');
   assert.match(await page.locator('.tour-text').textContent(), /구성도를 그리고/, '첫 방문은 구성도를 편집할 수 있음을 알려야 합니다');
@@ -1950,7 +2001,7 @@ async function verifyVirtualFailureList() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
-  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+  await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
   const project = await page.evaluate(() => {
     const topology = {
       devices: Array.from({ length: 24 }, (_, index) => ({ id: `n-${index}`, name: `NODE ${index}`, kind: 'hub', zone: 'TEST', position: { x: index * 12, y: 120 }, limits: { forwarding_bps: 1e12 } })),
@@ -1982,7 +2033,7 @@ async function verifyInferredSwapSlot() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
   page.on('pageerror', (error) => failures.push(`swap slot pageerror: ${error.message}`));
-  await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'networkidle' });
+  await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
   const project = await page.evaluate(() => JSON.stringify({ schemaVersion: 3, product: 'Rack Mesh', topology: {
     devices: [
       { id: 'edge-a', name: 'EDGE A', kind: 'router', zone: 'EDGE', position: { x: 10, y: 10 }, limits: { forwarding_bps: 1e12 } },
@@ -2013,6 +2064,7 @@ async function verifyInferredSwapSlot() {
 try {
   if (process.env.ONLY_VIRTUAL_FAILURE_LIST) await verifyVirtualFailureList();
   else {
+    await verifyLocales();
     await verify({ width: 1440, height: 1000 }, '.impeccable/review/desktop.png', true);
     await verify({ width: 390, height: 844 }, '.impeccable/review/mobile.png');
     await verifyCanvasEditing();

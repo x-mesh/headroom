@@ -1,17 +1,16 @@
-// 같은 축을 자리마다 다른 이름으로 부르면 화면이 어려워진다. label 은 문장용 정식 이름,
-// shortLabel 은 목록·요약용 축약, nodeLabel 은 노드 카드의 좁은 칸용이며 셋 다 한국어로
-// 통일한다. 예전에는 카드가 BPS·CPS, 인스펙터가 처리량·신규 세션이라 같은 값이 두 이름을
-// 가졌다. 데이터시트에서 그대로 읽어야 하는 단위(bps·pps·cps)는 unit 이 따로 들고 있다.
+import { localizedAxis, localizedBehavior, localizedTemplate } from './i18n.js';
+
+// Stable axis IDs stay in project data. Display labels resolve from the active locale.
 export const axisCatalog = {
-  forwarding_bps: { label: '처리량', shortLabel: '처리량', unit: 'bps', nodeLabel: '처리량', deliveryRole: 'throughput' },
-  forwarding_pps: { label: '패킷 처리량', shortLabel: '패킷', unit: 'pps', nodeLabel: '패킷', deliveryRole: 'throughput' },
-  new_sessions_per_sec: { label: '신규 세션', shortLabel: '신규 세션', unit: 'cps', nodeLabel: '신규세션', deliveryRole: 'admission' },
-  concurrent_sessions: { label: '동시 세션', shortLabel: '동시 세션', unit: 'sessions', nodeLabel: '동시세션', deliveryRole: 'admission' },
-  vpn_tunnels: { label: '동시 VPN 터널', shortLabel: 'VPN 터널', unit: 'tunnels', nodeLabel: 'VPN', deliveryRole: 'admission' },
-  nic_bps: { label: 'NIC 처리량', shortLabel: 'NIC 처리량', unit: 'bps', nodeLabel: 'NIC', deliveryRole: 'throughput' },
-  nic_pps: { label: 'NIC 패킷', shortLabel: 'NIC 패킷', unit: 'pps', nodeLabel: 'NIC패킷', deliveryRole: 'throughput' },
-  tls_full_handshakes_per_sec: { label: 'TLS 신규 핸드셰이크', shortLabel: 'TLS 신규', unit: 'tps', nodeLabel: 'TLS신규', deliveryRole: 'admission' },
-  tls_resumed_handshakes_per_sec: { label: 'TLS 재개 핸드셰이크', shortLabel: 'TLS 재개', unit: 'tps', nodeLabel: 'TLS재개', deliveryRole: 'admission' },
+  forwarding_bps: { get label() { return localizedAxis('forwarding_bps', 'label', 'Throughput'); }, get shortLabel() { return localizedAxis('forwarding_bps', 'shortLabel', 'Throughput'); }, unit: 'bps', get nodeLabel() { return localizedAxis('forwarding_bps', 'nodeLabel', 'Throughput'); }, deliveryRole: 'throughput' },
+  forwarding_pps: { get label() { return localizedAxis('forwarding_pps', 'label', 'Packet throughput'); }, get shortLabel() { return localizedAxis('forwarding_pps', 'shortLabel', 'Packets'); }, unit: 'pps', get nodeLabel() { return localizedAxis('forwarding_pps', 'nodeLabel', 'Packets'); }, deliveryRole: 'throughput' },
+  new_sessions_per_sec: { get label() { return localizedAxis('new_sessions_per_sec', 'label', 'New sessions'); }, get shortLabel() { return localizedAxis('new_sessions_per_sec', 'shortLabel', 'New sessions'); }, unit: 'cps', get nodeLabel() { return localizedAxis('new_sessions_per_sec', 'nodeLabel', 'New sessions'); }, deliveryRole: 'admission' },
+  concurrent_sessions: { get label() { return localizedAxis('concurrent_sessions', 'label', 'Concurrent sessions'); }, get shortLabel() { return localizedAxis('concurrent_sessions', 'shortLabel', 'Concurrent sessions'); }, unit: 'sessions', get nodeLabel() { return localizedAxis('concurrent_sessions', 'nodeLabel', 'Sessions'); }, deliveryRole: 'admission' },
+  vpn_tunnels: { get label() { return localizedAxis('vpn_tunnels', 'label', 'Concurrent VPN tunnels'); }, get shortLabel() { return localizedAxis('vpn_tunnels', 'shortLabel', 'VPN tunnels'); }, unit: 'tunnels', get nodeLabel() { return localizedAxis('vpn_tunnels', 'nodeLabel', 'VPN'); }, deliveryRole: 'admission' },
+  nic_bps: { get label() { return localizedAxis('nic_bps', 'label', 'NIC throughput'); }, get shortLabel() { return localizedAxis('nic_bps', 'shortLabel', 'NIC throughput'); }, unit: 'bps', get nodeLabel() { return localizedAxis('nic_bps', 'nodeLabel', 'NIC'); }, deliveryRole: 'throughput' },
+  nic_pps: { get label() { return localizedAxis('nic_pps', 'label', 'NIC packets'); }, get shortLabel() { return localizedAxis('nic_pps', 'shortLabel', 'NIC packets'); }, unit: 'pps', get nodeLabel() { return localizedAxis('nic_pps', 'nodeLabel', 'NIC packets'); }, deliveryRole: 'throughput' },
+  tls_full_handshakes_per_sec: { get label() { return localizedAxis('tls_full_handshakes_per_sec', 'label', 'New TLS handshakes'); }, get shortLabel() { return localizedAxis('tls_full_handshakes_per_sec', 'shortLabel', 'New TLS'); }, unit: 'tps', get nodeLabel() { return localizedAxis('tls_full_handshakes_per_sec', 'nodeLabel', 'New TLS'); }, deliveryRole: 'admission' },
+  tls_resumed_handshakes_per_sec: { get label() { return localizedAxis('tls_resumed_handshakes_per_sec', 'label', 'Resumed TLS handshakes'); }, get shortLabel() { return localizedAxis('tls_resumed_handshakes_per_sec', 'shortLabel', 'Resumed TLS'); }, unit: 'tps', get nodeLabel() { return localizedAxis('tls_resumed_handshakes_per_sec', 'nodeLabel', 'Resumed TLS'); }, deliveryRole: 'admission' },
 };
 
 // 응답이 볼류메트릭 부하에서 차지하는 몫. 웹 워크로드는 응답이 대부분이다.
@@ -22,28 +21,28 @@ export const DEFAULT_RESPONSE_SHARE = 0.9;
 // 선언한다. 없는 숫자 차이를 지어내지 않기 위한 것이다.
 export const behaviorCatalog = {
   lb: {
-    label: '동작 모드', affectsLoad: true, default: 'inline',
+    get label() { return localizedBehavior('lb', 'catalog', 'label', 'Behavior mode'); }, affectsLoad: true, default: 'inline',
     options: {
       inline: {
-        label: 'inline (풀 프록시)', token: 'INLINE', carries: { request: true, response: true },
-        note: '요청과 응답이 모두 로드밸런서를 지납니다. 양방향 바이트를 전부 부담합니다.',
+        get label() { return localizedBehavior('lb', 'inline', 'label', 'inline (full proxy)'); }, token: 'INLINE', carries: { request: true, response: true },
+        get note() { return localizedBehavior('lb', 'inline', 'note', 'Requests and responses both cross the load balancer.'); },
       },
       dsr: {
-        label: 'DSR (직접 반환)', token: 'DSR', carries: { request: true, response: false },
-        note: 'DSR의 응답 직접 반환을 장비 부하 비율로 근사합니다. 연결 추적 부하는 유지하며, 실제 응답 우회 링크·경로는 별도로 모델링해야 합니다.',
+        get label() { return localizedBehavior('lb', 'dsr', 'label', 'DSR (direct return)'); }, token: 'DSR', carries: { request: true, response: false },
+        get note() { return localizedBehavior('lb', 'dsr', 'note', 'Responses return directly. Connection tracking load remains.'); },
       },
     },
   },
   firewall: {
-    label: '배치 모드', affectsLoad: false, default: 'routed',
+    get label() { return localizedBehavior('firewall', 'catalog', 'label', 'Placement mode'); }, affectsLoad: false, default: 'routed',
     options: {
       routed: {
-        label: 'routed (L3)', token: 'L3', carries: { request: true, response: true },
-        note: 'L3 홉으로 동작합니다. 지나는 바이트는 transparent 와 같습니다.',
+        get label() { return localizedBehavior('firewall', 'routed', 'label', 'routed (L3)'); }, token: 'L3', carries: { request: true, response: true },
+        get note() { return localizedBehavior('firewall', 'routed', 'note', 'The device acts as an L3 hop.'); },
       },
       transparent: {
-        label: 'transparent (L2)', token: 'L2', carries: { request: true, response: true },
-        note: 'bump-in-the-wire 로 동작합니다. 세션 소유와 장애 도메인만 달라집니다.',
+        get label() { return localizedBehavior('firewall', 'transparent', 'label', 'transparent (L2)'); }, token: 'L2', carries: { request: true, response: true },
+        get note() { return localizedBehavior('firewall', 'transparent', 'note', 'The device acts as a bump-in-the-wire.'); },
       },
     },
   },
@@ -149,5 +148,13 @@ export const demoTopology = {
 };
 
 export function cloneTopology(topology = demoTopology) {
-  return structuredClone(topology);
+  const copy = structuredClone(topology);
+  if (copy.template?.id === 'demo') {
+    copy.template.name = localizedTemplate('demo', 'name', copy.template.name);
+    copy.template.teaches = localizedTemplate('demo', 'teaches', copy.template.teaches);
+    copy.template.experiment.prompt = localizedTemplate('demo', 'prompt', copy.template.experiment.prompt);
+    copy.template.experiment.observe = localizedTemplate('demo', 'observe', copy.template.experiment.observe);
+    copy.template.experiment.action.label = localizedTemplate('demo', 'action', copy.template.experiment.action.label);
+  }
+  return copy;
 }
