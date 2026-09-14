@@ -1,0 +1,19 @@
+{
+  "upstream": "https://github.com/mrdoob/three.js",
+  "package": "three@0.186.0",
+  "path": "build",
+  "fetchedAt": "2026-09-14",
+  "files": [
+    {
+      "file": "three.module.js",
+      "bytes": 662772,
+      "sha256": "9052042d676cb0fdc1ddfefe193053f34b7ac0513a616fdac4535d49987812ea"
+    },
+    {
+      "file": "three.core.js",
+      "bytes": 1458113,
+      "sha256": "9edde002b066a9a05676a6127f67735b62baf399bdea529f2f7e31657da769e6"
+    }
+  ],
+  "license": "MIT"
+}

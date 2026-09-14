@@ -5,9 +5,10 @@ import { fileURLToPath } from 'node:url';
 
 // 브라우저가 쓰는 것만 내준다. 예전에는 저장소 루트를 그대로 서빙해서 .git 과 node_modules,
 // 내부 문서까지 열려 있었다 - Makefile 의 기본 HOST 가 0.0.0.0 이라 같은 망 전체에 열렸다.
+// public/ 밖에서 무언가를 끌어와 내주지 않는다. 예전에는 /vendor/three.module.js 를
+// node_modules 에서 대신 내줬는데, 배포 이미지는 public/ 만 담으므로 개발에서만 3D 가 뜨고
+// 운영에서는 404 가 났다. 여기서 내주는 것과 배포하는 것이 같아야 스모크가 구멍을 잡는다.
 const root = resolve(fileURLToPath(new URL('../public', import.meta.url)));
-const threeModule = resolve(fileURLToPath(new URL('../node_modules/three/build/three.module.js', import.meta.url)));
-const threeCore = resolve(fileURLToPath(new URL('../node_modules/three/build/three.core.js', import.meta.url)));
 const port = Number(process.env.RACK_MESH_PORT || process.argv[2] || 4173);
 const host = process.env.RACK_MESH_HOST || process.argv[3] || '127.0.0.1';
 const dev = process.env.RACK_MESH_DEV === '1';
@@ -21,14 +22,6 @@ export const server = createServer((request, response) => {
   if (dev && pathname === reloadPath) {
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
     response.write('retry: 500\n\n'); clients.add(response); request.on('close', () => clients.delete(response)); return;
-  }
-  if (pathname === '/vendor/three.module.js') {
-    response.writeHead(200, { 'content-type': mime['.js'], 'cache-control': 'no-store' });
-    createReadStream(threeModule).pipe(response); return;
-  }
-  if (pathname === '/vendor/three.core.js') {
-    response.writeHead(200, { 'content-type': mime['.js'], 'cache-control': 'no-store' });
-    createReadStream(threeCore).pipe(response); return;
   }
   const relative = normalize(pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, ''));
   const path = resolve(join(root, relative));
