@@ -38,8 +38,11 @@
               </div>
               <div class="top-menu-section"><span>기존 설계</span>
                 <button type="button" role="menuitem" data-editor-action="open"><strong>프로젝트 열기</strong><small>Rack Mesh 설계 파일을 불러옵니다. · JSON</small></button>
-                <button type="button" role="menuitem" data-editor-action="import-drawio"><strong>drawio 다이어그램</strong><small>도형과 연결선을 편집 가능한 요소로 읽습니다. · XML</small></button>
-                <button type="button" role="menuitem" data-editor-action="fill-capacity"><strong>가져온 장비 용량 채우기</strong><small>종류별로 데이터시트 모델을 골라 한 번에 붙입니다.</small></button>
+                <details class="top-menu-disclosure">
+                  <summary>고급 가져오기 <small>drawio와 장비 용량을 불러옵니다. · 2개</small></summary>
+                  <button type="button" role="menuitem" data-editor-action="import-drawio"><strong>drawio 다이어그램</strong><small>도형과 연결선을 편집 가능한 요소로 읽습니다. · XML</small></button>
+                  <button type="button" role="menuitem" data-editor-action="fill-capacity"><strong>가져온 장비 용량 채우기</strong><small>종류별로 데이터시트 모델을 골라 한 번에 붙입니다.</small></button>
+                </details>
               </div>
             </div>
           </div>
@@ -68,11 +71,14 @@
               <div class="top-menu-section"><span>설계 파일</span>
                 <button type="button" role="menuitem" data-editor-action="save"><strong>프로젝트 저장</strong><small>토폴로지, 조건, 장애 상태를 저장합니다. · JSON</small></button>
               </div>
-              <div class="top-menu-section"><span>가져오기</span>
-                <button type="button" role="menuitem" data-editor-action="import-device"><strong>장비 데이터</strong><small>Rack Mesh 또는 NetBox 장비 정보를 읽습니다. · JSON</small></button>
-                <button type="button" role="menuitem" data-editor-action="import-measured-limits"><strong>실측 한계</strong><small>포화 증거가 있는 한계만 적용합니다. · JSON</small></button>
-                <button type="button" role="menuitem" data-editor-action="import-observed-load"><strong>관측 부하</strong><small>현재 자원 부하 스냅샷을 적용합니다. · JSON</small></button>
-                <button type="button" role="menuitem" data-editor-action="import-zabbix-observed-load"><strong>Zabbix 관측 부하</strong><small>공식 템플릿 key 또는 명시한 host·item key 매핑만 적용합니다. · JSON</small></button>
+              <div class="top-menu-section">
+                <details class="top-menu-disclosure">
+                  <summary>고급 가져오기 <small>외부 장비와 관측 자료를 적용합니다. · 4개</small></summary>
+                  <button type="button" role="menuitem" data-editor-action="import-device"><strong>장비 데이터</strong><small>Rack Mesh 또는 NetBox 장비 정보를 읽습니다. · JSON</small></button>
+                  <button type="button" role="menuitem" data-editor-action="import-measured-limits"><strong>실측 한계</strong><small>포화 증거가 있는 한계만 적용합니다. · JSON</small></button>
+                  <button type="button" role="menuitem" data-editor-action="import-observed-load"><strong>관측 부하</strong><small>현재 자원 부하 스냅샷을 적용합니다. · JSON</small></button>
+                  <button type="button" role="menuitem" data-editor-action="import-zabbix-observed-load"><strong>Zabbix 관측 부하</strong><small>공식 템플릿 key 또는 명시한 host·item key 매핑만 적용합니다. · JSON</small></button>
+                </details>
               </div>
             </div>
           </div>
@@ -98,12 +104,15 @@
               <div class="top-menu-section">
                 <button type="button" role="menuitem" data-export-action="result"><strong>결과 JSON</strong><small>계산 결과, 기준선, 판정을 내보냅니다.</small></button>
                 <button type="button" role="menuitem" data-export-action="report-markdown"><strong>보고서 Markdown</strong><small>리뷰 문서에 붙일 요약과 축별 근거를 냅니다.</small></button>
-                <button type="button" role="menuitem" data-export-action="report-html"><strong>보고서 HTML</strong><small>공유할 독립형 보고서를 냅니다.</small></button>
-                <button type="button" role="menuitem" data-export-action="report-json"><strong>보고서 JSON</strong><small>같은 보고서 모델을 기계가 읽게 냅니다.</small></button>
                 <button type="button" role="menuitem" data-editor-action="export-svg"><strong>SVG 이미지</strong><small>현재 캔버스 보기로 벡터 이미지를 만듭니다.</small></button>
                 <button type="button" role="menuitem" data-editor-action="export-png"><strong>PNG 이미지</strong><small>현재 캔버스 보기로 고해상도 이미지를 만듭니다.</small></button>
-                <button type="button" role="menuitem" data-editor-action="export-svg-anonymized"><strong>익명 SVG 이미지</strong><small>현재 보기에서 장비명과 모델을 익명화합니다.</small></button>
-                <button type="button" role="menuitem" data-editor-action="export-png-anonymized"><strong>익명 PNG 이미지</strong><small>현재 보기에서 장비명과 모델을 익명화합니다.</small></button>
+                <details class="top-menu-disclosure">
+                  <summary>고급 포맷 <small>독립 보고서와 익명 이미지를 만듭니다. · 4개</small></summary>
+                  <button type="button" role="menuitem" data-export-action="report-html"><strong>보고서 HTML</strong><small>공유할 독립형 보고서를 냅니다.</small></button>
+                  <button type="button" role="menuitem" data-export-action="report-json"><strong>보고서 JSON</strong><small>같은 보고서 모델을 기계가 읽게 냅니다.</small></button>
+                  <button type="button" role="menuitem" data-editor-action="export-svg-anonymized"><strong>익명 SVG 이미지</strong><small>현재 보기에서 장비명과 모델을 익명화합니다.</small></button>
+                  <button type="button" role="menuitem" data-editor-action="export-png-anonymized"><strong>익명 PNG 이미지</strong><small>현재 보기에서 장비명과 모델을 익명화합니다.</small></button>
+                </details>
               </div>
             </div>
           </div>

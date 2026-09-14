@@ -4571,13 +4571,21 @@ function closeTopMenus({ restoreFocus = false } = {}) {
   });
 }
 
+function visibleTopMenuItems(menu) {
+  return [...menu.querySelectorAll('[role="menuitem"]')].filter((item) => {
+    const box = item.getBoundingClientRect();
+    const disclosure = item.closest('details');
+    return (!disclosure || disclosure.open) && item.getClientRects().length > 0 && box.width > 0 && box.height > 0;
+  });
+}
+
 function setTopMenu(trigger, open) {
   closeTopMenus();
   if (!open) return;
   const menu = element(trigger.getAttribute('aria-controls'));
   trigger.setAttribute('aria-expanded', 'true');
   menu.hidden = false;
-  menu.querySelector('[role="menuitem"]')?.focus();
+  visibleTopMenuItems(menu)[0]?.focus();
 }
 
 document.addEventListener('click', (event) => {
@@ -4600,7 +4608,8 @@ document.addEventListener('keydown', (event) => {
   const menu = event.target.closest('.top-menu');
   if (event.key === 'Escape') { closeTopMenus({ restoreFocus: true }); return; }
   if (!menu || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-  const items = [...menu.querySelectorAll('[role="menuitem"]')];
+  const items = visibleTopMenuItems(menu);
+  if (!items.length) return;
   const current = items.indexOf(document.activeElement);
   const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (current + (event.key === 'ArrowDown' ? 1 : items.length - 1) + items.length) % items.length;
   event.preventDefault(); items[next]?.focus();
