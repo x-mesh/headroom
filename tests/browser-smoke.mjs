@@ -1898,6 +1898,8 @@ async function verifyTopologyViews() {
   await page.waitForFunction(() => window.__rackMeshSpatial3D?.debug().renderer === 'WebGLRenderer');
   const webglBefore = await page.evaluate(() => window.__rackMeshSpatial3D.debug());
   assert.equal(webglBefore.renderer, 'WebGLRenderer', '3D 공간은 WebGLRenderer를 사용해야 합니다');
+  assert.equal(webglBefore.style, 'equipment-diorama', '3D 공간은 실제 장비 비율과 전면 패널을 사용하는 장비 디오라마여야 합니다');
+  assert.equal(webglBefore.lighting, 'unlit', '3D 공간은 실시간 광원 셰이더를 사용하지 않아야 합니다');
   assert.ok(webglBefore.meshes > await page.locator('.mesh-node').count(), '3D 공간은 장비마다 실제 geometry mesh를 만들어야 합니다');
   assert.ok(webglBefore.packets > 0, '3D 공간은 링크 위에 움직이는 traffic mesh를 만들어야 합니다');
   assert.equal(await page.locator('#topology-stage').evaluate((node) => getComputedStyle(node).display), 'none', '3D 공간에서는 DOM 토폴로지를 숨겨야 합니다');
