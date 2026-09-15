@@ -7,6 +7,18 @@ const PROFILES = Object.freeze({
   storage: [3.2, 2.8, 2.45, 0x436360], nas: [3.0, 2.5, 2.25, 0x4b6965], backup: [3.0, 2.55, 2.3, 0x526a64], cloud: [3.35, 1.0, 3.0, 0x3e7771], client: [2.5, .65, 1.75, 0x4c625b],
 });
 const STATUS = Object.freeze({ healthy: 0x077165, warning: 0x8b5100, overloaded: 0xb83c34, unknown: 0x697286, invalid: 0xb83c34, disabled: 0x697286 });
+const STORAGE_KINDS = new Set(['server', 'web', 'vm', 'db', 'mail', 'mainframe', 'storage', 'nas', 'backup']);
+const SECURITY_KINDS = new Set(['firewall', 'ips', 'waf', 'vpn', 'sslvpn', 'lb']);
+
+function material(color, options = {}) {
+  return new THREE.MeshStandardMaterial({ color, roughness: .34, metalness: .48, ...options });
+}
+
+function frontMesh(geometry, surface, x, y, z) {
+  const mesh = new THREE.Mesh(geometry, surface);
+  mesh.position.set(x, y, z);
+  return mesh;
+}
 
 function makeLabel(text, status) {
   const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 128;
@@ -17,35 +29,55 @@ function makeLabel(text, status) {
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false })); sprite.scale.set(5.6, 1.4, 1); return sprite;
 }
 
-function makeDevice(device) {
+function makeDevice(device, selected) {
   const [width, height, depth, color] = PROFILES[device.kind] || [2.8, 1.1, 2.0, 0x47645d];
   const status = device.active ? device.primaryStatus : 'disabled'; const group = new THREE.Group(); group.userData = { deviceId: device.id, pickable: true };
-  const chassis = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), new THREE.MeshStandardMaterial({ color: device.active ? color : 0x59635f, roughness: .38, metalness: .35 }));
+  const front = depth / 2 + .035; const accent = STATUS[status];
+  const chassis = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material(device.active ? color : 0x59635f));
   chassis.position.y = height / 2; chassis.castShadow = true; chassis.receiveShadow = true; chassis.userData = group.userData; group.add(chassis);
-  const railMaterial = new THREE.MeshStandardMaterial({ color: STATUS[status], emissive: STATUS[status], emissiveIntensity: device.active ? .55 : 0 });
-  const rail = new THREE.Mesh(new THREE.BoxGeometry(width * .82, .08, .08), railMaterial); rail.position.set(0, height * .52, depth / 2 + .05); group.add(rail);
-  const ports = Math.min(12, device.kind === 'switch' ? 12 : device.kind === 'router' ? 6 : 4);
+  const faceplate = frontMesh(new THREE.BoxGeometry(width * .9, height * .76, .06), material(0x142720, { roughness: .28, metalness: .62 }), 0, height * .5, front); group.add(faceplate);
+  const railMaterial = material(accent, { emissive: accent, emissiveIntensity: device.active ? (selected ? 1.25 : .55) : 0 });
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(width * .8, .07, .08), railMaterial); rail.position.set(0, height * .81, depth / 2 + .08); group.add(rail);
+  const badge = frontMesh(new THREE.BoxGeometry(Math.min(.5, width * .18), Math.min(.18, height * .22), .07), material(0xcee3da, { roughness: .42 }), -width * .32, height * .67, front + .025); group.add(badge);
+  const display = frontMesh(new THREE.BoxGeometry(Math.min(.55, width * .22), Math.min(.16, height * .2), .075), material(device.active ? 0x082d26 : 0x25312e, { emissive: device.active ? 0x0c4d40 : 0, emissiveIntensity: .5 }), width * .29, height * .67, front + .03); group.add(display);
+  const ports = Math.min(18, device.kind === 'switch' ? 18 : SECURITY_KINDS.has(device.kind) ? 8 : device.kind === 'router' ? 6 : 4);
+  const portRows = device.kind === 'switch' && height > .9 ? 2 : 1;
   for (let index = 0; index < ports; index += 1) {
-    const port = new THREE.Mesh(new THREE.BoxGeometry(.16, .12, .05), new THREE.MeshStandardMaterial({ color: 0x0e2420, emissive: index % 3 === 0 && device.active ? STATUS[status] : 0x000000, emissiveIntensity: .5 }));
-    port.position.set((index - (ports - 1) / 2) * Math.min(.31, width * .72 / ports), height * .38, depth / 2 + .04); group.add(port);
+    const row = index % portRows; const column = Math.floor(index / portRows); const columns = Math.ceil(ports / portRows);
+    const port = new THREE.Mesh(new THREE.BoxGeometry(Math.min(.17, width * .63 / columns), .1, .055), material(0x081511, { emissive: column % 3 === 0 && device.active ? accent : 0x000000, emissiveIntensity: .65 }));
+    port.position.set((column - (columns - 1) / 2) * Math.min(.28, width * .67 / columns), height * (.34 + row * .19), front + .055); group.add(port);
   }
-  if (['server', 'web', 'vm', 'db', 'mail', 'mainframe', 'storage', 'nas', 'backup'].includes(device.kind)) {
-    for (let row = 0; row < 2; row += 1) for (let column = 0; column < 2; column += 1) {
-      const bay = new THREE.Mesh(new THREE.BoxGeometry(.48, .22, .06), new THREE.MeshStandardMaterial({ color: 0x152b27, metalness: .55, roughness: .3 }));
-      bay.position.set(-width * .22 + column * .58, height * (.32 + row * .24), depth / 2 + .045); group.add(bay);
+  if (STORAGE_KINDS.has(device.kind)) {
+    const rows = height >= 2.4 ? 3 : 2; const columns = width >= 3 ? 5 : 4;
+    for (let row = 0; row < rows; row += 1) for (let column = 0; column < columns; column += 1) {
+      const bay = new THREE.Mesh(new THREE.BoxGeometry(width * .13, height * .13, .07), material(0x0d1d18, { metalness: .7, roughness: .25 }));
+      bay.position.set((column - (columns - 1) / 2) * width * .16, height * (.25 + row * .18), front + .06); group.add(bay);
+      if ((row + column) % 3 === 0 && device.active) {
+        const led = new THREE.Mesh(new THREE.SphereGeometry(.035, 8, 6), railMaterial); led.position.set(bay.position.x + width * .045, bay.position.y, front + .105); group.add(led);
+      }
     }
+  }
+  if (SECURITY_KINDS.has(device.kind)) for (const side of [-1, 1]) {
+    const vent = new THREE.Mesh(new THREE.CylinderGeometry(.11, .11, .02, 12), material(0x06130f, { metalness: .8 })); vent.rotation.x = Math.PI / 2; vent.position.set(side * width * .32, height * .52, front + .065); group.add(vent);
   }
   if (device.kind === 'wireless') for (const side of [-1, 1]) {
     const antenna = new THREE.Mesh(new THREE.CylinderGeometry(.035, .035, 1.35, 8), railMaterial); antenna.position.set(side * width * .28, height + .5, 0); antenna.rotation.z = side * -.22; group.add(antenna);
+  }
+  for (const side of [-1, 1]) {
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(.22, .08, .26), material(0x10211b)); foot.position.set(side * width * .33, .04, depth * .22); foot.castShadow = true; group.add(foot);
+  }
+  if (selected) {
+    const halo = new THREE.Mesh(new THREE.BoxGeometry(width + .18, height + .18, depth + .18), new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: .17, side: THREE.BackSide })); halo.position.y = height / 2; group.add(halo);
   }
   const label = makeLabel(device.name, '#' + STATUS[status].toString(16).padStart(6, '0')); label.position.set(0, height + 1.15, 0); label.userData = group.userData; group.add(label);
   return group;
 }
 
-function makeLink(from, to, status, active) {
-  const curve = new THREE.LineCurve3(from.clone().setY(.32), to.clone().setY(.32));
-  const material = new THREE.MeshStandardMaterial({ color: STATUS[status] || 0x5b8076, emissive: STATUS[status] || 0x1e4f47, emissiveIntensity: active ? .3 : 0, roughness: .45 });
-  const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 12, .055, 8, false), material); mesh.receiveShadow = true; return { mesh, curve };
+function makeLink(from, to, status, active, selected) {
+  const rise = selected ? 1.9 : 1.15; const midpoint = from.clone().lerp(to, .5).setY(rise);
+  const curve = new THREE.QuadraticBezierCurve3(from.clone().setY(.34), midpoint, to.clone().setY(.34));
+  const color = STATUS[status] || 0x5b8076; const linkMaterial = material(color, { emissive: color, emissiveIntensity: active ? (selected ? .95 : .3) : 0, roughness: .3 });
+  const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 18, selected ? .11 : .055, 8, false), linkMaterial); mesh.receiveShadow = true; return { mesh, curve };
 }
 
 export function createSpatialScene({ host, canvas, labels, onSelect, onViewChange, initialView, reducedMotion = false }) {
@@ -73,9 +105,10 @@ export function createSpatialScene({ host, canvas, labels, onSelect, onViewChang
   function clearWorld() { for (const child of [...world.children].slice(2)) { world.remove(child); disposeObject(child); } pickables = []; packets = []; }
   function update({ devices, links, selectedId }) {
     clearWorld(); if (!devices.length) return; const positions = new Map(); const xs = devices.map((item) => item.position.x); const ys = devices.map((item) => item.position.y); const centerX = (Math.min(...xs) + Math.max(...xs)) / 2; const centerY = (Math.min(...ys) + Math.max(...ys)) / 2;
-    for (const device of devices) { const mesh = makeDevice(device); mesh.position.set((device.position.x - centerX) / 28, device.id === selectedId ? .7 : 0, (device.position.y - centerY) / 28); positions.set(device.id, mesh.position.clone()); world.add(mesh); pickables.push(...mesh.children.filter((child) => child.isMesh || child.isSprite)); }
-    for (const link of links) { const from = positions.get(link.source); const to = positions.get(link.target); if (!from || !to) continue; const status = link.severed ? 'disabled' : link.primaryStatus || 'healthy'; const result = makeLink(from, to, status, !link.severed); world.add(result.mesh); if (!link.severed && (link.axes?.forwarding_bps?.utilization ?? 0) > 0) { const dot = new THREE.Mesh(new THREE.SphereGeometry(.13, 12, 8), new THREE.MeshStandardMaterial({ color: STATUS[status], emissive: STATUS[status], emissiveIntensity: 1.2 })); world.add(dot); packets.push({ dot, curve: result.curve, t: Math.random(), speed: .08 + Math.min(link.axes.forwarding_bps.utilization, 1) * .16 }); } }
-    labels.textContent = devices.length + ' DEVICES · ' + links.length + ' LINKS · WEBGL';
+    for (const device of devices) { const selected = device.id === selectedId; const mesh = makeDevice(device, selected); mesh.position.set((device.position.x - centerX) / 28, selected ? .7 : 0, (device.position.y - centerY) / 28); positions.set(device.id, mesh.position.clone()); world.add(mesh); pickables.push(...mesh.children.filter((child) => child.isMesh || child.isSprite)); }
+    const connected = new Set(links.filter((link) => link.source === selectedId || link.target === selectedId).map((link) => link.id));
+    for (const link of links) { const from = positions.get(link.source); const to = positions.get(link.target); if (!from || !to) continue; const status = link.severed ? 'disabled' : link.primaryStatus || 'healthy'; const selected = connected.has(link.id); const result = makeLink(from, to, status, !link.severed, selected); world.add(result.mesh); if (!link.severed && (selected || (link.axes?.forwarding_bps?.utilization ?? 0) > 0)) { const dot = new THREE.Mesh(new THREE.SphereGeometry(selected ? .17 : .13, 12, 8), material(STATUS[status], { emissive: STATUS[status], emissiveIntensity: selected ? 1.8 : 1.2 })); world.add(dot); packets.push({ dot, curve: result.curve, t: Math.random(), speed: .08 + Math.min(link.axes?.forwarding_bps?.utilization ?? 0, 1) * .16 }); } }
+    labels.textContent = selectedId ? 'SELECTED PATH · ' + devices.length + ' DEVICES · ' + links.length + ' LINKS' : devices.length + ' DEVICES · ' + links.length + ' LINKS · WEBGL';
   }
   function reportView() { onViewChange?.({ yaw: THREE.MathUtils.radToDeg(view.yaw), pitch: THREE.MathUtils.radToDeg(view.pitch), distance: view.distance }); }
   function orbit(dx, dy, report = true) { view.yaw += dx * .007; view.pitch = THREE.MathUtils.clamp(view.pitch + dy * .006, .22, 1.36); if (report) reportView(); }
