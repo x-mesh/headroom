@@ -1,4 +1,4 @@
-import * as THREE from '/vendor/three.module.js';
+import * as THREE from './vendor/three.module.js';
 
 // 1U = 44.45mm, 1 world unit = 1/6 m. 랙 높이를 U 수에서 계산해야 3U 인클로저와 42U 랙이 한 축척으로 선다.
 const U = .2667;

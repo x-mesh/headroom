@@ -45,4 +45,10 @@ test('the three.js the 3D views import is vendored next to them', () => {
     assert.equal(existsSync(join(root, 'vendor', file)), true, `public/vendor/${file} 이 없습니다`);
   }
   assert.match(readFileSync(join(root, 'vendor/three.module.js'), 'utf8'), /three\.core\.js/);
+  for (const file of ['rack-3d.js', 'spatial-3d.js']) {
+    assert.match(
+      readFileSync(join(root, file), 'utf8'),
+      /from ['\"]\.\/vendor\/three\.module\.js['\"]/
+    );
+  }
 });

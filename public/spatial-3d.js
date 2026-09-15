@@ -1,4 +1,4 @@
-import * as THREE from '/vendor/three.module.js';
+import * as THREE from './vendor/three.module.js';
 
 const PROFILES = Object.freeze({
   switch: [3.6, .72, 2.1, 0x2f675c], hub: [3.2, .78, 2.0, 0x386b61], router: [3.2, 1.0, 2.25, 0x315e56], modem: [2.7, .9, 1.9, 0x41675f], wireless: [2.8, .45, 2.5, 0x477b70],
