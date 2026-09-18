@@ -57,7 +57,8 @@ messages.meta = {
   title: 'Headroom · インフラ容量と復元力の計画',
   description: 'Headroomはインフラの制約、容量の限界、障害の影響をモデル化します。',
   ogTitle: 'Headroom · インフラ容量と復元力の計画',
-  ogDescription: 'インフラの制約、容量の限界、障害の影響をモデル化します。',
+  ogDescription: '最初に限界に達する機器と容量軸を見つけ、障害を注入し、機器を買う前に冗長化を確認します。',
+  imageAlt: '合成デモ設計で1つの電源を共有する2台のスパインスイッチを示すHeadroomの画面',
 };
 messages.navigation.openProjectHint = 'Headroom設計ファイルを読み込みます。 · JSON';
 messages.navigation.importDeviceHint = 'HeadroomまたはNetBoxの機器情報を読み込みます。 · JSON';

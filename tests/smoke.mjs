@@ -22,6 +22,21 @@ try {
     const resolved = new URL(asset[1], `${base}/headroom/`);
     if (asset[1].startsWith('./')) assert.equal(resolved.pathname.startsWith('/headroom/'), true, `${asset[1]} must retain the Pages project path`);
   }
+  // 링크 미리보기는 크롤러가 JS 없이 정적 문서만 읽어 만든다. 공유 태그는 문서에 절대 주소로
+  // 박혀 있어야 하고, 가리키는 이미지는 배포본에 있으며 적어 둔 크기와 같아야 한다.
+  const pagesUrl = 'https://x-mesh.github.io/headroom/';
+  const share = Object.fromEntries([...document.matchAll(/<meta (?:property|name)="((?:og|twitter):[^"]+)" content="([^"]*)">/g)].map(([, key, value]) => [key, value]));
+  for (const key of ['og:site_name', 'og:url', 'og:title', 'og:description', 'og:image', 'og:image:alt', 'twitter:card', 'twitter:title', 'twitter:description', 'twitter:image']) {
+    assert.ok(share[key], `${key} must be in the static document`);
+  }
+  assert.equal(share['twitter:card'], 'summary_large_image');
+  for (const key of ['og:url', 'og:image', 'twitter:image']) assert.ok(share[key].startsWith(pagesUrl), `${key} must be an absolute Pages URL`);
+  const shareImagePath = `/${share['og:image'].slice(pagesUrl.length)}`;
+  const shareImage = await fetch(`${base}${shareImagePath}`);
+  assert.equal(shareImage.headers.get('content-type'), share['og:image:type'], `${shareImagePath} must be served as its declared type`);
+  const shareImageBytes = Buffer.from(await shareImage.arrayBuffer());
+  assert.deepEqual([shareImageBytes.readUInt32BE(16), shareImageBytes.readUInt32BE(20)], [Number(share['og:image:width']), Number(share['og:image:height'])],
+    'og:image must match its declared width and height');
   // 서버가 내주는 것과 배포 이미지가 담는 것이 같아야 한다. 예전에는 /vendor/three.module.js
   // 를 node_modules 에서 대신 내줘서, 스모크는 통과하는데 운영에서는 404 가 났다.
   const shipped = ['/vendor/three.module.js', '/vendor/three.core.js', '/vendor/mx-edge-style.js', '/fonts/Pretendard-Regular.woff2'];

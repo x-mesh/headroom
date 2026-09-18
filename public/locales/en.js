@@ -202,7 +202,8 @@ messages.meta = {
   title: 'Headroom · Infrastructure capacity and resilience planning',
   description: 'Headroom models infrastructure constraints, capacity limits, and failure impact.',
   ogTitle: 'Headroom · Infrastructure capacity and resilience planning',
-  ogDescription: 'Model infrastructure constraints, capacity limits, and failure impact.',
+  ogDescription: 'Find the device and capacity axis that breaks first, inject faults, and verify redundancy before you buy the hardware.',
+  imageAlt: 'Headroom marking two spine switches that share one power feed in a synthetic demo design',
 };
 messages.navigation.openProjectHint = 'Load a Headroom project file. · JSON';
 messages.navigation.importDeviceHint = 'Read Headroom or NetBox device data. · JSON';

@@ -45,7 +45,8 @@ messages.meta = {
   title: 'Headroom · 인프라 용량 및 복원력 계획',
   description: 'Headroom은 인프라 제약, 용량 한계, 장애 영향을 모델링합니다.',
   ogTitle: 'Headroom · 인프라 용량 및 복원력 계획',
-  ogDescription: '인프라 제약, 용량 한계, 장애 영향을 모델링합니다.',
+  ogDescription: '먼저 한계에 닿는 장비와 용량 축을 찾고, 장애를 넣어 보고, 장비를 사기 전에 이중화를 확인합니다.',
+  imageAlt: '합성 데모 설계에서 전원 하나를 같이 쓰는 스파인 스위치 두 대를 짚어 보이는 Headroom 화면',
 };
 messages.navigation.openProjectHint = 'Headroom 설계 파일을 불러옵니다. · JSON';
 messages.navigation.importDeviceHint = 'Headroom 또는 NetBox 장비 정보를 읽습니다. · JSON';
