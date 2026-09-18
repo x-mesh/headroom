@@ -22,7 +22,7 @@ colors:
   signal-deep: "#4f7100"
   amber: "#8b5100"
   danger: "#b83c34"
-  unknown: "#697286"
+  unknown: "#5b6478"
   cyan: "#077165"
   action-ink: "#173028"
 typography:
@@ -40,7 +40,7 @@ typography:
     letterSpacing: "-0.025em"
   body:
     fontFamily: "Avenir Next, Avenir, Pretendard, Segoe UI, sans-serif"
-    fontSize: "11px"
+    fontSize: "12px"
     fontWeight: 400
     lineHeight: 1.55
   answer:
@@ -56,7 +56,7 @@ typography:
     lineHeight: 1.1
   data:
     fontFamily: "SFMono-Regular, Menlo, Consolas, Pretendard, monospace"
-    fontSize: "10px"
+    fontSize: "11px"
     fontWeight: 600
     lineHeight: 1
   micro:
@@ -67,7 +67,7 @@ typography:
     letterSpacing: "0.08em"
   label:
     fontFamily: "SFMono-Regular, Menlo, Consolas, Pretendard, monospace"
-    fontSize: "9px"
+    fontSize: "10px"
     fontWeight: 600
     lineHeight: 1
     letterSpacing: "0.13em"
@@ -177,7 +177,7 @@ The palette separates a calm daylight workspace from a deep operational frame. S
 - **Capacity Cyan** (#077165): Use for healthy resources, active links, live telemetry, and the first sparkline.
 - **Constraint Amber** (#8b5100): Use for caution states and the second sparkline.
 - **Fault Red** (#b83c34): Use for overloads, failures, negative changes, and the third sparkline.
-- **Unknown Slate** (#697286): Use when a capacity limit is not known.
+- **Unknown Slate** (#5b6478): Use when a capacity limit is not known.
 
 ### Neutral
 
@@ -200,8 +200,9 @@ The palette separates a calm daylight workspace from a deep operational frame. S
 
 **The Tint Is The Floor Rule.** Every semantic text color must clear 4.5:1 on the sage surface tint,
 not only on the pale surface. The tint is where the design board and the comparison panel put their
-notes, so a color chosen against white lands there a step short. The four semantic inks were darkened
-once for this reason; a fifth must be checked against `#dceae2` before it ships.
+notes, so a color chosen against white lands there a step short. The semantic inks were darkened for
+this reason, unknown slate last: at #697286 it read 3.89:1 on the tint. A new ink must be checked
+against `#dceae2` before it ships.
 
 ## Typography
 
@@ -230,15 +231,29 @@ third thing. Fetch the files with `npm run fonts:vendor`; the notice lives in `v
 - **Display** (600, fluid 18px to 22px, 1.15): Use for the canvas answer. It only has to outrank the
   answer tier below it; past that it eats canvas.
 - **Title** (600, 17px, 1.2): Use for panels, the brand, and comparison titles.
-- **Body** (400, 11px, 1.55): Use for notes, source conditions, and scenario context.
+- **Body** (400, 12px, 1.55, `--type-body`): Use for notes, source conditions, and scenario context.
 - **Answer** (700, 13px, 1.25): Use for the binding resource named under the canvas heading.
 - **Metric** (700, 15px, 1.1): Use for a utilisation a reader scans down a column, as in the worst-axis list.
-- **Data** (600, 10px, 1): Use for metrics, states, resource data, and compact controls.
-- **Label** (600, 9px, 0.13em): Use uppercase text for section codes and zone labels.
+- **Data** (600, 11px, 1, `--type-data`): Use for metrics, states, resource data, tabs, chips, and every
+  control a reader presses.
+- **Label** (600, 10px, 0.13em, `--type-label`): Use uppercase text for section codes and zone labels.
+  Never for a control and never for a value.
+- **Micro** (500, 7px to 10px): Use only inside drawings: topology device cards, link labels, rack
+  elevations, and 3D labels. A drawing is read at its zoom level, so it keeps its own scale.
 
 ### Named Rules
 
 **The Data Voice Rule.** Use monospace text for values, machine states, identifiers, and operational labels.
+
+**The Floor Outside The Drawing Rule.** Outside a drawing, no text sits below the label size, and
+nothing a reader presses or reads as a value sits below the data size. Sizes come from the three
+`--type-*` tokens, not from a literal. Hangul carries more strokes per glyph than a Latin capital, so
+the 8px and 9px that read as crisp uppercase codes turn to smudge in Korean.
+
+**The Hangul Has No Capitals Rule.** The wide tracking on labels is built for uppercase Latin. Korean
+and Japanese have no case, and tracking pulls their syllables apart, so labels drop it under
+`html[lang="ko"]` and `html[lang="ja"]`. Korean text also breaks at word boundaries
+(`word-break: keep-all`), never inside a word.
 
 ## Layout
 
