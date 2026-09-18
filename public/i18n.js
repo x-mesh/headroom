@@ -137,8 +137,9 @@ export function localizeDocument(locale = activeLocale, documentRef = globalThis
   documentRef.documentElement.lang = selected;
   documentRef.title = t('meta.title');
   documentRef.querySelector('meta[name="description"]')?.setAttribute('content', t('meta.description'));
-  documentRef.querySelector('meta[property="og:title"]')?.setAttribute('content', t('meta.ogTitle'));
-  documentRef.querySelector('meta[property="og:description"]')?.setAttribute('content', t('meta.ogDescription'));
+  documentRef.querySelectorAll('meta[property="og:title"], meta[name="twitter:title"]').forEach((node) => node.setAttribute('content', t('meta.ogTitle')));
+  documentRef.querySelectorAll('meta[property="og:description"], meta[name="twitter:description"]').forEach((node) => node.setAttribute('content', t('meta.ogDescription')));
+  documentRef.querySelectorAll('meta[property="og:image:alt"], meta[name="twitter:image:alt"]').forEach((node) => node.setAttribute('content', t('meta.imageAlt')));
   documentRef.querySelectorAll('[data-i18n]').forEach((node) => { node.textContent = t(node.dataset.i18n); });
   documentRef.querySelectorAll('[data-i18n-aria-label]').forEach((node) => node.setAttribute('aria-label', t(node.dataset.i18nAriaLabel)));
   documentRef.querySelectorAll('[data-i18n-title]').forEach((node) => node.setAttribute('title', t(node.dataset.i18nTitle)));

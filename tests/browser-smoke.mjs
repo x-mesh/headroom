@@ -827,6 +827,8 @@ async function verify(viewport, screenshot, interact = false) {
   await page.locator('#guide-button').evaluate((button) => button.click());
   await page.waitForFunction(() => document.querySelector('#tour')?.hidden === false);
   await page.locator('[data-guide="start"]').click();
+  // 안내는 시연부터 시작한다. 단계 안내만 확인하는 자리라 시연은 건너뛴다.
+  if (await page.locator('#cold-open').count()) await page.locator('[data-cold-open="skip"]').click();
   assert.match(await page.locator('.tour-count').textContent(), /^1 \/ \d+$/);
   const tourTexts = [];
   let spotted = 0;
@@ -1940,22 +1942,59 @@ async function verifyTourAnchoring() {
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.stack || error.message}`));
   await page.addInitScript(() => window.addEventListener('error', (event) => console.error(`failure-location ${event.filename}:${event.lineno}:${event.colno}`)));
   await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
+
+  // 첫 방문은 설명을 읽히는 대신 도구가 한 번 해 보인다. 주장은 문구가 아니라 엔진이 한다.
+  await page.waitForSelector('#cold-open');
+  assert.match(await page.locator('.cold-open-line').textContent(), /2대씩/, '도입 시연은 이중화를 산 설계라는 전제부터 세워야 합니다');
+  assert.equal(await page.evaluate(() => localStorage.getItem('rack-mesh-guide-seen')), null, '시연을 끝내기 전에는 안내를 본 것으로 기록하지 않아야 합니다');
+  await page.waitForFunction(() => document.querySelectorAll('.mesh-node.cold-open-lit').length === 2, null, { timeout: 15000 });
+  assert.equal(await page.locator('.cold-open-tether text').textContent(), 'PDU-3 SPINE 공용 전원', '공용 전원 장면은 어떤 묶음인지 이름으로 밝혀야 합니다');
+  await page.waitForSelector('.cold-open-damage:not([hidden])', { timeout: 20000 });
+  assert.match(await page.locator('.cold-open-damage').textContent(), /무경로 2개/, '피해는 시연이 지어내지 않고 엔진이 계산한 값이어야 합니다');
+  assert.equal(await page.locator('#summary-unreachable').textContent(), '2', '시연은 흉내가 아니라 실제 장애 주입이어야 합니다');
+  // 무너지는 것만 보이고 끝나면 "확인하라"가 빈말이 된다. 전원을 나눈 경우도 같은 엔진으로 계산해 보인다.
+  await waitForColdOpenScene(page, 5);
+  const [, splitOverloaded] = (await page.locator('.cold-open-damage').textContent()).match(/^무경로 0개 {2}· {2}과부하 (\d+)곳$/) || [];
+  assert.ok(Number(splitOverloaded) > 0, '전원을 나눠도 남은 쪽으로 몰린 부하가 넘쳐야 이 장면이 할 말이 있습니다');
+  await page.waitForFunction((count) => document.querySelector('#summary-overloaded')?.textContent === count, splitOverloaded);
+  assert.equal(await page.locator('#summary-unreachable').textContent(), '0', '전원을 나누면 한 대만 꺼져 경로는 살아야 합니다');
+  assert.equal(await page.evaluate(() => document.body.dataset.coldOpenSpot), 'capacity', '해답 장면은 넘친 용량 칸을 가리켜야 합니다');
+  await page.waitForSelector('.cold-open-handoff:not([hidden])', { timeout: 20000 });
+  assert.equal(await page.evaluate(() => document.body.dataset.coldOpenSpot), 'headroom', '마지막 장면은 이 설계가 버티는 배율을 가리켜야 합니다');
+  await page.waitForFunction(() => document.querySelector('#summary-unreachable')?.textContent === '0');
+  assert.equal(await page.locator('.canvas-headline h1, h1').first().textContent(), '지금 부하의 1.16배까지 버팁니다', '시연이 끝나면 설계를 되돌려야 합니다');
+
+  // 시연이 끝나면 중간 창을 하나 더 거치지 않고 곧바로 화면 읽는 법으로 넘어간다.
+  assert.equal(await page.locator('[data-cold-open="try"]').evaluate((node) => node.classList.contains('is-primary')), true,
+    '저절로 돈 시연은 직접 해 보는 쪽을 앞세워야 합니다');
+  await page.locator('[data-cold-open="guide"]').click();
   await page.waitForSelector('#tour:not([hidden])');
-  assert.match(await page.locator('#tour-title').textContent(), /설계의 한계와 장애 영향/, '첫 방문은 제품 범위를 먼저 설명해야 합니다');
-  assert.match(await page.locator('.tour-text').textContent(), /구성도를 그리고/, '첫 방문은 구성도를 편집할 수 있음을 알려야 합니다');
+  assert.match(await page.locator('#tour-title').textContent(), /템플릿으로 시작하기/, '시연은 안내 첫 단계로 바로 이어져야 합니다');
+  assert.equal(await page.evaluate(() => localStorage.getItem('rack-mesh-guide-seen')), '1', '시연을 끝내면 본 상태를 저장해야 합니다');
+  await page.locator('[data-tour="skip"]').click();
+  await page.waitForFunction(() => document.querySelector('#tour')?.hidden === true);
+
+  // 사용 안내는 선택지를 둘로만 준다. 시연과 9단계가 나란히 놓이면 시선이 갈린다.
+  await page.locator('#guide-button').click();
+  await page.waitForSelector('#tour:not([hidden])');
+  assert.match(await page.locator('#tour-title').textContent(), /설계의 한계와 장애 영향/, '사용 안내는 제품 범위를 먼저 설명해야 합니다');
+  assert.match(await page.locator('.tour-text').textContent(), /구성도를 그리고/, '사용 안내는 구성도를 편집할 수 있음을 알려야 합니다');
   assert.equal(await page.locator('.guide-preview video').count(), 1, '중앙 안내는 실제 제품 미리보기를 보여야 합니다');
   assert.match(await page.locator('.guide-preview figcaption').textContent(), /용량 한계[\s\S]*현재 설계 111%[\s\S]*장애 영향[\s\S]*PDU-A[\s\S]*서버 6대[\s\S]*3D 랙 배치[\s\S]*Drag & drop/, '영상 아래에서 세 가지 기능과 상태를 알려야 합니다');
   assert.ok(await page.locator('.guide-preview video').evaluate((video) => video.muted && video.loop && video.autoplay && video.playsInline), '미리보기는 무음 자동 반복 재생이어야 합니다');
   assert.ok(await page.locator('#tour').evaluate((node) => node.getBoundingClientRect().width >= 1000), '데스크톱 중앙 안내는 영상을 충분히 크게 보여야 합니다');
   assert.match(await page.locator('#tour-spot').evaluate((node) => getComputedStyle(node).backdropFilter), /blur/, '중앙 안내 뒤의 제품 화면은 흐려야 합니다');
-  assert.equal(await page.evaluate(() => localStorage.getItem('rack-mesh-guide-seen')), null, '선택하기 전에는 첫 방문 안내를 본 것으로 기록하지 않아야 합니다');
+  assert.deepEqual(await page.locator('.tour-actions button').allTextContents(), ['직접 둘러보기', '안내 보기'],
+    '사용 안내는 선택지를 둘로만 줘야 합니다');
+
+  // 안내는 시연부터 시작하는 한 흐름이다. 건너뛰어도 흐름은 안내로 이어진다.
   await page.locator('[data-guide="start"]').click();
-  assert.equal(await page.evaluate(() => localStorage.getItem('rack-mesh-guide-seen')), '1', '안내를 선택하면 본 상태를 저장해야 합니다');
-  await page.locator('[data-tour="skip"]').click();
-  await page.waitForFunction(() => document.querySelector('#tour')?.hidden === true);
-  await page.locator('#guide-button').click();
-  await page.waitForSelector('.tour');
-  await page.locator('[data-guide="start"]').click();
+  await page.waitForSelector('#cold-open');
+  assert.equal(await page.locator('[data-cold-open="guide"]').evaluate((node) => node.classList.contains('is-primary')), true,
+    '안내에서 시작한 시연은 이어 보는 쪽을 앞세워야 합니다');
+  await page.locator('[data-cold-open="skip"]').click();
+  await page.waitForSelector('#tour:not([hidden])');
+  assert.match(await page.locator('#tour-title').textContent(), /템플릿으로 시작하기/, '시연을 건너뛰어도 안내로 이어져야 합니다');
   assert.equal(await page.locator('.workspace-switch [data-workspace="rack"]').textContent(), '랙 배치', '랙 기능은 상단 진입점에서 용도를 밝혀야 합니다');
   assert.equal(await page.locator('.topology-view-choice > span').textContent(), '보기', '3D는 토폴로지 표시 방식임을 밝혀야 합니다');
   // 안내 문구가 못 박은 개수를 말하면 설계를 더할 때마다 틀린 말이 된다.
@@ -1988,14 +2027,124 @@ async function verifyTourAnchoring() {
   }
   await page.locator('#guide-button').click();
   await page.locator('[data-guide="start"]').click();
+  if (await page.locator('#cold-open').count()) await page.locator('[data-cold-open="skip"]').click();
   for (let step = 1; step < 9; step += 1) await page.locator('[data-tour="next"]').click();
   await page.locator('[data-tour-destination="spatial"]').click();
   assert.equal(await page.locator('[data-topology-view="spatial"]').getAttribute('aria-pressed'), 'true', '완료 화면에서 3D 토폴로지를 열어야 합니다');
   await page.locator('#guide-button').click();
   await page.locator('[data-guide="start"]').click();
+  if (await page.locator('#cold-open').count()) await page.locator('[data-cold-open="skip"]').click();
   for (let step = 1; step < 9; step += 1) await page.locator('[data-tour="next"]').click();
   await page.locator('[data-tour-destination="rack"]').click();
   assert.equal(await page.locator('.workspace-switch [data-workspace="rack"]').getAttribute('aria-selected'), 'true', '완료 화면에서 랙 배치를 열어야 합니다');
+  await page.close();
+}
+
+async function waitForColdOpenScene(page, scene) {
+  await page.waitForFunction((n) => document.querySelector('.cold-open-count')?.textContent.startsWith(`SCENE ${n} /`), scene, { timeout: 25000 });
+}
+
+async function advanceColdOpen(page, scene) {
+  await page.waitForSelector('#cold-open');
+  while (!(await page.locator('.cold-open-count').textContent()).startsWith(`SCENE ${scene} /`)) await page.locator('.cold-open-line').click();
+}
+
+async function openColdOpenPage(viewport = { width: 1440, height: 900 }, { init, ...contextOptions } = {}) {
+  const page = await browser.newPage({ viewport, ...contextOptions });
+  page.on('pageerror', (error) => failures.push(`pageerror: ${error.stack || error.message}`));
+  if (init) await page.addInitScript(init);
+  await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('#cold-open');
+  return page;
+}
+
+async function verifyColdOpenEdges() {
+  const reading = (page) => page.locator('.cold-open-damage').evaluate((node) => (node.hidden ? null : node.textContent));
+
+  // 시연이 켠 장애가 작업 사본에 남으면, 도중에 창을 닫은 사람의 다음 방문이 전원이 꺼진 설계로 열린다.
+  let page = await openColdOpenPage();
+  await advanceColdOpen(page, 4);
+  assert.equal(await page.locator('#summary-unreachable').textContent(), '2');
+  await page.reload({ waitUntil: 'networkidle' });
+  assert.equal(await page.locator('#summary-unreachable').textContent(), '0', '시연 도중 새로고침해도 시연이 켠 장애가 남지 않아야 합니다');
+  assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('rack-mesh-working-copy') || 'null')?.scenario.disabledDomains ?? []), [],
+    '시연이 켠 장애를 작업 사본에 저장하지 않아야 합니다');
+  await page.waitForSelector('#cold-open');
+
+  // 장면을 빨리 넘겨도 앞 장면의 숫자가 다음 장면에 섞이지 않는다.
+  await advanceColdOpen(page, 4);
+  await page.locator('.cold-open-line').click();
+  await page.waitForTimeout(300);
+  assert.match(await reading(page), /^무경로 0개 {2}· {2}과부하 \d+곳$/, '다음 장면에는 그 장면이 계산한 숫자만 있어야 합니다');
+  await page.locator('.cold-open-line').click();
+  await page.waitForTimeout(300);
+  assert.equal(await reading(page), null, '되돌린 마지막 장면에 피해 숫자가 남지 않아야 합니다');
+
+  // "직접 해보기"는 닫기가 아니라 방금 본 실험을 누를 자리로 데려간다.
+  await page.locator('[data-cold-open="try"]').click();
+  const cue = page.locator('#learning-panel .lesson-cue');
+  assert.equal(await cue.getAttribute('data-lesson-id'), 'pdu-3', '직접 해보기는 시연이 보인 공용 전원 실험을 가리켜야 합니다');
+  assert.ok(await cue.evaluate((node) => node === document.activeElement), '직접 해보기는 실험 버튼에 초점을 넘겨야 합니다');
+  await cue.click();
+  assert.equal(await page.locator('#learning-panel .lesson-cue').count(), 0, '실험을 누르면 표시를 거둬야 합니다');
+  assert.equal(await page.locator('#summary-unreachable').textContent(), '2', '넘겨받은 실험은 시연과 같은 장애를 일으켜야 합니다');
+  await page.close();
+
+  // 안내에서 시작한 시연은 ESC로 닫아도 건너뛰기처럼 안내로 이어진다.
+  page = await openColdOpenPage();
+  await page.locator('[data-cold-open="skip"]').click();
+  await page.locator('#guide-button').click();
+  await page.locator('[data-guide="start"]').click();
+  await page.waitForSelector('#cold-open');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('#tour:not([hidden])');
+  assert.match(await page.locator('#tour-title').textContent(), /템플릿으로 시작하기/, 'ESC도 건너뛰기처럼 안내로 이어져야 합니다');
+  await page.close();
+
+  // 시연 도중 설계를 만지면 시연을 거두고 설계를 되돌린 뒤 조작을 넘긴다.
+  page = await openColdOpenPage();
+  await advanceColdOpen(page, 4);
+  await page.locator('.mesh-node[data-device-id="fw-a"]').click({ force: true });
+  assert.equal(await page.locator('#cold-open').count(), 0, '레일 밖을 누르면 시연을 거둬야 합니다');
+  assert.equal(await page.locator('#summary-unreachable').textContent(), '0', '시연을 거두면 시연이 켠 장애도 되돌려야 합니다');
+  assert.equal(await page.evaluate(() => document.body.classList.contains('cold-open-running') || 'coldOpenSpot' in document.body.dataset), false, '시연이 남긴 표시가 없어야 합니다');
+  await page.close();
+
+  // 움직임을 줄이겠다고 한 사람에게는 장면이 저절로 넘어가지 않는다.
+  page = await openColdOpenPage(undefined, { reducedMotion: 'reduce' });
+  await page.waitForTimeout(4600);
+  assert.match(await page.locator('.cold-open-count').textContent(), /^SCENE 1 \//, '움직임 감소 설정에서는 장면이 저절로 넘어가지 않아야 합니다');
+  assert.equal(await page.locator('.cold-open-bar').isHidden(), true);
+  await page.locator('[data-cold-open="next"]').click();
+  assert.match(await page.locator('.cold-open-count').textContent(), /^SCENE 2 \//, '다음 버튼으로 넘길 수 있어야 합니다');
+  await page.close();
+
+  // 보이지 않는 탭에서 열리면 돌아올 때까지 기다린다. 결론만 덩그러니 남지 않게 한다.
+  page = await openColdOpenPage(undefined, {
+    init: () => {
+      let hidden = true;
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (hidden ? 'hidden' : 'visible') });
+      window.__showTab = () => { hidden = false; document.dispatchEvent(new Event('visibilitychange')); };
+    },
+  });
+  await page.waitForTimeout(4600);
+  assert.match(await page.locator('.cold-open-count').textContent(), /^SCENE 1 \//, '숨은 탭에서는 장면이 흘러가지 않아야 합니다');
+  await page.evaluate(() => window.__showTab());
+  await waitForColdOpenScene(page, 2);
+  await page.close();
+
+  // 좁은 화면에서도 "같은 전원"이라고 말하는 두 장비가 레일에 가리지 않고 화면 안에 있어야 한다.
+  page = await openColdOpenPage({ width: 390, height: 844 });
+  await advanceColdOpen(page, 2);
+  // 페이지는 부드럽게 스크롤한다. 도착한 뒤의 자리를 본다.
+  await page.waitForFunction(() => {
+    const rail = document.querySelector('.cold-open-rail').getBoundingClientRect();
+    const lit = [...document.querySelectorAll('.mesh-node.cold-open-lit')].map((node) => node.getBoundingClientRect());
+    return lit.length === 2 && lit.every((box) => box.top >= 0 && box.bottom <= rail.top && box.left >= 0 && box.right <= innerWidth);
+  }, null, { timeout: 3000 }).catch(() => assert.fail('모바일에서 가리키는 두 장비가 레일에 가리지 않고 화면 안에 들어와야 합니다'));
+  const plate = await page.evaluate(() => ({ plate: Number(document.querySelector('.cold-open-tether rect').getAttribute('width')), text: document.querySelector('.cold-open-tether text').getComputedTextLength() }));
+  assert.ok(plate.plate >= plate.text, '공용 전원 이름이 이름판 밖으로 넘치지 않아야 합니다');
   await page.close();
 }
 
@@ -2075,6 +2224,7 @@ try {
     await verifyNumberMotion();
     await verifyTopologyViews();
     await verifyTourAnchoring();
+    await verifyColdOpenEdges();
     await verifyVirtualFailureList();
     await verifyInferredSwapSlot();
     const reducedPage = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });

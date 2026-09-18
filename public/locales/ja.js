@@ -11,7 +11,14 @@ export const messages = {
   ...en,
   meta: { title: 'Rack Mesh · インフラ制約シミュレーター', description: 'Rack Meshはインフラの制約、容量の限界、障害の影響をモデル化します。', ogTitle: 'Rack Mesh · インフラ制約シミュレーター', ogDescription: 'インフラの制約、容量の限界、障害の影響をモデル化します。' },
   navigation: { skipToWorkspace: 'ワークスペースへ移動', startDesign: '設計を始める', startHint: 'テンプレートから始めてボトルネックと障害の影響を確認します。', newDesign: '新しい設計', templateStart: 'テンプレートから始める', templateStartHint: '構成を選んで分析します。', blankDesign: '空の設計', blankDesignHint: '機器とリンクを手動で配置します。', existingDesign: '既存の設計', openProject: 'プロジェクトを開く', openProjectHint: 'Rack Mesh設計ファイルを読み込みます。 · JSON', advancedImport: '高度なインポート', advancedImportHint: 'drawioと機器容量を読み込みます。 · 2件', drawioDiagram: 'drawioダイアグラム', drawioDiagramHint: '図形とリンクを編集可能な要素として読み込みます。 · XML', fillCapacity: '読み込んだ機器の容量を補完', fillCapacityHint: '種類ごとにデータシートモデルを選んで適用します。', otherStartMethods: '別の設計開始方法', guideHelp: 'このツールの読み方', topology: 'トポロジー', rack: 'ラック配置', guide: '使い方', project: 'プロジェクト', language: '言語', languageEnglish: 'English', languageKorean: '한국어', languageJapanese: '日本語' },
-  guide: { introTitle: '設計の限界と障害の影響を先に確認', introText: 'トポロジーを描き、負荷と障害を変え、3Dラックにサーバーを配置します。', videoAlt: '容量の限界、障害注入、3Dラック配置のプレビュー', features: '主な機能の状態', posterAlt: '3Dラックで容量の限界を確認する画面', featureCapacity: '容量の限界', featureCapacityValue: '現在の設計 111%', featureFault: '障害の影響', featureFaultValue: 'PDU-A · サーバー6台', featureRack: '3Dラック配置', featureRackValue: 'Drag & drop', explore: '自分で見る', start: '9段階ガイドを見る', count: '{current} / {total}', destinations: '別のワークスペースを見る', spatial: '3Dトポロジーを見る', spatialText: '論理接続を空間で回転します', rack: 'ラック配置を見る', rackText: 'U位置、電力、ケーブルを確認します', next: '次へ', previous: '前へ', skip: 'スキップ', close: '閉じる', lessonHeading: 'この設計で確認すること', nextAction: '次にすること' },
+  coldOpen: { label: '導入デモ', count: 'SCENE {current} / {total}', try: '自分で試す', guide: '続けて画面の読み方', next: '次へ', skip: 'スキップ · ESC', damage: '経路なし {count}件  ·  {value} 未転送', splitDamage: '経路なし {count}件  ·  過負荷 {overloaded}箇所',
+    oneLine: 'この設計は機器をすべて2台ずつ置いています。', oneText: '1台が停止してもサービスが生き残るように、費用を2倍かけました。',
+    twoLine: 'しかし {first} と {second} は電源を1つ共有しています。', twoText: '構成図では2台に見えます。物理的には1つの束です。',
+    threeLine: 'その電源を1つ落としてみます。', threeText: '仮定ではなく計算です。エンジンが経路と負荷を解き直します。',
+    fourLine: '2倍で買った機器が同時に停止し、トラフィックは行き場を失います。', fourText: '冗長化はありました。同じ電源に束ねた時点で無かったことになります。',
+    splitLine: '電源が別々なら、停止するのは {first} の1台だけです。', splitText: '経路はすべて生き残ります。その代わり残った経路に負荷が集中し、限界を超える箇所が出ます。',
+    fiveLine: '冗長化は買うものではなく、確認するものです。', fiveText: '機器を買う前に、この設計が何倍まで耐え、何が先に壊れるかを計算します。' },
+  guide: { introTitle: '設計の限界と障害の影響を先に確認', introText: 'トポロジーを描き、負荷と障害を変え、3Dラックにサーバーを配置します。', videoAlt: '容量の限界、障害注入、3Dラック配置のプレビュー', features: '主な機能の状態', posterAlt: '3Dラックで容量の限界を確認する画面', featureCapacity: '容量の限界', featureCapacityValue: '現在の設計 111%', featureFault: '障害の影響', featureFaultValue: 'PDU-A · サーバー6台', featureRack: '3Dラック配置', featureRackValue: 'Drag & drop', explore: '自分で見る', start: 'ガイドを見る', count: '{current} / {total}', destinations: '別のワークスペースを見る', spatial: '3Dトポロジーを見る', spatialText: '論理接続を空間で回転します', rack: 'ラック配置を見る', rackText: 'U位置、電力、ケーブルを確認します', next: '次へ', previous: '前へ', skip: 'スキップ', close: '閉じる', lessonHeading: 'この設計で確認すること', nextAction: '次にすること' },
   editor: { newDesign: '設計を始める', openProject: 'プロジェクトを開く', saveProject: 'プロジェクトを保存', blankDesign: '空の設計', advancedImport: '高度なインポート', device: '機器', link: 'リンク', demand: '需要', shape: '図形', annotation: '注釈', templateSearch: 'テンプレートを検索', templateSearchPlaceholder: '名前、タグ、ボトルネックで検索（例: TLS、ファイアウォール、帯域）' },
   analysis: { calculating: '計算中', load: '負荷', workloadScale: 'ワークロード倍率', activeFaults: '有効な障害', singleFault: '単一障害点', noSingleFault: '単一障害点なし', deterministic: 'DETERMINISTIC · HOP-BRANCH WEIGHTED · ENGINE {version}' },
   rack: { builder: 'ラック構成', inspector: '配置インスペクター', add: 'ラックを追加', noRacks: 'ラックはまだありません', addFirst: '最初のラックを追加', front: '前面', rear: '背面', powerDomains: '電源ドメイン', devices: '機器', racks: 'ラック' },
@@ -50,7 +57,8 @@ messages.meta = {
   title: 'Headroom · インフラ容量と復元力の計画',
   description: 'Headroomはインフラの制約、容量の限界、障害の影響をモデル化します。',
   ogTitle: 'Headroom · インフラ容量と復元力の計画',
-  ogDescription: 'インフラの制約、容量の限界、障害の影響をモデル化します。',
+  ogDescription: '最初に限界に達する機器と容量軸を見つけ、障害を注入し、機器を買う前に冗長化を確認します。',
+  imageAlt: '合成デモ設計で1つの電源を共有する2台のスパインスイッチを示すHeadroomの画面',
 };
 messages.navigation.openProjectHint = 'Headroom設計ファイルを読み込みます。 · JSON';
 messages.navigation.importDeviceHint = 'HeadroomまたはNetBoxの機器情報を読み込みます。 · JSON';
