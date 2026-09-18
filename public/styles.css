@@ -1035,3 +1035,55 @@ button { color: inherit; }
 .idle-note p { margin: 0; font-size: 11px; line-height: 1.5; color: var(--text); }
 .idle-note button { justify-self: start; padding: 5px 10px; border: 1px solid var(--line); background: var(--surface-raised); color: var(--text); font: 600 11px/1 var(--font-data); cursor: pointer; }
 .idle-note button:hover { border-color: var(--cyan); color: var(--cyan); }
+
+/* 도입 시연. 랜딩을 따로 만들지 않고 캔버스 위에서 도구가 스스로 한 번 해 보인다 - 새 비주얼
+   언어를 들이지 않고 이미 쓰는 토큰만 쓴다. 가리는 것은 잠깐이고, 끝나면 흔적을 남기지 않는다. */
+#cold-open { position: fixed; z-index: 82; inset: 0; pointer-events: none; font-family: var(--font-ui-ko); }
+.cold-open-rail { position: absolute; top: 0; padding: 14px 18px 12px; border: 1px solid var(--panel-line); background: var(--panel-deep); color: var(--on-deep); pointer-events: auto; box-shadow: 0 18px 44px color-mix(in srgb, var(--panel-deep) 45%, transparent); }
+.cold-open-tag { display: flex; gap: 10px; align-items: center; margin: 0; color: var(--signal); font: 700 9px/1 var(--font-data); letter-spacing: .14em; text-transform: uppercase; }
+.cold-open-tag b { color: var(--on-deep-line); font-weight: 500; }
+.cold-open-line { margin: 8px 0 0; font-size: 20px; line-height: 1.42; letter-spacing: -.012em; }
+.cold-open-text { margin: 6px 0 0; color: var(--on-deep-muted); font-size: 13px; line-height: 1.55; }
+.cold-open-damage { margin: 8px 0 0; color: var(--danger-soft); font: 500 11px/1.4 var(--font-data); letter-spacing: .06em; }
+.cold-open-damage[hidden] { display: none; }
+/* 누를 수 있다는 것은 커서로 알린다. 마지막 장면에는 넘길 곳이 없으므로 진행 바도 커서도 없다. */
+.cold-open-rail:has(.cold-open-bar:not([hidden])) { cursor: pointer; }
+.cold-open-bar { position: relative; height: 2px; margin-top: 12px; background: var(--panel-line); }
+.cold-open-bar[hidden] { display: none; }
+.cold-open-bar i { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--signal); }
+.cold-open-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.cold-open-actions > :last-child { margin-inline-start: auto; }
+.cold-open-handoff { display: flex; gap: 8px; }
+.cold-open-handoff[hidden] { display: none; }
+#cold-open button { padding: 6px 11px; border: 1px solid var(--panel-line); background: transparent; color: var(--on-deep-line); font: 600 10px/1 var(--font-data); letter-spacing: .1em; text-transform: uppercase; cursor: pointer; }
+#cold-open button:hover { border-color: var(--on-deep-line); color: var(--on-deep); }
+#cold-open button.is-primary { border-color: var(--signal); background: var(--signal); color: var(--action-ink); font-weight: 700; }
+.cold-open-tether { position: absolute; inset: 0; overflow: visible; opacity: 0; transition: opacity .4s ease; }
+.cold-open-tether.is-on { opacity: 1; }
+.cold-open-tether path { fill: none; stroke: var(--danger); stroke-width: 2; stroke-dasharray: 5 4; }
+.cold-open-tether rect { fill: var(--danger); }
+.cold-open-tether text { fill: var(--surface-raised); font: 600 10px/1 var(--font-data); letter-spacing: .08em; }
+/* 시연 동안에는 캔버스만 남긴다. 4번 장면에서 패널을 되살리는 것이 곧 조작권을 넘기는 신호다. */
+body.cold-open-running .mesh-node { transition: opacity .45s ease, filter .45s ease; }
+body.cold-open-running .mesh-node.cold-open-dim { opacity: .12; filter: grayscale(1); }
+body.cold-open-running .mesh-node.cold-open-lit .node-labels { border-radius: 3px; outline: 2px solid var(--danger); outline-offset: 3px; }
+body.cold-open-running.cold-open-quiet .main-grid > aside { opacity: .2; filter: grayscale(.75); transition: opacity .45s ease, filter .45s ease; }
+body.cold-open-running .summary-group { border-radius: 4px; transition: opacity .35s ease, box-shadow .35s ease; }
+/* 레일이 앉는 자리라 시연 내내 물린다. 남겨 두면 레일 양옆으로 제목이 삐져나오고, 캔버스가
+   하는 말과 시연이 하는 말이 같은 높이에서 겹친다. 확대 배율과 보기 전환도 지금은 쓸 일이 없다. */
+body.cold-open-running .topology-heading { opacity: .06; transition: opacity .35s ease; }
+/* 전면 장애에서는 부하가 0이라 여유가 100%로 계산된다 - 죽은 화면 옆의 100%는 정반대로 읽힌다.
+   시연은 지금 말하는 요약 칸 하나만 남기고 나머지를 물린다. 계산은 그대로 둔다. */
+body.cold-open-running[data-cold-open-spot] .summary-group { opacity: .12; }
+body.cold-open-running[data-cold-open-spot="delivery"] .summary-group.summary-delivery,
+body.cold-open-running[data-cold-open-spot="capacity"] .summary-group.summary-capacity { opacity: 1; box-shadow: 0 0 0 2px var(--danger), 0 10px 26px color-mix(in srgb, var(--danger) 30%, transparent); }
+body.cold-open-running[data-cold-open-spot="headroom"] .summary-group.summary-capacity { opacity: 1; box-shadow: 0 0 0 2px var(--signal-deep), 0 10px 26px color-mix(in srgb, var(--signal) 30%, transparent); }
+@media (prefers-reduced-motion: reduce) { body.cold-open-running .mesh-node { transition: none; } .cold-open-tether { transition: none; } }
+/* 좁은 화면은 세로로 쌓여 캔버스가 요약보다 한참 아래다. 레일을 위에 두면 가리키는 장비와
+   한 화면에 들어오지 않으므로 아래에 붙이고, 장비는 레일 위의 띠로 굴려 올린다. */
+@media (max-width: 760px) { .cold-open-rail { inset: auto 12px 12px !important; width: auto !important; } .cold-open-line { font-size: 17px; } }
+
+/* 시연의 "직접 해보기"가 넘겨준 실험 자리. 누르기 전까지만 켜 둔다. */
+.learning-panel button.lesson-cue { border-color: var(--signal-deep); box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal) 60%, transparent); animation: lesson-cue 1.6s ease-in-out infinite; }
+@keyframes lesson-cue { 50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--signal) 18%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .learning-panel button.lesson-cue { animation: none; } }

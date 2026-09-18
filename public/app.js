@@ -15,6 +15,7 @@ import { buildSpec, catalogEntry, catalogFor, catalogProfile } from './devices/c
 import { addConnector, addShape, alignSelection, copySelection, distributeSelection, exportDiagramSvg, groupSelection, importDrawio, moveSelection, pasteSelection, removeDiagramElements, retargetConnector, ungroupSelection, updateConnector, updateGroup, updateShape } from './diagram.js';
 import { applyDrawioImport, createDrawioEdgeRenderContext, createDrawioPreview, parseDrawioDocument, renderDrawioEdgeSvg, renderDrawioPageSvg, renderDrawioVisualSvg } from './drawio-import.js';
 import { createHistory } from './history.js';
+import { startColdOpen as startColdOpenScene } from './cold-open.js';
 import { acceptanceDigest, evidenceApplicability } from './evidence.js';
 import { addMappedPlacement, addStandalonePlacement, copyRack, copyRackPlacement, createRack, firstFreeStartU, materializeRack, moveRack, nearestFreeStartU, nextRackName, pasteRack, pasteRackPlacement, placementHeight, placementRangeLabel, placementView, rackPlacements, rackSummary, removePlacement, removeRack, renamePlacement, renameRack, suggestedRackPowerBudget, updatePlacement } from './rack.js';
 
@@ -531,6 +532,7 @@ function evidenceCliff() {
 
 // 질문 옆에 답을 함께 띄우면 실험할 이유가 없어진다. 눌러서 결과를 본 뒤에 편다.
 let lessonRevealed = false;
+let lessonCue = null;
 
 function renderLearningPanel() {
   const panel = element('learning-panel');
@@ -554,7 +556,7 @@ function renderLearningPanel() {
   } : lesson.experiment;
   panel.hidden = false;
   panel.innerHTML = `<strong>${escapeText(t('guide.lessonHeading'))}</strong>${escapeText(lesson.teaches)}
-    ${experiment ? `<div><span>${escapeText(experiment.prompt)}</span><br><button type="button" data-lesson-action="${escapeAttribute(experiment.action.type)}" data-lesson-id="${escapeAttribute(experiment.action.id || '')}" data-lesson-value="${escapeAttribute(experiment.action.value ?? '')}">${escapeText(experiment.action.label)}</button><output${lessonRevealed ? '' : ' hidden'}>${escapeText(experiment.observe)}</output></div>` : ''}`;
+    ${experiment ? `<div><span>${escapeText(experiment.prompt)}</span><br><button type="button"${lessonCue && experiment.action.id === lessonCue ? ' class="lesson-cue"' : ''} data-lesson-action="${escapeAttribute(experiment.action.type)}" data-lesson-id="${escapeAttribute(experiment.action.id || '')}" data-lesson-value="${escapeAttribute(experiment.action.value ?? '')}">${escapeText(experiment.action.label)}</button><output${lessonRevealed ? '' : ' hidden'}>${escapeText(experiment.observe)}</output></div>` : ''}`;
 }
 
 // 헤더는 지금 열려 있는 설계를 말해야 한다. 시작 복원과 undo/redo 는 loadTopology 를 거치지
@@ -3072,6 +3074,7 @@ function closeGuideIntro() {
 }
 
 function showGuideIntro() {
+  endColdOpen();
   if (tour) endTour();
   closeTopMenus();
   closeEditorPanel();
@@ -3081,7 +3084,7 @@ function showGuideIntro() {
   const box = element('tour');
   box.hidden = false;
   box.dataset.intro = '';
-  box.innerHTML = `<p class="tour-count">RACK MESH GUIDE</p>
+  box.innerHTML = `<p class="tour-count">HEADROOM GUIDE</p>
     <h2 id="tour-title">${escapeText(t('guide.introTitle'))}</h2>
     <p class="tour-text">${escapeText(t('guide.introText'))}</p>
     <figure class="guide-preview">
@@ -3115,6 +3118,70 @@ function startTour() {
       scrollLeft: document.querySelector('.topology-scroll').scrollLeft, scrollTop: document.querySelector('.topology-scroll').scrollTop },
   };
   runTourStep(0);
+}
+
+// 도입 시연은 공용 전원 도메인이 있는 합성 데모가 손대지 않은 상태일 때만 튼다. 남이 그린
+// 설계나 이미 주입한 장애 위에서 전원을 내리지 않는다. 시연이 못 뜨면 기존 안내로 되돌아간다.
+function coldOpenPlan() {
+  const domain = (topology.failureDomains || []).find(({ kind, deviceIds }) => kind === 'power' && (deviceIds || []).length >= 2);
+  const eligible = Boolean(domain) && topology.synthetic && topology.template?.id === 'demo'
+    && !state.disabledDevices.size && !state.disabledLinks.size && !state.disabledDomains.size && state.scale === 1;
+  if (!eligible) return null;
+  const deviceIds = domain.deviceIds.slice(0, 2);
+  return {
+    t,
+    deviceIds,
+    deviceNames: deviceIds.map((id) => topology.devices.find((device) => device.id === id)?.name || id),
+    domainLabel: localizedBundledLabel(domain.id, domain.name, topology.synthetic),
+    // 시연이 켠 장애는 화면에만 계산하고 작업 사본에 남기지 않는다. 도중에 창을 닫으면 다음
+    // 방문이 전원이 꺼진 설계로 열리기 때문이다. 되돌린 상태만 저장한다.
+    fault: (kind) => {
+      state.disabledDomains.delete(domain.id);
+      state.disabledDevices.delete(deviceIds[0]);
+      if (kind === 'shared') state.disabledDomains.add(domain.id);
+      if (kind === 'single') state.disabledDevices.add(deviceIds[0]);
+      if (kind) setLeftPanel('failure');
+      recalculate({ light: Boolean(kind) });
+    },
+    // 피해 숫자는 시연이 지어내지 않는다. 엔진이 방금 계산한 값을 그대로 읽는다.
+    damage: () => ({ count: current.summary.unreachableCount, value: formatCompact(current.summary.unreachableLoadBps, 'bps'), overloaded: current.summary.overloadedCount }),
+    onTry: () => cueLesson(domain.id),
+    onGuide: startTour,
+    onEnd: markGuideSeen,
+  };
+}
+
+// "직접 해보기"는 방금 본 실험을 누를 자리로 데려간다. 그냥 닫으면 무엇을 해 볼지 다시 찾아야 한다.
+function cueLesson(id) {
+  lessonCue = id;
+  renderLearningPanel();
+  const button = element('learning-panel').querySelector('.lesson-cue');
+  if (!button) { lessonCue = null; return; }
+  button.scrollIntoView({ block: 'nearest', behavior: reducedMotion.matches ? 'auto' : 'smooth' });
+  button.focus({ preventScroll: true });
+}
+
+// 시연과 안내가 같은 화면에 겹치면 둘 다 못 읽는다. 안내를 열 때는 돌던 시연을 먼저 닫는다.
+let coldOpenScene = null;
+function endColdOpen() {
+  if (coldOpenScene && document.getElementById('cold-open')) coldOpenScene.end();
+  coldOpenScene = null;
+}
+
+// 첫 화면에서 저절로 도는 경로. 작업 사본을 복원했다면 사용자가 보던 것을 먼저 돌려준다.
+function startColdOpen() {
+  const plan = restoredWorkingCopy ? null : coldOpenPlan();
+  coldOpenScene = plan ? startColdOpenScene(plan) : null;
+  return Boolean(coldOpenScene);
+}
+
+// 안내는 하나의 흐름이다: 왜 봐야 하는지를 먼저 보이고, 그다음 어디를 누르는지 가르친다.
+// 9단계는 버튼 위치만 알려 주므로, 동기가 없는 사람에게 먼저 주면 순서가 뒤집힌다.
+// 본 적이 있는지는 따지지 않는다 - 누른 사람이 보겠다고 한 것이다.
+function startGuideFlow() {
+  const plan = coldOpenPlan();
+  if (!plan) { startTour(); return; }
+  coldOpenScene = startColdOpenScene({ ...plan, primary: 'guide', onGuide: startTour });
 }
 
 function maybeStartTour() {
@@ -3552,6 +3619,7 @@ function loadTopology(next, message, undo = null) {
   state.selection = state.selectedId ? [{ type: 'device', id: state.selectedId }] : [];
   state.disabledDevices.clear(); state.disabledLinks.clear(); state.disabledDomains.clear(); state.namedScenarios = [];
   lessonRevealed = false;
+  lessonCue = null;
   element('scale-input').value = '100';
   closeEditorPanel();
   documentHistory.reset(topology);
@@ -4817,7 +4885,7 @@ element('tour').addEventListener('click', (event) => {
   if ((guideAction || guideDestination) && guideIntroOpen) {
     markGuideSeen();
     closeGuideIntro();
-    if (guideAction === 'start') startTour();
+    if (guideAction === 'start') startGuideFlow();
     if (guideDestination === 'rack') setWorkspace('rack');
     if (guideDestination === 'spatial') { setWorkspace('topology'); setTopologyView('spatial'); }
     return;
@@ -5759,6 +5827,7 @@ element('spatial-view-tools').addEventListener('click', (event) => {
 });
 element('learning-panel').addEventListener('click', (event) => {
   const button = event.target.closest('[data-lesson-action]'); if (!button) return;
+  lessonCue = null;
   if (['fault-device', 'fault-link', 'fault-domain', 'scale'].includes(button.dataset.lessonAction)) lessonRevealed = true;
   if (button.dataset.lessonAction === 'fault-device') { state.disabledDevices.add(button.dataset.lessonId); setLeftPanel('failure'); recalculate(); }
   if (button.dataset.lessonAction === 'scale') { state.scale = Number(button.dataset.lessonValue); element('scale-input').value = String(state.scale * 100); recalculate(); }
@@ -5917,7 +5986,7 @@ startTelemetry();
 let guideSeen = false;
 try { guideSeen = localStorage.getItem('rack-mesh-guide-seen') !== null; } catch { /* 저장소 접근이 막히면 자동 안내를 생략한다 */ }
 if (guideSeen) startTeaser();
-else maybeStartTour();
+else if (!startColdOpen()) maybeStartTour();
 // 작업 사본이 커도 현재 시나리오를 먼저 보여 준다. 전수 분석은 첫 화면 뒤에 시작한다.
 const initialAnalysisRun = analysisRun;
 scheduleAnalysis(() => { if (analysisRun !== initialAnalysisRun) return; startAnalysis(); render(); });
