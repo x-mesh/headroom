@@ -57,7 +57,7 @@ export const failureDomainKinds = Object.freeze(['power', 'space', 'path', 'firm
 const source = {
   type: 'estimate',
   label: '합성 데모 값',
-  condition: 'Rack Mesh MVP fixture · 기능 비활성 · 정상 상태',
+  condition: 'Headroom MVP fixture · 기능 비활성 · 정상 상태',
 };
 
 const device = (id, name, kind, zone, x, y, vendor, model, limits, metadata = null) => ({
