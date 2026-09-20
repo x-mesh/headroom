@@ -1042,10 +1042,8 @@ export const templates = [
         { id: 'rack-07', name: 'RACK 07', kind: 'space', deviceIds: ['leaf-b', 'api-b'] },
         { id: 'pdu-3', name: 'PDU-3 SPINE 공용 전원', kind: 'power', deviceIds: ['spine-a', 'spine-b'] },
       ];
-      topology.racks = [
-        { id: 'rack-04-budget', name: 'RACK 04', deviceIds: ['leaf-a', 'api-a'], powerBasis: 'nameplate', powerBudgetWatts: 1400, capacityU: 42 },
-        { id: 'rack-07-budget', name: 'RACK 07', deviceIds: ['leaf-b', 'api-b'], powerBasis: 'typical', powerBudgetWatts: 1400, capacityU: 42 },
-      ];
+      // 랙은 데모가 이미 들고 온다. 여기서 다시 적으면 같은 값이 두 곳에 남고, 적지 않은 랙은
+      // 조용히 사라진다 - 이 설계가 오래 EDGE 와 SPINE 을 랙 밖에 둔 이유가 그것이었다.
       return topology;
     },
   },
@@ -1539,6 +1537,9 @@ const SITE_RACKS = {
   'evidence-acceptance': [['rack-01', 'RACK 01', ['fw-accepted', 'fw-pending', 'app-accepted', 'app-pending']]],
   'session-sync-comparison': [['rack-synced', 'SYNCED RACK', ['synced-a', 'synced-b', 'app-synced']], ['rack-none', 'NONE RACK', ['none-a', 'none-b', 'app-none']]],
   // 아래는 build 가 이미 랙 일부를 적은 설계다. 거기서 빠진 장비를 여기서 마저 세운다.
+  // 첫 화면이 그대로 쓰는 데모(data.js)의 랙 목록은 건드리지 않는다. 그 세 랙은 SECURITY 가
+  // 경고선 90% 에 서 있는 것까지가 첫인상으로 짜인 것이고, 랙 화면 테스트도 그 셋을 딛고 있다.
+  'dual-fabric': [['edge-budget', 'EDGE', ['edge-a', 'edge-b']], ['spine-budget', 'SPINE', ['spine-a', 'spine-b']]],
   'spine-leaf': [['rack-spine', 'SPINE RACK', ['spine-a', 'spine-b']]],
   'service-sla': [['rack-edge', 'EDGE RACK', ['fw-a', 'fw-b', 'lb-a', 'lb-b']]],
   'dc-pod': [['rack-border', 'BORDER RACK', ['border-a', 'border-b', 'fw-a', 'fw-b']], ['rack-spine', 'SPINE RACK', ['spine-1', 'spine-2', 'spine-3', 'spine-4']]],
