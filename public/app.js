@@ -675,6 +675,10 @@ function rackPlacementViews(rack) {
   });
 }
 
+// 3D 에서는 목록에서 고른 것이 화면 밖에 있을 수 있다. 장면을 다시 그린 뒤에 옮겨야 그 자리가
+// 이미 계산돼 있다. 3D 안에서 직접 누른 장비에는 부르지 않는다 - 이미 보고 있던 것이다.
+function focusRackScene(id) { if (id && rackView.mode === '3d') rackScene?.focusOn(id); }
+
 function rackWarningThreshold() { return topology.warningThreshold ?? .8; }
 
 function gaugeStatus(ratio, known) {
@@ -746,6 +750,17 @@ function devicePowerFields(rack, view) {
   return `<label>전력 기준<select name="deviceBasis">${options}</select></label><label>전력 (W)<input name="deviceWatts" type="number" min="0" step="10" placeholder="미입력" value="${escapeAttribute(watts)}"></label>${mismatch}${source}`;
 }
 
+// 랙에 실제로 뭐가 서 있는지 고를 자리. 3D 에서 장비를 고르려면 화면에서 찾아 눌러야 했는데,
+// 찾는 것이 바로 어려운 일이었다. 위 U 부터 세워 랙 정면을 읽는 순서와 같게 둔다. 버튼의
+// data 속성은 2D 배치 버튼과 같아서 선택과 카메라 이동을 그대로 탄다.
+function rackPlacementList(rack, selectedId) {
+  const items = rackSummary(topology, rack).placements
+    .slice().sort((a, b) => b.startU - a.startU)
+    .map((view) => `<button type="button" data-rack-id="${escapeAttribute(rack.id)}" data-rack-placement="${escapeAttribute(view.id)}" aria-pressed="${view.id === selectedId}"><strong>${escapeText(view.name)}</strong><span>${escapeText(placementRangeLabel(view.startU, view.uHeight))}</span><small>${escapeText(view.model || view.kind)}</small></button>`)
+    .join('');
+  return items ? `<div class="rack-placement-list">${items}</div>` : '';
+}
+
 function renderRackInspector() {
   const rack = currentRack(); const placement = selectedRackPlacement(); const target = element('rack-inspector-content');
   if (!rack) { target.innerHTML = `<p class="panel-note">${escapeText(t('ui.noRacksStart'))}</p>`; return; }
@@ -753,11 +768,11 @@ function renderRackInspector() {
   if (!placement) {
     const usage = rackUsage(topology, rack);
     const unknownNote = usage.unknownPower.length ? `<p class="rack-gauge-note">전력 미확인: ${escapeText(usage.unknownPower.slice(0, 4).join(', '))}${usage.unknownPower.length > 4 ? ` 외 ${usage.unknownPower.length - 4}대` : ''} — 장비를 선택해 전력을 입력하면 합계가 나옵니다.</p>` : '';
-    target.innerHTML = `<div class="rack-inspector-summary"><span>장비</span><strong>${summary.placements.length}대</strong><span>순서</span><strong>${topology.racks.findIndex(({ id }) => id === rack.id) + 1} / ${topology.racks.length}</strong></div>${rackGauges(rack, usage)}${unknownNote}<form data-rack-form="rack-edit"><label>랙 이름<input name="name" maxlength="80" required value="${escapeAttribute(rack.name)}"></label><label>공간 (U)<input name="capacityU" type="number" min="1" max="100" required value="${rack.capacityU}"></label><label>전력 예산 (W)<input name="power" type="number" min="1" required value="${rack.powerBudgetWatts}"></label><label>전력 기준<select name="basis"><option value="nameplate"${rack.powerBasis === 'nameplate' ? ' selected' : ''}>명판값</option><option value="typical"${rack.powerBasis === 'typical' ? ' selected' : ''}>일반 부하</option><option value="measured"${rack.powerBasis === 'measured' ? ' selected' : ''}>실측</option></select></label><div class="rack-inspector-actions"><button type="button" data-rack-action="move-rack-left"${topology.racks[0]?.id === rack.id ? ' disabled' : ''}>왼쪽으로</button><button type="button" data-rack-action="move-rack-right"${topology.racks.at(-1)?.id === rack.id ? ' disabled' : ''}>오른쪽으로</button></div><div class="rack-inspector-actions"><button type="submit">랙 저장</button><button type="button" data-rack-action="delete-rack" data-danger>랙 삭제</button></div><p class="rack-form-error"></p></form>`;
+    target.innerHTML = `<div class="rack-inspector-summary"><span>장비</span><strong>${summary.placements.length}대</strong><span>순서</span><strong>${topology.racks.findIndex(({ id }) => id === rack.id) + 1} / ${topology.racks.length}</strong></div>${rackGauges(rack, usage)}${unknownNote}${rackPlacementList(rack, null)}<form data-rack-form="rack-edit"><label>랙 이름<input name="name" maxlength="80" required value="${escapeAttribute(rack.name)}"></label><label>공간 (U)<input name="capacityU" type="number" min="1" max="100" required value="${rack.capacityU}"></label><label>전력 예산 (W)<input name="power" type="number" min="1" required value="${rack.powerBudgetWatts}"></label><label>전력 기준<select name="basis"><option value="nameplate"${rack.powerBasis === 'nameplate' ? ' selected' : ''}>명판값</option><option value="typical"${rack.powerBasis === 'typical' ? ' selected' : ''}>일반 부하</option><option value="measured"${rack.powerBasis === 'measured' ? ' selected' : ''}>실측</option></select></label><div class="rack-inspector-actions"><button type="button" data-rack-action="move-rack-left"${topology.racks[0]?.id === rack.id ? ' disabled' : ''}>왼쪽으로</button><button type="button" data-rack-action="move-rack-right"${topology.racks.at(-1)?.id === rack.id ? ' disabled' : ''}>오른쪽으로</button></div><div class="rack-inspector-actions"><button type="submit">랙 저장</button><button type="button" data-rack-action="delete-rack" data-danger>랙 삭제</button></div><p class="rack-form-error"></p></form>`;
     return;
   }
   const view = placementView(topology, placement); const editableHeight = placement.uHeight || placementHeight(topology, placement);
-  target.innerHTML = `<div class="rack-inspector-summary"><span>장비</span><strong>${escapeText(view.name)}</strong><span>연결</span><strong>${view.mapped ? '토폴로지 장비' : '랙 전용'}</strong><span>위치</span><strong>${placementRangeLabel(view.startU, view.uHeight)}</strong></div><form data-rack-form="placement-edit" data-placement-id="${escapeAttribute(view.id)}">${view.mapped ? `<label>이름<input value="${escapeAttribute(view.name)}" disabled></label>${devicePowerFields(rack, view)}` : `<label>이름<input name="name" maxlength="80" required value="${escapeAttribute(view.name)}"></label><label>모델<input name="model" maxlength="80" value="${escapeAttribute(view.model)}"></label><label>종류<input name="kind" maxlength="80" required value="${escapeAttribute(view.kind)}"></label><label>전력 (W)<input name="powerWatts" type="number" min="0" value="${view.powerWatts ?? ''}"></label>`}<label>시작 U<input name="startU" type="number" min="1" max="${rack.capacityU}" step=".5" required value="${view.startU}"></label><label>높이 (U)<input name="uHeight" type="number" min=".5" max="${rack.capacityU}" step=".5" required value="${editableHeight}"></label><div class="rack-inspector-actions"><button type="submit">배치 저장</button><button type="button" data-rack-action="delete-placement" data-danger>랙에서 제거</button></div><p class="rack-form-error"></p></form>`;
+  target.innerHTML = `<div class="rack-inspector-summary"><span>장비</span><strong>${escapeText(view.name)}</strong><span>연결</span><strong>${view.mapped ? '토폴로지 장비' : '랙 전용'}</strong><span>위치</span><strong>${placementRangeLabel(view.startU, view.uHeight)}</strong></div>${rackPlacementList(rack, view.id)}<form data-rack-form="placement-edit" data-placement-id="${escapeAttribute(view.id)}">${view.mapped ? `<label>이름<input value="${escapeAttribute(view.name)}" disabled></label>${devicePowerFields(rack, view)}` : `<label>이름<input name="name" maxlength="80" required value="${escapeAttribute(view.name)}"></label><label>모델<input name="model" maxlength="80" value="${escapeAttribute(view.model)}"></label><label>종류<input name="kind" maxlength="80" required value="${escapeAttribute(view.kind)}"></label><label>전력 (W)<input name="powerWatts" type="number" min="0" value="${view.powerWatts ?? ''}"></label>`}<label>시작 U<input name="startU" type="number" min="1" max="${rack.capacityU}" step=".5" required value="${view.startU}"></label><label>높이 (U)<input name="uHeight" type="number" min=".5" max="${rack.capacityU}" step=".5" required value="${editableHeight}"></label><div class="rack-inspector-actions"><button type="submit">배치 저장</button><button type="button" data-rack-action="delete-placement" data-danger>랙에서 제거</button></div><p class="rack-form-error"></p></form>`;
 }
 
 function renderPowerDomains() {
@@ -4412,9 +4427,9 @@ element('rack-workspace').addEventListener('click', (event) => {
   const sidebarTab = event.target.closest('[data-rack-sidebar-tab]');
   if (sidebarTab) { rackView.sidebarTab = sidebarTab.dataset.rackSidebarTab; renderRackWorkspace(); return; }
   const rackSelect = event.target.closest('[data-rack-select]');
-  if (rackSelect) { rackView.selectedRackId = rackSelect.dataset.rackSelect; rackView.selectedPlacementId = null; renderRackWorkspace(); return; }
+  if (rackSelect) { rackView.selectedRackId = rackSelect.dataset.rackSelect; rackView.selectedPlacementId = null; renderRackWorkspace(); focusRackScene(rackView.selectedRackId); return; }
   const placement = event.target.closest('[data-rack-placement]');
-  if (placement) { rackView.selectedRackId = placement.dataset.rackId; rackView.selectedPlacementId = placement.dataset.rackPlacement; renderRackWorkspace(); return; }
+  if (placement) { rackView.selectedRackId = placement.dataset.rackId; rackView.selectedPlacementId = placement.dataset.rackPlacement; renderRackWorkspace(); focusRackScene(rackView.selectedPlacementId); return; }
   const view = event.target.closest('[data-rack-view]');
   if (view) { rackView.mode = view.dataset.rackView; renderRackWorkspace(); return; }
   const face = event.target.closest('[data-rack-face]');

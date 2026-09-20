@@ -241,3 +241,20 @@ test('carries an acceptance through a project round trip and rejects a forged on
   device.accepted.forwarding_bps = acceptanceDigest(device.spec.records[0], { packet_size_bytes: 9000 }, null);
   assert.equal(axisOf(validateProject(stale).topology, 'forwarding_bps').evidenceApplicability, 'incompatible');
 });
+
+// 전면 포트는 프로필 라벨과 physical.frontPorts 두 곳에 적힌다. 하나는 사람이 읽고 하나는 3D 가
+// 읽으므로 둘 다 필요하지만, 갈라지면 카탈로그가 같은 장비를 두 가지로 말하게 된다. 여기서 묶는다.
+test('a front panel is drawn with the ports the catalog says the model has', () => {
+  const declared = Object.values(deviceCatalog).flat().filter(({ physical }) => physical?.frontPorts);
+  assert.ok(declared.length >= 5, `frontPorts 를 적은 모델이 ${declared.length}개뿐입니다.`);
+  for (const entry of declared) {
+    const label = (entry.profiles || []).map(({ label: text }) => text).find((text) => /(\d+)\s*[x×]\s*(\d+)G/.test(text));
+    assert.ok(label, `${entry.model}: 포트를 적은 프로필 라벨이 없습니다.`);
+    const fromLabel = [...label.matchAll(/(\d+)\s*[x×]\s*(\d+)G/g)].map(([, count, speed]) => [Number(count), Number(speed) * 1e9]);
+    const fromData = entry.physical.frontPorts.groups.map(({ count, speedBps }) => [count, speedBps]);
+    assert.deepEqual(fromData, fromLabel, `${entry.model}: 라벨과 frontPorts 가 다릅니다.`);
+    for (const { form } of entry.physical.frontPorts.groups) {
+      assert.ok(['rj45', 'sfp', 'sfp28', 'sfpplus', 'qsfp', 'qsfp28', 'qsfpdd'].includes(form), `${entry.model}: 모르는 포트 형식 ${form}`);
+    }
+  }
+});

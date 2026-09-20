@@ -1,4 +1,5 @@
 import * as THREE from './vendor/three.module.js';
+import { vendorLogoFor } from './logos.js';
 
 // 1U = 44.45mm, 1 world unit = 1/6 m. 랙 높이를 U 수에서 계산해야 3U 인클로저와 42U 랙이 한 축척으로 선다.
 const U = .2667;
@@ -141,7 +142,16 @@ function freeTexture(units, width, height) {
   return textureOf(canvas);
 }
 
-function accentOf(view) { return !view.active ? '#6f7d79' : view.domainColor || (view.mapped ? '#0e9a86' : '#8aa39b'); }
+// 제조사 표시는 app.js vendorBadge 와 같은 규칙을 쓴다: 마크가 있으면 마크, 없으면 약칭.
+// 장비가 어느 제조사 것인지와 그 숫자에 데이터시트가 있는지는 다른 이야기이고, 뒤쪽은
+// 미확인 축과 근거 레코드가 이미 말한다. 로고를 숨겨서 대신 말하면 두 화면이 어긋난다.
+// 전원 도메인 색은 기능이므로 켜져 있으면 그쪽이 먼저다.
+function brandOf(view) { return vendorLogoFor(view.vendor); }
+function accentOf(view) {
+  if (!view.active) return '#6f7d79';
+  if (view.domainColor) return view.domainColor;
+  return brandOf(view)?.hex || (view.mapped ? '#0e9a86' : '#8aa39b');
+}
 
 // 섀시는 종류마다 깊이가 다르다. 패치 패널을 서버와 같은 깊이로 두면 옆에서 본 순간 정체가 드러난다.
 const CHASSIS = Object.freeze({
@@ -184,7 +194,60 @@ function stableSeed(value) {
   return (Math.abs(hash) % 1000) / 1000;
 }
 
+// 포트 모양새. 폭은 1U 픽셀 높이에 대한 비율이라 장비가 높아져도 포트는 커지지 않는다.
+const PORT_FORM = Object.freeze({
+  rj45: { width: .26, height: .3, cage: false },
+  sfp: { width: .3, height: .26, cage: true },
+  sfp28: { width: .3, height: .26, cage: true },
+  sfpplus: { width: .3, height: .26, cage: true },
+  qsfp: { width: .44, height: .3, cage: true },
+  qsfp28: { width: .44, height: .3, cage: true },
+  qsfpdd: { width: .48, height: .32, cage: true },
+});
+
+/**
+ * 카탈로그가 전면 구성을 아는 장비를 그 구성대로 그린다. 48포트 스위치가 48개로 보이고 100G
+ * 케이지가 1G 포트보다 넓게 서면, 그림이 모델명과 같은 말을 하게 된다. 데이터가 없는 장비는
+ * 부르는 쪽에서 기존 추정 배치로 돌아간다 - 모르는 구성을 아는 척 그리지 않는다.
+ */
+function drawPortGroups(context, area, view, accent, groups) {
+  const { left, right, top, bottom, rowUnit } = area;
+  const rows = view.uHeight > 1 ? 2 : 1;
+  const middle = (top + bottom) / 2;
+  const seats = groups.flatMap((group) => {
+    const form = PORT_FORM[group.form] || PORT_FORM.rj45;
+    return Array.from({ length: Math.max(0, Math.round(group.count)) }, () => form);
+  });
+  if (!seats.length) return false;
+  // 한 줄에 다 못 넣으면 줄을 나눈다. 그래도 넘치면 폭을 줄여 넣는다 - 48포트를 32개만 그리면
+  // 그림이 모델명과 다른 말을 한다.
+  const perRow = Math.ceil(seats.length / rows);
+  const natural = seats.slice(0, perRow).reduce((sum, form) => sum + rowUnit * form.width, 0) + (perRow - 1) * Math.max(2, rowUnit * .06);
+  const squeeze = Math.min(1, (right - left) / Math.max(1, natural));
+  for (let row = 0; row < rows; row += 1) {
+    let x = left;
+    const y = (rows > 1 ? middle + (row ? .3 : -.3) * rowUnit * .62 : middle);
+    for (let index = row * perRow; index < Math.min(seats.length, (row + 1) * perRow); index += 1) {
+      const form = seats[index];
+      const width = rowUnit * form.width * squeeze;
+      const height = Math.min(rowUnit * form.height, (bottom - top) / rows - 2);
+      const portY = y - height / 2;
+      context.fillStyle = form.cage ? '#101e1a' : '#0a1512';
+      roundRect(context, x, portY, width, height, form.cage ? 3 : 2); context.fill();
+      context.fillStyle = form.cage ? 'rgba(255,255,255,.16)' : 'rgba(255,255,255,.12)';
+      context.fillRect(x + 2, portY + 2, Math.max(1, width - 4), form.cage ? 2 : 1.5);
+      const lens = { x: x + width * .2, y: portY + height - 4, w: Math.max(2, width * .6), h: 2.4 };
+      context.fillStyle = 'rgba(0,0,0,.55)'; context.fillRect(lens.x, lens.y, lens.w, lens.h);
+      if (index % 3 === 0) lamp(area.leds, lens, 'link');
+      x += width + Math.max(2, rowUnit * .06) * squeeze;
+    }
+  }
+  return true;
+}
+
 function drawPorts(context, area, view, accent) {
+  if (view.frontPorts?.groups?.length && drawPortGroups(context, area, view, accent, view.frontPorts.groups)) return;
+
   const { left, right, top, bottom, rowUnit } = area;
   const rows = view.uHeight > 1 ? 2 : 1;
   const portWidth = Math.round(rowUnit * .26); const portHeight = Math.round(rowUnit * .3);
@@ -365,6 +428,26 @@ function faceTexture(view, accent, selected, profile) {
     cursor += rowUnit * .2;
   }
 
+  // simple-icons 의 24x24 단일 path 라 면 위에 바로 그릴 수 있다. 마크가 없는 제조사는
+  // 이름을 작게 새겨 공백을 남기지 않는다. 장비가 자기 로고 이미지를 들고 있는 경우
+  // (device.vendorLogo) 는 비동기 로드가 필요해 아직 여기서 쓰지 않고 마크로 내려간다.
+  const brand = brandOf(view);
+  if (!half) {
+    if (brand) {
+      const size = Math.round(rowUnit * .34);
+      context.save();
+      context.translate(cursor, middle - size / 2); context.scale(size / 24, size / 24);
+      context.fillStyle = brand.hex; context.fill(new Path2D(brand.path));
+      context.restore();
+      cursor += size + rowUnit * .16;
+    } else if (view.vendor) {
+      context.font = `700 ${Math.round(rowUnit * .18)}px ui-monospace, Menlo, monospace`;
+      const mark = view.vendor.toUpperCase().slice(0, 10);
+      context.fillStyle = dim; context.fillText(mark, cursor, middle);
+      cursor += context.measureText(mark).width + rowUnit * .18;
+    }
+  }
+
   const name = view.name.length > 20 ? `${view.name.slice(0, 19)}…` : view.name;
   const model = half ? '' : (view.model || view.kind || '').slice(0, 24);
   context.font = `700 ${Math.round(rowUnit * (half ? .24 : .3))}px Pretendard, -apple-system, sans-serif`;
@@ -416,6 +499,8 @@ function freeRun(capacityU, views) {
 function cabinet(rack, views, selectedId, note, warningThreshold = .8) {
   const group = new THREE.Group();
   const lamps = [];
+  // 어느 장비가 랙의 어느 높이에 섰는지. 카메라가 그 자리로 갈 때 높이를 다시 계산하지 않는다.
+  const seats = new Map();
   const { capacityU, inner, baseY, height } = rackMetrics(rack);
   const frame = new THREE.MeshStandardMaterial({ color: COLORS.frame, roughness: .44, metalness: .56 });
   const addBox = (w, h, d, x, y, z, material) => {
@@ -440,6 +525,7 @@ function cabinet(rack, views, selectedId, note, warningThreshold = .8) {
     const itemHeight = Math.max(.08, view.uHeight * U - .018);
     const y = baseY + (view.startU - 1) * U + itemHeight / 2 + .009;
     const selected = view.id === selectedId;
+    seats.set(view.id, y);
     const profile = chassisProfile(view);
     const color = !view.active ? 0x434d4a : profile.dark ? 0x1f2b27 : 0x3f4946;
     const chassisMaterial = new THREE.MeshStandardMaterial({ color, roughness: .46, metalness: .52, emissive: selected ? COLORS.selected : 0x000000, emissiveIntensity: selected ? .035 : 0 });
@@ -504,6 +590,7 @@ function cabinet(rack, views, selectedId, note, warningThreshold = .8) {
     group.userData.lamps = { mesh: glow, spots: lamps };
   }
 
+  group.userData.seats = seats;
   const usedU = views.reduce((sum, view) => sum + view.uHeight, 0);
   const label = labelSprite(rack.name, note?.text || `${usedU}/${capacityU}U`, note?.status || 'ok');
   label.position.set(0, height + .62, 0); group.add(label);
@@ -620,7 +707,13 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
   const rim = new THREE.DirectionalLight(0xb8e737, .3); rim.position.set(18, 12, -16); scene.add(rim);
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(150, 150), new THREE.MeshStandardMaterial({ color: 0xbfd0c7, roughness: .92 })); ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; world.add(ground);
   const grid = new THREE.GridHelper(144, 40, 0x93ab9f, 0xaec3b7); grid.position.y = .012; grid.material.transparent = true; grid.material.opacity = .42; world.add(grid);
-  const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2(); const view = { yaw: -.48, pitch: .3, distance: 24, focus: 6 };
+  const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2();
+  // 랙이 여러 개면 무엇을 보는지가 높이만으로 정해지지 않는다. 카메라가 향하는 지점을 가로까지
+  // 들고, 지금 값과 가고 싶은 값을 나눠 둔다 - 목표만 옮기면 프레임 루프가 따라가므로 고른
+  // 장비로 튀지 않고 미끄러져 간다.
+  const view = { yaw: -.48, pitch: .3, distance: 24, focus: 6, targetX: 0 };
+  const goal = { distance: 24, focus: 6, targetX: 0 };
+  const anchors = new Map();
   // 랙마다 전면 U 구간을 선분으로 두고 광선과의 최단점을 찾는다. 평면 교차와 달리 옆에서 본
   // 각도에서도 답이 나오고, 선분 밖은 자동으로 양 끝 U로 잘린다.
   const dropSpan = [new THREE.Vector3(), new THREE.Vector3()]; const dropPoint = new THREE.Vector3();
@@ -629,8 +722,16 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
   let rackCount = 0; let cableCount = 0; let patchCableCount = 0; let trayBundleCount = 0; let framedFor = '';
   function placeCamera() {
     const cosine = Math.cos(view.pitch);
-    camera.position.set(Math.sin(view.yaw) * cosine * view.distance, view.focus + Math.sin(view.pitch) * view.distance, Math.cos(view.yaw) * cosine * view.distance);
-    camera.lookAt(0, view.focus, 0);
+    camera.position.set(view.targetX + Math.sin(view.yaw) * cosine * view.distance, view.focus + Math.sin(view.pitch) * view.distance, Math.cos(view.yaw) * cosine * view.distance);
+    camera.lookAt(view.targetX, view.focus, 0);
+  }
+
+  // 움직임을 줄이기로 한 사람에게는 미끄러짐도 움직임이다. 그때는 그냥 도착시킨다.
+  function easeCamera() {
+    const step = reduce ? 1 : .16;
+    view.distance += (goal.distance - view.distance) * step;
+    view.focus += (goal.focus - view.focus) * step;
+    view.targetX += (goal.targetX - view.targetX) * step;
   }
   function resize() { const width = Math.max(1, host.clientWidth); const height = Math.max(1, host.clientHeight); renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix(); }
   const lampTint = new THREE.Color();
@@ -644,15 +745,17 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
   }
-  function renderFrame(now) { if (!active) return; driveLamps((now || 0) / 1000); placeCamera(); renderer.render(scene, camera); frame = requestAnimationFrame(renderFrame); }
+  function renderFrame(now) { if (!active) return; driveLamps((now || 0) / 1000); easeCamera(); placeCamera(); renderer.render(scene, camera); frame = requestAnimationFrame(renderFrame); }
   function disposeObject(object) { object.traverse((child) => { child.geometry?.dispose(); const materials = Array.isArray(child.material) ? child.material : child.material ? [child.material] : []; for (const material of materials) { for (const value of Object.values(material)) if (value?.isTexture) value.dispose(); material.dispose(); } }); }
   function clear() { for (const child of [...world.children].slice(2)) { world.remove(child); disposeObject(child); } pickables = []; dropZones = []; preview = null; candidates = []; lampGroups = []; }
   function update({ racks, links = [], selectedPlacementId, showCables = false, warningThreshold = .8 }) {
-    clear(); const spacing = FRAME_WIDTH + .5; const center = (racks.length - 1) * spacing / 2; const positions = new Map(); let tallest = 0;
+    clear(); anchors.clear(); const spacing = FRAME_WIDTH + .5; const center = (racks.length - 1) * spacing / 2; const positions = new Map(); let tallest = 0;
     racks.forEach(({ rack, placements, note }, index) => {
       const x = index * spacing - center; const metrics = rackMetrics(rack); positions.set(rack.id, { x, ...metrics }); tallest = Math.max(tallest, metrics.height);
       dropZones.push({ rackId: rack.id, x, baseY: metrics.baseY, inner: metrics.inner, capacityU: metrics.capacityU });
       const group = cabinet(rack, placements, selectedPlacementId, note, warningThreshold); group.position.x = x; group.userData.rackId = rack.id; world.add(group);
+      anchors.set(rack.id, { x, y: metrics.baseY + metrics.inner * .5, close: false });
+      for (const [placementId, y] of group.userData.seats) anchors.set(placementId, { x, y, close: true });
       if (group.userData.lamps) lampGroups.push(group.userData.lamps);
       group.traverse((child) => { if (child.userData.pickable) pickables.push(child); });
     });
@@ -670,8 +773,10 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
     const framing = `${racks.map(({ rack }) => rack.id).join(',')}:${top.toFixed(2)}`;
     if (framing !== framedFor) {
       framedFor = framing;
-      view.focus = top * .48;
-      view.distance = Math.min(84, Math.max(13, top * 1.9, racks.length * spacing * 1.2));
+      goal.focus = top * .48; goal.targetX = 0;
+      goal.distance = Math.min(84, Math.max(13, top * 1.9, racks.length * spacing * 1.2));
+      // 설계가 바뀐 것은 이동이 아니라 다른 화면이다. 미끄러뜨리지 않고 바로 세운다.
+      view.focus = goal.focus; view.targetX = goal.targetX; view.distance = goal.distance;
     }
     // 광선 판정은 matrixWorld를 쓰는데 새로 만든 물체의 행렬은 다음 렌더 때에야 갱신된다. 선택으로 다시 그린
     // 직후의 더블클릭·우클릭이 옛 행렬로 아무것도 맞히지 못하므로 여기서 갱신한다.
@@ -771,7 +876,7 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
     const held = dragging; dragging = null;
     if (held.placement) reportPlacementDrag('cancel', held.placement, event);
   });
-  canvas.addEventListener('wheel', (event) => { event.preventDefault(); view.distance = THREE.MathUtils.clamp(view.distance * Math.exp(event.deltaY * .001), 9, 90); }, { passive: false });
+  canvas.addEventListener('wheel', (event) => { event.preventDefault(); goal.distance = THREE.MathUtils.clamp(goal.distance * Math.exp(event.deltaY * .001), 9, 90); }, { passive: false });
   const observer = new ResizeObserver(resize); observer.observe(host); resize();
   return {
     update, dropTarget, setDropPreview, setDropCandidates, placementAt: (clientX, clientY) => hitPlacement(clientX, clientY), rackAt: (clientX, clientY) => hitRack(clientX, clientY),
@@ -780,6 +885,15 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
     stop() { active = false; cancelAnimationFrame(frame); },
     reset() { view.yaw = face === 'rear' ? Math.PI - .48 : -.48; view.pitch = .3; },
     orbit(dx, dy) { view.yaw += dx; view.pitch = THREE.MathUtils.clamp(view.pitch + dy, .05, 1.2); },
+    /** 고른 랙이나 장비로 카메라를 옮긴다. 돌려둔 각도는 그대로 두고 보는 지점만 미끄러뜨린다. */
+    focusOn(id) {
+      const spot = anchors.get(id);
+      if (!spot) return false;
+      goal.targetX = spot.x; goal.focus = spot.y;
+      // 멀리 서 있었으면 당겨 오고, 이미 가까우면 그 거리를 뺏지 않는다.
+      goal.distance = Math.min(goal.distance, spot.close ? 7.5 : 15);
+      return true;
+    },
     setReducedMotion(value) { reduce = Boolean(value); },
     dispose() { observer.disconnect(); clear(); renderer.dispose(); },
     debug() { return { renderer: 'WebGLRenderer', racks: rackCount, dropZones: dropZones.length, dropPreview: Boolean(preview?.visible), meshes: pickables.length, cables: cableCount, patchCables: patchCableCount, trayBundles: trayBundleCount, lamps: lampGroups.reduce((sum, { spots }) => sum + spots.length, 0), face, reducedMotion: reduce, unit: U, cabinet: CABINET }; },
