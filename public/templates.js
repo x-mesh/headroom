@@ -77,6 +77,39 @@ const repeat = (count, make) => Array.from({ length: count }, (unused, index) =>
 // 두 층을 전부 잇는다. connect(topology, mesh(spines, leaves, 100e9)) 로 쓴다.
 const mesh = (sources, targets, capacityBps) => sources.flatMap((source) => targets.map((target) => [source, target, capacityBps]));
 
+/**
+ * 랙에 들어가는 장비는 U 와 전력을 밝혀야 한다. 하나라도 비면 그 랙이 미확인이 되고, 미확인
+ * 랙 하나가 설계 전체 판정을 덮는다(engine.js evaluateRacks, calculateScenario 의 순서).
+ * 그래서 종류별로 한 곳에 적어 두고 그대로 가져다 쓴다.
+ */
+const UNIT = {
+  router: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 300 },
+  leaf: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 380 },
+  spine: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 480 },
+  firewall: { powerBasis: 'typical', uHeight: 2, typicalDrawWatts: 320 },
+  waf: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 280 },
+  lb: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 260 },
+  server: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 300 },
+  nas: { powerBasis: 'typical', uHeight: 2, typicalDrawWatts: 620 },
+};
+
+/**
+ * 랙 하나. U 자리는 아래에서 위로 차곡차곡 쌓고, 높이는 장비가 밝힌 값을 그대로 읽는다 —
+ * 두 곳에 적으면 랙 그림과 전력 합계가 갈라진다. 예산은 여유 있게 잡는다. 전력이 먼저 차는
+ * 이야기는 rack-power 가 맡고, 나머지 설계는 축을 하나씩만 가르친다.
+ */
+function rackOf(topology, { id, name, deviceIds, powerBudgetWatts, capacityU = 42 }) {
+  let nextU = 1;
+  const placements = deviceIds.map((deviceId) => {
+    const device = topology.devices.find((candidate) => candidate.id === deviceId);
+    if (!device?.metadata?.uHeight) throw new Error(`Device ${deviceId} has no rack unit height`);
+    const placement = { id: `${id}-${deviceId}`, deviceId, startU: nextU, uHeight: device.metadata.uHeight };
+    nextU += device.metadata.uHeight;
+    return placement;
+  });
+  return { id, name, deviceIds, powerBasis: 'typical', powerBudgetWatts, capacityU, placements };
+}
+
 function balancedFarm(mode) {
   const topology = createEmptyTopology(mode === 'dsr' ? 'DSR 로드밸런싱' : '인라인 로드밸런싱');
   place(topology, [
@@ -153,12 +186,10 @@ function spineLeaf() {
   place(topology, [
     ['spine-a', 'SPINE A', 'switch', 'FABRIC', 330, 150, { forwarding_bps: 40e9, forwarding_pps: 6e6 }],
     ['spine-b', 'SPINE B', 'switch', 'FABRIC', 620, 150, { forwarding_bps: 40e9, forwarding_pps: 6e6 }],
-    ['leaf-a', 'LEAF A', 'switch', 'RACK 01', 190, 380, { forwarding_bps: 25e9, forwarding_pps: 4e6 }],
-    ['leaf-b', 'LEAF B', 'switch', 'RACK 02', 475, 380, { forwarding_bps: 25e9, forwarding_pps: 4e6 }],
-    ['leaf-c', 'LEAF C', 'switch', 'RACK 03', 760, 380, { forwarding_bps: 25e9, forwarding_pps: 4e6 }],
-    ['node-a', 'NODE 01', 'server', 'RACK 01', 190, 560, { nic_bps: 25e9, nic_pps: null }],
-    ['node-b', 'NODE 02', 'server', 'RACK 02', 475, 560, { nic_bps: 25e9, nic_pps: null }],
-    ['node-c', 'NODE 03', 'server', 'RACK 03', 760, 560, { nic_bps: 25e9, nic_pps: null }],
+    ...repeat(3, (number, index) => ({ id: `leaf-${'abc'[index]}`, name: `LEAF ${'ABC'[index]}`, kind: 'switch', zone: `RACK 0${number}`,
+      position: { x: 190 + index * 285, y: 380 }, limits: { forwarding_bps: 25e9, forwarding_pps: 4e6 }, metadata: UNIT.leaf })),
+    ...repeat(3, (number, index) => ({ id: `node-${'abc'[index]}`, name: `NODE 0${number}`, kind: 'server', zone: `RACK 0${number}`,
+      position: { x: 190 + index * 285, y: 560 }, limits: { nic_bps: 25e9, nic_pps: null }, metadata: UNIT.server })),
   ]);
   connect(topology, [
     ['spine-a', 'leaf-a', 40e9], ['spine-a', 'leaf-b', 40e9], ['spine-a', 'leaf-c', 40e9],
@@ -169,7 +200,10 @@ function spineLeaf() {
     addDemand(topology, { id, name: `${source.toUpperCase()} → ${target.toUpperCase()}`, source, target,
       load: { forwarding_bps: 7e9, forwarding_pps: 1.2e6, nic_bps: 7e9 } });
   }
-  return topology;
+  return declare(topology, {
+    racks: repeat(3, (number, index) => rackOf(topology, { id: `rack-0${number}`, name: `RACK 0${number}`,
+      deviceIds: [`leaf-${'abc'[index]}`, `node-${'abc'[index]}`], powerBudgetWatts: 4000 })),
+  });
 }
 
 function dmzTiers() {
@@ -511,8 +545,8 @@ function serviceSla() {
     ['fw-b', 'FW B', 'firewall', 'SECURITY', 330, 410, gateway],
     ['lb-a', 'LB A', 'lb', 'SERVICE', 560, 170, gateway],
     ['lb-b', 'LB B', 'lb', 'SERVICE', 560, 410, gateway],
-    ...repeat(3, (n, index) => [`web-${n}`, `WEB 0${n}`, 'web', `RACK 0${n}`, 800, 140 + index * 150,
-      { nic_bps: 25e9, nic_pps: 4e6, new_sessions_per_sec: 44.6e3 }]),
+    ...repeat(3, (number, index) => ({ id: `web-${number}`, name: `WEB 0${number}`, kind: 'web', zone: `RACK 0${number}`,
+      position: { x: 800, y: 140 + index * 150 }, limits: { nic_bps: 25e9, nic_pps: 4e6, new_sessions_per_sec: 44.6e3 }, metadata: UNIT.server })),
   ]);
   connect(topology, [
     ...mesh(['internet'], ['fw-a', 'fw-b'], 40e9),
@@ -528,6 +562,8 @@ function serviceSla() {
       id: 'svc-banking', name: '인터넷뱅킹', demandIds: ['banking'], requiredDeliveryRatio: 0.99,
       endpointGroups: [{ id: 'web-pool', name: '웹 풀', members: ['web-1', 'web-2', 'web-3'], minAvailable: 2 }],
     }],
+    racks: repeat(3, (number) => rackOf(topology, { id: `rack-0${number}`, name: `RACK 0${number}`,
+      deviceIds: [`web-${number}`], powerBudgetWatts: 4000 })),
   });
 }
 
@@ -623,10 +659,11 @@ function dcPod() {
     ['fw-a', 'FW A', 'firewall', 'EDGE', 560, 270, { forwarding_bps: 100e9, forwarding_pps: 15e6, new_sessions_per_sec: 600e3, concurrent_sessions: 10e6 }],
     ['fw-b', 'FW B', 'firewall', 'EDGE', 860, 270, { forwarding_bps: 100e9, forwarding_pps: 15e6, new_sessions_per_sec: 600e3, concurrent_sessions: 10e6 }],
     ...repeat(4, (n) => [`spine-${n}`, `SPINE 0${n}`, 'switch', 'POD 1 / SPINE', 320 + (n - 1) * 200, 430, { forwarding_bps: 100e9, forwarding_pps: 15e6 }]),
-    ...repeat(8, (n) => [`leaf-${n}`, `LEAF 0${n}`, 'switch', rack(n), 140 + (n - 1) * 120, 590, { forwarding_bps: 60e9, forwarding_pps: 9e6 }]),
+    ...repeat(8, (n) => ({ id: `leaf-${n}`, name: `LEAF 0${n}`, kind: 'switch', zone: rack(n),
+      position: { x: 140 + (n - 1) * 120, y: 590 }, limits: { forwarding_bps: 60e9, forwarding_pps: 9e6 }, metadata: UNIT.leaf })),
     // 마지막 랙만 스토리지다. 백업이 그 한 대로 모이고, 이 설계에서 가장 꽉 차는 곳이 된다.
-    ...repeat(8, (n) => [`node-${n}`, n === 8 ? 'STORAGE' : `NODE 0${n}`, n === 8 ? 'nas' : 'server', rack(n),
-      140 + (n - 1) * 120, 750, { nic_bps: 25e9, nic_pps: 4e6 }]),
+    ...repeat(8, (n) => ({ id: `node-${n}`, name: n === 8 ? 'STORAGE' : `NODE 0${n}`, kind: n === 8 ? 'nas' : 'server', zone: rack(n),
+      position: { x: 140 + (n - 1) * 120, y: 750 }, limits: { nic_bps: 25e9, nic_pps: 4e6 }, metadata: n === 8 ? UNIT.nas : UNIT.server })),
   ]);
   connect(topology, [
     ...mesh(['internet'], ['border-a', 'border-b'], 200e9),
@@ -654,6 +691,10 @@ function dcPod() {
       { id: 'power-b', name: '전원 계통 B', deviceIds: ['border-b', 'fw-b'], linkIds: [] },
     ],
     haGroups: [{ id: 'fw-pair', name: '경계 방화벽', members: ['fw-a', 'fw-b'], sessionSync: 'none', reestablishWindowSec: 30 }],
+    // 같은 랙이 장애 도메인이자 전력·공간 예산이다. 둘은 다른 질문에 답하므로 따로 적되,
+    // id 는 갈라 둔다 - dual-fabric 이 rack-04 / rack-04-budget 으로 쓰는 방식 그대로다.
+    racks: repeat(8, (n) => rackOf(topology, { id: `rack-0${n}-budget`, name: `RACK 0${n}`,
+      deviceIds: [`leaf-${n}`, `node-${n}`], powerBudgetWatts: 4000 })),
   });
 }
 
@@ -664,8 +705,8 @@ function poolAndPath() {
     ['waf', 'WAF', 'waf', 'DMZ', 350, 200, { forwarding_bps: 20e9, forwarding_pps: 3e6, new_sessions_per_sec: 150e3, concurrent_sessions: 2e6 }],
     { id: 'admin', name: 'ADMIN', kind: 'client', zone: 'OPS', position: { x: 110, y: 470 }, limits: { nic_bps: 10e9, nic_pps: 2e6 }, external: true },
     ['sw', 'OPS SW', 'switch', 'OPS', 350, 470, { forwarding_bps: 40e9, forwarding_pps: 6e6 }],
-    ...repeat(3, (n, index) => [`web-${n}`, `WEB 0${n}`, 'web', `RACK 0${n}`, 640, 120 + index * 200,
-      { nic_bps: 25e9, nic_pps: 4e6, new_sessions_per_sec: 40e3 }]),
+    ...repeat(3, (number, index) => ({ id: `web-${number}`, name: `WEB 0${number}`, kind: 'web', zone: `RACK 0${number}`,
+      position: { x: 640, y: 120 + index * 200 }, limits: { nic_bps: 25e9, nic_pps: 4e6, new_sessions_per_sec: 40e3 }, metadata: UNIT.server })),
   ]);
   connect(topology, [
     ['internet', 'waf', 20e9], ['admin', 'sw', 10e9], ['sw', 'waf', 20e9],
@@ -680,7 +721,10 @@ function poolAndPath() {
   addDemand(topology, { id: 'patch', name: '패치 배포', source: 'admin', target: 'web-1', backendPool: 'single',
     paths: [{ id: 'via-waf', devices: ['admin', 'sw', 'waf', 'web-1'], links: ['admin-sw', 'sw-waf', 'waf-web-1'] }],
     load: { forwarding_bps: 6e9, forwarding_pps: 500e3, new_sessions_per_sec: 400, concurrent_sessions: 8e3 } });
-  return topology;
+  return declare(topology, {
+    racks: repeat(3, (number) => rackOf(topology, { id: `rack-0${number}`, name: `RACK 0${number}`,
+      deviceIds: [`web-${number}`], powerBudgetWatts: 4000 })),
+  });
 }
 
 function closPaths() {
@@ -689,9 +733,9 @@ function closPaths() {
   const tier = (stage, count, x, top, gap) => repeat(count, (n, index) =>
     [`t${stage}-${n}`, `T${stage}-0${n}`, 'switch', `TIER ${stage}`, x, top + index * gap, fabric]);
   place(topology, [
-    ['leaf-a', 'LEAF A', 'switch', 'RACK 01', 120, 350, fabric],
+    { id: 'leaf-a', name: 'LEAF A', kind: 'switch', zone: 'RACK 01', position: { x: 120, y: 350 }, limits: fabric, metadata: UNIT.leaf },
     ...tier(1, 4, 330, 140, 140), ...tier(2, 4, 530, 140, 140), ...tier(3, 5, 730, 110, 130),
-    ['leaf-b', 'LEAF B', 'switch', 'RACK 02', 940, 350, fabric],
+    { id: 'leaf-b', name: 'LEAF B', kind: 'switch', zone: 'RACK 02', position: { x: 940, y: 350 }, limits: fabric, metadata: UNIT.leaf },
   ]);
   const stage = (n, count) => repeat(count, (index) => `t${n}-${index}`);
   connect(topology, [
@@ -702,7 +746,13 @@ function closPaths() {
   ]);
   addDemand(topology, { id: 'east-west', name: '동서 트래픽', source: 'leaf-a', target: 'leaf-b',
     load: { forwarding_bps: 40e9, forwarding_pps: 30e6 } });
-  return topology;
+  // 랙에 든 것은 양 끝 ToR 뿐이다. 가운데 세 단은 이 설계가 위치를 말하지 않으므로 랙도 만들지 않는다.
+  return declare(topology, {
+    racks: [
+      rackOf(topology, { id: 'rack-01', name: 'RACK 01', deviceIds: ['leaf-a'], powerBudgetWatts: 4000 }),
+      rackOf(topology, { id: 'rack-02', name: 'RACK 02', deviceIds: ['leaf-b'], powerBudgetWatts: 4000 }),
+    ],
+  });
 }
 
 function rackPower() {
@@ -864,8 +914,8 @@ function dualUplinkFailure() {
     { id: 'border', name: 'BORDER', kind: 'switch', zone: 'EDGE', position: { x: 280, y: 290 }, limits: { forwarding_bps: 240e9, forwarding_pps: 30e6 } },
     { id: 'spine-a', name: 'SPINE A', kind: 'switch', zone: 'FABRIC', position: { x: 490, y: 150 }, limits: { forwarding_bps: 240e9, forwarding_pps: 30e6 }, ports: [port('to-border', 200e9), port('to-leaf', 100e9)] },
     { id: 'spine-b', name: 'SPINE B', kind: 'switch', zone: 'FABRIC', position: { x: 490, y: 430 }, limits: { forwarding_bps: 240e9, forwarding_pps: 30e6 }, ports: [port('to-border', 200e9), port('to-leaf', 100e9)] },
-    { id: 'leaf', name: 'LEAF', kind: 'switch', zone: 'RACK 01', position: { x: 700, y: 290 }, limits: { forwarding_bps: 240e9, forwarding_pps: 30e6 }, ports: [port('uplink-a', 100e9), port('uplink-b', 100e9), ...repeat(4, (n) => port(`server-${n}`, 40e9))] },
-    ...repeat(4, (n, index) => ({ id: `app-${n}`, name: `APP 0${n}`, kind: 'server', zone: 'RACK 01', position: { x: 910, y: 100 + index * 130 }, limits: { nic_bps: 40e9, nic_pps: 6e6 }, ports: [port('uplink', 40e9)] })),
+    { id: 'leaf', name: 'LEAF', kind: 'switch', zone: 'RACK 01', position: { x: 700, y: 290 }, limits: { forwarding_bps: 240e9, forwarding_pps: 30e6 }, ports: [port('uplink-a', 100e9), port('uplink-b', 100e9), ...repeat(4, (n) => port(`server-${n}`, 40e9))], metadata: UNIT.leaf },
+    ...repeat(4, (n, index) => ({ id: `app-${n}`, name: `APP 0${n}`, kind: 'server', zone: 'RACK 01', position: { x: 910, y: 100 + index * 130 }, limits: { nic_bps: 40e9, nic_pps: 6e6 }, ports: [port('uplink', 40e9)], metadata: UNIT.server })),
   ]);
   connect(topology, [
     ['client', 'border', 200e9],
@@ -879,6 +929,7 @@ function dualUplinkFailure() {
     load: { forwarding_bps: 30e9, forwarding_pps: 3e6, nic_bps: 30e9, nic_pps: 3e6 } });
   return declare(topology, {
     services: [{ id: 'api', name: 'API', demandIds: repeat(4, (n) => `api-${n}`), requiredDeliveryRatio: 0.99 }],
+    racks: [rackOf(topology, { id: 'rack-01', name: 'RACK 01', deviceIds: ['leaf', ...repeat(4, (n) => `app-${n}`)], powerBudgetWatts: 6000 })],
   });
 }
 
