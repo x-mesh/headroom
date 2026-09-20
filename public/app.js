@@ -655,13 +655,23 @@ function placementDomain(deviceId) {
 }
 
 // 랙 뷰는 지금 주입된 장애까지 반영해야 한다. topology 의 active 만 보면 PDU 를 꺼도 아무 변화가 없다.
+// 전면 LED 가 읽을 값. 지나가는 양을 아는 축만 모은다 — 세션 수나 터널 수는 장비가 얼마나
+// 바쁜지를 말하지만 포트에 불이 들어오는 이유는 아니다.
+const TRAFFIC_AXES = ['nic_bps', 'nic_pps', 'forwarding_bps', 'forwarding_pps'];
+
+function axisLoad(scenario, names) {
+  const values = (names || []).map((name) => scenario?.axes?.[name]?.utilization).filter((value) => Number.isFinite(value));
+  return values.length ? Math.max(...values) : null;
+}
+
 function rackPlacementViews(rack) {
   return rackPlacements(topology, rack).map((placement) => {
     const view = placementView(topology, placement);
     const domain = rackView.domains ? placementDomain(view.deviceId) : null;
     const scenario = view.deviceId ? current.devices.find(({ id }) => id === view.deviceId) : null;
     const down = scenario ? scenario.active === false : false;
-    return { ...view, active: view.active && !down, down, domainId: domain?.id || null, domainName: domain?.name || null, domainColor: domain?.color || null };
+    return { ...view, active: view.active && !down, down, domainId: domain?.id || null, domainName: domain?.name || null, domainColor: domain?.color || null,
+      load: axisLoad(scenario, Object.keys(scenario?.axes || {})), trafficLoad: axisLoad(scenario, TRAFFIC_AXES) };
   });
 }
 
@@ -718,7 +728,7 @@ async function ensureRackScene() {
 }
 function syncRackScene() {
   if (state.workspace !== 'rack' || rackView.mode !== '3d' || !(topology.racks || []).length) { rackScene?.stop(); return; }
-  ensureRackScene().then((scene) => { if (state.workspace === 'rack' && rackView.mode === '3d') { scene.update({ racks: topology.racks.map((rack) => ({ rack, placements: rackPlacementViews(rack), note: rackLabelNote(rack) })), links: current.links, selectedPlacementId: rackView.selectedPlacementId, showCables: rackView.cables }); scene.setFace(rackView.face); scene.start(); } }).catch(() => {});
+  ensureRackScene().then((scene) => { if (state.workspace === 'rack' && rackView.mode === '3d') { scene.update({ racks: topology.racks.map((rack) => ({ rack, placements: rackPlacementViews(rack), note: rackLabelNote(rack) })), links: current.links, selectedPlacementId: rackView.selectedPlacementId, showCables: rackView.cables, warningThreshold: rackWarningThreshold() }); scene.setFace(rackView.face); scene.start(); } }).catch(() => {});
 }
 
 // 장비가 선언한 기준과 그 값을 같이 고친다. 값만 고치면 랙 기준과 어긋난 채로 남아 합계에서 빠진다.

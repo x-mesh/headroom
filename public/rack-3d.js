@@ -18,6 +18,32 @@ const COLORS = Object.freeze({
   selected: 0xb8e737, ok: 0x4f7100, warn: 0xd28a22, over: 0xb83c34, unknown: 0x8b9a94, blocked: 0x3a4a45,
   cable: [0x25a98f, 0x8dbd32, 0x5b7f75], warningCable: 0xd28a22, downCable: 0xb83c34,
 });
+// 불빛 색은 게이지와 같은 기준을 쓴다. 랙 화면에서 노란 불과 노란 막대가 다른 뜻이면 안 된다.
+const LED = Object.freeze({ link: 0x4ad39c, disk: 0xa8e26a, power: 0x2fbf6a, warn: 0xf0a63c, over: 0xff5b4c });
+
+/**
+ * 불빛 하나의 지금 밝기. 켜졌다/꺼졌다가 아니라 얼마나 지나가는지를 말한다 — 부하가 높을수록
+ * 빠르게 그리고 오래 켜진다. 한계를 모르는 축이면 상시등만 희미하게 두고, 부하가 0 이면 어둡게
+ * 둔다. 놀고 있는 서버가 바쁜 서버처럼 보이는 순간 이 화면은 처음으로 거짓말을 하게 된다.
+ */
+function ledLevel(time, spot, reduce) {
+  if (!spot.active) return 0;
+  if (spot.role === 'power') return 1;
+  if (spot.load == null) return .2;
+  if (spot.load <= .001) return .05;
+  if (reduce) return Math.min(1, .35 + spot.load * .65);
+  const wave = (time * (.7 + spot.load * 7) + spot.seed) % 1;
+  return wave < .22 + Math.min(.55, spot.load * .5) ? 1 : .1;
+}
+
+function ledColor(role, load, warningThreshold) {
+  if (role === 'power') return LED.power;
+  if (load == null) return COLORS.unknown;
+  if (load > 1) return LED.over;
+  if (load >= warningThreshold) return LED.warn;
+  return role === 'disk' ? LED.disk : LED.link;
+}
+
 const PORT_KINDS = new Set(['switch', 'hub', 'router', 'modem', 'wireless', 'firewall', 'ips', 'waf', 'vpn', 'sslvpn', 'lb']);
 const BAY_KINDS = new Set(['server', 'web', 'vm', 'db', 'mail', 'mainframe', 'storage', 'nas', 'backup']);
 
@@ -129,6 +155,23 @@ function faceGeometry(view) {
   return { width, rowUnit, height: Math.max(52, Math.round(rowUnit * view.uHeight)) };
 }
 
+/**
+ * 켜질 수 있는 자리 하나. 면 텍스처 위의 픽셀 좌표 그대로 담아 두면 cabinet 이 랙 좌표로 옮겨
+ * 실제 불을 세운다. 불을 텍스처에 칠하지 않는 이유는 그것이 매 프레임 장비마다 1024px 캔버스를
+ * 다시 칠하는 일이 되기 때문이다.
+ */
+function lamp(leds, lens, role) {
+  leds?.push({ x: lens.x + lens.w / 2, y: lens.y + lens.h / 2, w: lens.w, h: lens.h, role });
+}
+
+// 같은 배치는 다시 그려도 같은 박자로 뛴다. 매번 난수를 뽑으면 장비 하나를 고르는 것만으로
+// 랙 전체 불빛이 한꺼번에 튄다.
+function stableSeed(value) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
+  return (Math.abs(hash) % 1000) / 1000;
+}
+
 function drawPorts(context, area, view, accent) {
   const { left, right, top, bottom, rowUnit } = area;
   const rows = view.uHeight > 1 ? 2 : 1;
@@ -144,13 +187,19 @@ function drawPorts(context, area, view, accent) {
     const y = (rows > 1 ? middle + (row ? .3 : -.3) * portHeight * 2.1 : middle) - portHeight / 2;
     context.fillStyle = '#0a1512'; roundRect(context, x, y, portWidth, portHeight, 2); context.fill();
     context.fillStyle = 'rgba(255,255,255,.12)'; context.fillRect(x + 2, y + 2, portWidth - 4, 1.5);
-    if (view.active && (index + row) % 3 === 0) { context.fillStyle = accent; context.fillRect(x + portWidth * .22, y + portHeight - 4, portWidth * .56, 2.4); }
+    // 불은 텍스처가 아니라 앞에 세운 메시가 켠다. 여기서는 꺼진 렌즈만 그린다 — 텍스처를 매
+    // 프레임 다시 그리면 장비 한 대마다 1024px 캔버스를 새로 칠하게 된다.
+    const lens = { x: x + portWidth * .22, y: y + portHeight - 4, w: portWidth * .56, h: 2.4 };
+    context.fillStyle = 'rgba(0,0,0,.55)'; context.fillRect(lens.x, lens.y, lens.w, lens.h);
+    if ((index + row) % 3 === 0) lamp(area.leds, lens, 'link');
   }
   for (let index = 0; index < cages; index += 1) {
     const x = limit + gap * 2 + index * (cageWidth + gap); const y = middle - portHeight * .6;
     context.fillStyle = '#101e1a'; roundRect(context, x, y, cageWidth, portHeight * 1.2, 3); context.fill();
     context.fillStyle = 'rgba(255,255,255,.16)'; context.fillRect(x + 3, y + 3, cageWidth - 6, 2);
-    context.fillStyle = view.active ? accent : 'rgba(255,255,255,.14)'; context.fillRect(x + cageWidth - 9, y + portHeight * .85, 5, 4);
+    const lens = { x: x + cageWidth - 9, y: y + portHeight * .85, w: 5, h: 4 };
+    context.fillStyle = 'rgba(0,0,0,.5)'; context.fillRect(lens.x, lens.y, lens.w, lens.h);
+    lamp(area.leds, lens, 'link');
   }
 }
 
@@ -170,10 +219,14 @@ function drawSlots(context, area, view, accent) {
       const px = left + rowUnit * .3 + port * rowUnit * .28;
       if (px + rowUnit * .22 > right - 8) break;
       context.fillStyle = '#08120f'; roundRect(context, px, y + height * .3, rowUnit * .22, height * .4, 2); context.fill();
-      if (view.active && port % 3 === 0) { context.fillStyle = accent; context.fillRect(px + 2, y + height * .74, rowUnit * .18, 2); }
+      const lens = { x: px + 2, y: y + height * .74, w: rowUnit * .18, h: 2 };
+      context.fillStyle = 'rgba(0,0,0,.5)'; context.fillRect(lens.x, lens.y, lens.w, lens.h);
+      if (port % 3 === 0) lamp(area.leds, lens, 'link');
     }
-    context.fillStyle = view.active && index % 2 === 0 ? '#43c894' : 'rgba(255,255,255,.16)';
-    context.beginPath(); context.arc(right - 10, y + height / 2, Math.max(2, rowUnit * .04), 0, Math.PI * 2); context.fill();
+    const radius = Math.max(2, rowUnit * .04);
+    context.fillStyle = 'rgba(0,0,0,.4)';
+    context.beginPath(); context.arc(right - 10, y + height / 2, radius, 0, Math.PI * 2); context.fill();
+    lamp(area.leds, { x: right - 10 - radius, y: y + height / 2 - radius, w: radius * 2, h: radius * 2 }, 'status');
   }
 }
 
@@ -189,8 +242,12 @@ function drawBays(context, area, view, dark) {
     context.fillStyle = dark ? '#16241f' : '#c1cfc9'; roundRect(context, x + 2, y + 2, bayWidth - 4, bayHeight - 4, 3); context.fill();
     context.fillStyle = dark ? 'rgba(255,255,255,.16)' : 'rgba(255,255,255,.75)';
     context.fillRect(x + 7, y + bayHeight * .4, (bayWidth - 4) * .24, Math.max(2, Math.min(rowUnit * .1, bayHeight * .16)));
-    context.fillStyle = view.active && (row + column) % 4 === 0 ? '#43c894' : 'rgba(0,0,0,.22)';
-    context.beginPath(); context.arc(x + bayWidth - 11, y + bayHeight * .5, Math.max(2, rowUnit * .035), 0, Math.PI * 2); context.fill();
+    // 드라이브마다 자기 불을 갖는다. 읽고 쓰는 동안만 켜지므로 바쁜 베이와 노는 베이가 갈린다.
+    const radius = Math.max(2, rowUnit * .035);
+    const cx = x + bayWidth - 11; const cy = y + bayHeight * .5;
+    context.fillStyle = 'rgba(0,0,0,.36)';
+    context.beginPath(); context.arc(cx, cy, radius, 0, Math.PI * 2); context.fill();
+    lamp(area.leds, { x: cx - radius, y: cy - radius, w: radius * 2, h: radius * 2 }, 'disk');
   }
 }
 
@@ -249,6 +306,7 @@ function drawVents(context, area, dark) {
 function faceTexture(view, accent, selected, profile) {
   const { width, height, rowUnit } = faceGeometry(view);
   const half = view.uHeight < 1; // 반 칸 장비는 모델 줄과 면 장식 없이 이름만 작게 보여준다.
+  const leds = [];
   const [canvas, context] = canvasOf(width, height);
   const dark = profile.dark;
   const shell = context.createLinearGradient(0, 0, 0, height);
@@ -284,11 +342,14 @@ function faceTexture(view, accent, selected, profile) {
   const middle = height / 2;
   let cursor = inset + rowUnit * .18;
   if (profile.face !== 'patch' && profile.face !== 'rings' && profile.face !== 'plain') {
+    // 전원·소속·상태 세 등. 전원은 켜져 있으면 그냥 켜져 있고, 상태등만 지나가는 양을 따라 뛴다.
+    // 가운데는 이 배치가 토폴로지의 장비를 가리키는지를 말하는 표시라 깜빡일 이유가 없다.
     const radius = Math.max(2.5, rowUnit * .07);
-    for (const color of [view.active ? '#43c894' : '#5d6a66', view.mapped ? accent : (dark ? '#7c8d87' : '#a3b1ac'), view.active ? '#d8b45c' : '#5d6a66']) {
-      context.fillStyle = color; context.beginPath(); context.arc(cursor, middle, radius, 0, Math.PI * 2); context.fill();
-      cursor += radius * 2.7;
-    }
+    const socket = (color) => { context.fillStyle = color; context.beginPath(); context.arc(cursor, middle, radius, 0, Math.PI * 2); context.fill(); };
+    const lens = () => ({ x: cursor - radius, y: middle - radius, w: radius * 2, h: radius * 2 });
+    socket('rgba(0,0,0,.42)'); lamp(leds, lens(), 'power'); cursor += radius * 2.7;
+    socket(view.mapped ? accent : (dark ? '#7c8d87' : '#a3b1ac')); cursor += radius * 2.7;
+    socket('rgba(0,0,0,.42)'); lamp(leds, lens(), 'status'); cursor += radius * 2.7;
     cursor += rowUnit * .2;
   }
 
@@ -302,7 +363,7 @@ function faceTexture(view, accent, selected, profile) {
   if (model) { context.fillStyle = dim; context.fillText(model, cursor, middle + rowUnit * .19); }
   cursor += Math.max(nameWidth, modelWidth) + rowUnit * .34;
 
-  const area = { left: cursor, right: width - inset, top: rowUnit * .16, bottom: height - rowUnit * .16, rowUnit };
+  const area = { left: cursor, right: width - inset, top: rowUnit * .16, bottom: height - rowUnit * .16, rowUnit, leds };
   if (area.right > area.left && !half && profile.face !== 'plain') {
     if (profile.face === 'ports') drawPorts(context, area, view, accent);
     else if (profile.face === 'slots') drawSlots(context, area, view, accent);
@@ -318,7 +379,7 @@ function faceTexture(view, accent, selected, profile) {
     context.lineWidth = Math.max(4, rowUnit * .1); context.strokeStyle = '#b8e737';
     context.strokeRect(context.lineWidth / 2, context.lineWidth / 2, width - context.lineWidth, height - context.lineWidth);
   }
-  return textureOf(canvas);
+  return { texture: textureOf(canvas), leds, faceWidth: width, faceHeight: height };
 }
 
 // 반 칸 배치가 있어도 빈 구간을 놓치지 않도록 U가 아니라 반 칸 인덱스로 점유를 센다.
@@ -340,8 +401,9 @@ function freeRun(capacityU, views) {
   return length >= 4 ? { start: best.start / 2 + 1, units: length / 2 } : null;
 }
 
-function cabinet(rack, views, selectedId, note) {
+function cabinet(rack, views, selectedId, note, warningThreshold = .8) {
   const group = new THREE.Group();
+  const lamps = [];
   const { capacityU, inner, baseY, height } = rackMetrics(rack);
   const frame = new THREE.MeshStandardMaterial({ color: COLORS.frame, roughness: .44, metalness: .56 });
   const addBox = (w, h, d, x, y, z, material) => {
@@ -371,7 +433,24 @@ function cabinet(rack, views, selectedId, note) {
     const chassisMaterial = new THREE.MeshStandardMaterial({ color, roughness: .46, metalness: .52, emissive: selected ? COLORS.selected : 0x000000, emissiveIntensity: selected ? .035 : 0 });
     const chassis = addBox(RACK.bodyWidth, itemHeight, profile.depth, 0, y, FRONT_Z - profile.depth / 2, chassisMaterial);
     chassis.userData = { rackId: rack.id, placementId: view.id, pickable: true };
-    const faceMaterial = new THREE.MeshStandardMaterial({ map: faceTexture(view, accentOf(view), selected, profile), roughness: .46, metalness: .26 });
+    const face = faceTexture(view, accentOf(view), selected, profile);
+    // 텍스처의 픽셀 자리를 랙 좌표로 옮긴다. 두 좌표계를 따로 두면 장비 높이가 바뀔 때마다 불이
+    // 렌즈에서 어긋난다. 면판 앞면보다 조금 더 앞에 세워야 면에 가려지지 않는다.
+    for (const led of face.leds) {
+      lamps.push({
+        x: (led.x / face.faceWidth - .5) * RACK.faceWidth,
+        y: y + (.5 - led.y / face.faceHeight) * itemHeight,
+        z: FRONT_Z + .075,
+        w: (led.w / face.faceWidth) * RACK.faceWidth,
+        h: (led.h / face.faceHeight) * itemHeight,
+        role: led.role,
+        active: Boolean(view.active),
+        load: led.role === 'status' ? view.load ?? null : view.trafficLoad ?? null,
+        color: ledColor(led.role, led.role === 'status' ? view.load ?? null : view.trafficLoad ?? null, warningThreshold),
+        seed: stableSeed(`${view.id}:${led.role}:${Math.round(led.x)}:${Math.round(led.y)}`),
+      });
+    }
+    const faceMaterial = new THREE.MeshStandardMaterial({ map: face.texture, roughness: .46, metalness: .26 });
     const plate = addBox(RACK.faceWidth, itemHeight, .06, 0, y, FRONT_Z + .03, [chassisMaterial, chassisMaterial, chassisMaterial, chassisMaterial, faceMaterial, chassisMaterial]);
     plate.userData = chassis.userData;
     // 전원 도메인은 러그 색만으로는 멀리서 안 읽힌다. 장비 옆에 같은 색 띠를 세워 한 전원에 물린
@@ -389,6 +468,28 @@ function cabinet(rack, views, selectedId, note) {
     const { start, units } = run; const width = RACK.faceWidth - .26; const decalHeight = units * U - .07;
     const decal = new THREE.Mesh(new THREE.PlaneGeometry(width, decalHeight), new THREE.MeshBasicMaterial({ map: freeTexture(units, width, decalHeight), transparent: true, depthWrite: false }));
     decal.position.set(0, baseY + (start - 1) * U + units * U / 2, FRONT_Z + .02); group.add(decal);
+  }
+
+  // 랙 하나의 모든 불빛이 인스턴스 하나로 선다. 장비마다 메시를 세우면 42U 랙 몇 개에서
+  // 드로우 콜이 수백 개가 되고, 매 프레임 색을 바꾸는 것이 그만큼 비싸진다.
+  if (lamps.length) {
+    const glow = new THREE.InstancedMesh(
+      new THREE.CircleGeometry(.5, 10),
+      new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, toneMapped: false, blending: THREE.AdditiveBlending }),
+      lamps.length,
+    );
+    const matrix = new THREE.Matrix4(); const off = new THREE.Color(0x000000);
+    lamps.forEach((spot, index) => {
+      matrix.makeScale(Math.max(spot.w, .012), Math.max(spot.h, .012), 1);
+      matrix.setPosition(spot.x, spot.y, spot.z);
+      glow.setMatrixAt(index, matrix); glow.setColorAt(index, off);
+    });
+    glow.instanceMatrix.needsUpdate = true;
+    // 불빛이 광선을 먼저 맞으면 그 뒤의 장비를 고를 수 없다.
+    glow.raycast = () => {};
+    glow.frustumCulled = false;
+    group.add(glow);
+    group.userData.lamps = { mesh: glow, spots: lamps };
   }
 
   const usedU = views.reduce((sum, view) => sum + view.uHeight, 0);
@@ -511,7 +612,7 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
   // 랙마다 전면 U 구간을 선분으로 두고 광선과의 최단점을 찾는다. 평면 교차와 달리 옆에서 본
   // 각도에서도 답이 나오고, 선분 밖은 자동으로 양 끝 U로 잘린다.
   const dropSpan = [new THREE.Vector3(), new THREE.Vector3()]; const dropPoint = new THREE.Vector3();
-  let dropZones = []; let preview = null; let candidates = [];
+  let dropZones = []; let preview = null; let candidates = []; let lampGroups = [];
   let dragging = null; let active = false; let frame = 0; let reduce = reducedMotion; let pickables = []; let face = 'front';
   let rackCount = 0; let cableCount = 0; let patchCableCount = 0; let trayBundleCount = 0; let framedFor = '';
   function placeCamera() {
@@ -520,15 +621,27 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
     camera.lookAt(0, view.focus, 0);
   }
   function resize() { const width = Math.max(1, host.clientWidth); const height = Math.max(1, host.clientHeight); renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix(); }
-  function renderFrame() { if (!active) return; placeCamera(); renderer.render(scene, camera); frame = requestAnimationFrame(renderFrame); }
+  const lampTint = new THREE.Color();
+  function driveLamps(seconds) {
+    for (const { mesh, spots } of lampGroups) {
+      for (let index = 0; index < spots.length; index += 1) {
+        const spot = spots[index];
+        lampTint.setHex(spot.color).multiplyScalar(ledLevel(seconds, spot, reduce));
+        mesh.setColorAt(index, lampTint);
+      }
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
+  }
+  function renderFrame(now) { if (!active) return; driveLamps((now || 0) / 1000); placeCamera(); renderer.render(scene, camera); frame = requestAnimationFrame(renderFrame); }
   function disposeObject(object) { object.traverse((child) => { child.geometry?.dispose(); const materials = Array.isArray(child.material) ? child.material : child.material ? [child.material] : []; for (const material of materials) { for (const value of Object.values(material)) if (value?.isTexture) value.dispose(); material.dispose(); } }); }
-  function clear() { for (const child of [...world.children].slice(2)) { world.remove(child); disposeObject(child); } pickables = []; dropZones = []; preview = null; candidates = []; }
-  function update({ racks, links = [], selectedPlacementId, showCables = false }) {
+  function clear() { for (const child of [...world.children].slice(2)) { world.remove(child); disposeObject(child); } pickables = []; dropZones = []; preview = null; candidates = []; lampGroups = []; }
+  function update({ racks, links = [], selectedPlacementId, showCables = false, warningThreshold = .8 }) {
     clear(); const spacing = FRAME_WIDTH + .5; const center = (racks.length - 1) * spacing / 2; const positions = new Map(); let tallest = 0;
     racks.forEach(({ rack, placements, note }, index) => {
       const x = index * spacing - center; const metrics = rackMetrics(rack); positions.set(rack.id, { x, ...metrics }); tallest = Math.max(tallest, metrics.height);
       dropZones.push({ rackId: rack.id, x, baseY: metrics.baseY, inner: metrics.inner, capacityU: metrics.capacityU });
-      const group = cabinet(rack, placements, selectedPlacementId, note); group.position.x = x; group.userData.rackId = rack.id; world.add(group);
+      const group = cabinet(rack, placements, selectedPlacementId, note, warningThreshold); group.position.x = x; group.userData.rackId = rack.id; world.add(group);
+      if (group.userData.lamps) lampGroups.push(group.userData.lamps);
       group.traverse((child) => { if (child.userData.pickable) pickables.push(child); });
     });
     rackCount = racks.length;
@@ -657,6 +770,6 @@ export function createRackScene({ host, canvas, onSelect, onPlacementDrag = null
     orbit(dx, dy) { view.yaw += dx; view.pitch = THREE.MathUtils.clamp(view.pitch + dy, .05, 1.2); },
     setReducedMotion(value) { reduce = Boolean(value); },
     dispose() { observer.disconnect(); clear(); renderer.dispose(); },
-    debug() { return { renderer: 'WebGLRenderer', racks: rackCount, dropZones: dropZones.length, dropPreview: Boolean(preview?.visible), meshes: pickables.length, cables: cableCount, patchCables: patchCableCount, trayBundles: trayBundleCount, face, reducedMotion: reduce, unit: U, cabinet: CABINET }; },
+    debug() { return { renderer: 'WebGLRenderer', racks: rackCount, dropZones: dropZones.length, dropPreview: Boolean(preview?.visible), meshes: pickables.length, cables: cableCount, patchCables: patchCableCount, trayBundles: trayBundleCount, lamps: lampGroups.reduce((sum, { spots }) => sum + spots.length, 0), face, reducedMotion: reduce, unit: U, cabinet: CABINET }; },
   };
 }
