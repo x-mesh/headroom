@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DICTIONARIES, SUPPORTED_LOCALES, formatCount, formatNumber, localizeError, localizedBundledLabel, localizedTemplate, setLocale, t, resolveInitialLocale, resolveLocale, validateDictionaries } from '../public/i18n.js';
-import { buildTemplate } from '../public/templates.js';
+import { buildTemplate, templates } from '../public/templates.js';
 import { catalogFor } from '../public/devices/catalog.js';
 
 test('locale dictionaries have identical keys and placeholders', () => {
@@ -41,7 +41,8 @@ test('bundled templates, catalog profiles, and editor errors use English and Jap
   assert.match(japaneseProfile.label, /ファイアウォール|プロファイル|カタログ/);
   assert.equal(localizeError({ message: '랙 이름을 입력하세요.' }), 'ラック名を入力してください。');
   assert.equal(localizeError({ message: 'Imported label is invalid.' }), 'Imported label is invalid.');
-  assert.notEqual(localizedTemplate('dual-fabric', 'summary', 'fallback'), 'SPINE A/B가 PDU-3 공용 전원을 공유하는 ECMP API 구성입니다.');
+  const koreanFallback = templates.find(({ id }) => id === 'dual-fabric').summary;
+  assert.notEqual(localizedTemplate('dual-fabric', 'summary', 'fallback'), koreanFallback);
   setLocale('ko');
 });
 
