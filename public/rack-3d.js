@@ -142,10 +142,11 @@ function freeTexture(units, width, height) {
   return textureOf(canvas);
 }
 
-// 카탈로그에서 고른 장비는 제조사 색을 입는다. 손으로 적은 장비는 중립색으로 남아, 랙을
-// 훑는 것만으로 데이터시트를 등에 업은 쪽과 사람이 적어 넣은 쪽이 갈린다. 전원 도메인 색은
-// 기능이므로 켜져 있으면 그쪽이 먼저다.
-function brandOf(view) { return view.evidenced ? vendorLogoFor(view.vendor) : null; }
+// 제조사 표시는 app.js vendorBadge 와 같은 규칙을 쓴다: 마크가 있으면 마크, 없으면 약칭.
+// 장비가 어느 제조사 것인지와 그 숫자에 데이터시트가 있는지는 다른 이야기이고, 뒤쪽은
+// 미확인 축과 근거 레코드가 이미 말한다. 로고를 숨겨서 대신 말하면 두 화면이 어긋난다.
+// 전원 도메인 색은 기능이므로 켜져 있으면 그쪽이 먼저다.
+function brandOf(view) { return vendorLogoFor(view.vendor); }
 function accentOf(view) {
   if (!view.active) return '#6f7d79';
   if (view.domainColor) return view.domainColor;
@@ -374,10 +375,11 @@ function faceTexture(view, accent, selected, profile) {
     cursor += rowUnit * .2;
   }
 
-  // 제조사 마크는 카탈로그에서 고른 장비에만 새긴다. simple-icons 의 24x24 단일 path 라
-  // 면 위에 바로 그릴 수 있고, 마크가 없는 제조사는 이름을 작게 새겨 공백을 남기지 않는다.
+  // simple-icons 의 24x24 단일 path 라 면 위에 바로 그릴 수 있다. 마크가 없는 제조사는
+  // 이름을 작게 새겨 공백을 남기지 않는다. 장비가 자기 로고 이미지를 들고 있는 경우
+  // (device.vendorLogo) 는 비동기 로드가 필요해 아직 여기서 쓰지 않고 마크로 내려간다.
   const brand = brandOf(view);
-  if (!half && view.evidenced) {
+  if (!half) {
     if (brand) {
       const size = Math.round(rowUnit * .34);
       context.save();

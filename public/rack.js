@@ -48,9 +48,6 @@ export function placementView(topology, placement) {
     vendor: device?.vendor || placement.vendor || '',
     kind: device?.kind || placement.kind || 'other',
     mapped: Boolean(device),
-    // 카탈로그에서 골라 붙인 장비인지. 제조사 도색은 여기에만 준다 - 손으로 적은 값이 데이터시트
-    // 뒷받침을 받은 장비처럼 보이면 랙 그림이 근거를 부풀려 말하게 된다.
-    evidenced: Boolean(device?.spec),
     active: device ? device.active !== false : true,
   };
 }
