@@ -675,6 +675,10 @@ function rackPlacementViews(rack) {
   });
 }
 
+// 3D 에서는 목록에서 고른 것이 화면 밖에 있을 수 있다. 장면을 다시 그린 뒤에 옮겨야 그 자리가
+// 이미 계산돼 있다. 3D 안에서 직접 누른 장비에는 부르지 않는다 - 이미 보고 있던 것이다.
+function focusRackScene(id) { if (id && rackView.mode === '3d') rackScene?.focusOn(id); }
+
 function rackWarningThreshold() { return topology.warningThreshold ?? .8; }
 
 function gaugeStatus(ratio, known) {
@@ -4412,9 +4416,9 @@ element('rack-workspace').addEventListener('click', (event) => {
   const sidebarTab = event.target.closest('[data-rack-sidebar-tab]');
   if (sidebarTab) { rackView.sidebarTab = sidebarTab.dataset.rackSidebarTab; renderRackWorkspace(); return; }
   const rackSelect = event.target.closest('[data-rack-select]');
-  if (rackSelect) { rackView.selectedRackId = rackSelect.dataset.rackSelect; rackView.selectedPlacementId = null; renderRackWorkspace(); return; }
+  if (rackSelect) { rackView.selectedRackId = rackSelect.dataset.rackSelect; rackView.selectedPlacementId = null; renderRackWorkspace(); focusRackScene(rackView.selectedRackId); return; }
   const placement = event.target.closest('[data-rack-placement]');
-  if (placement) { rackView.selectedRackId = placement.dataset.rackId; rackView.selectedPlacementId = placement.dataset.rackPlacement; renderRackWorkspace(); return; }
+  if (placement) { rackView.selectedRackId = placement.dataset.rackId; rackView.selectedPlacementId = placement.dataset.rackPlacement; renderRackWorkspace(); focusRackScene(rackView.selectedPlacementId); return; }
   const view = event.target.closest('[data-rack-view]');
   if (view) { rackView.mode = view.dataset.rackView; renderRackWorkspace(); return; }
   const face = event.target.closest('[data-rack-face]');
