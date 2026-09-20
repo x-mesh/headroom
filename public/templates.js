@@ -93,19 +93,28 @@ const UNIT = {
   nas: { powerBasis: 'typical', uHeight: 2, typicalDrawWatts: 620 },
 };
 
+// 랙 위에 서는 것과 아래에 서는 것. 배선이 짧아야 하는 스위치·보안 장비가 위로 가고 서버와
+// 스토리지가 아래를 채우는 것이 실제 랙의 모습이고, rack-power 와 ai-inference-pod 가 손으로
+// 적어 둔 배치도 그렇다.
+const TOP_OF_RACK = new Set(['switch', 'router', 'firewall', 'waf', 'lb']);
+
 /**
- * 랙 하나. U 자리는 아래에서 위로 차곡차곡 쌓고, 높이는 장비가 밝힌 값을 그대로 읽는다 —
- * 두 곳에 적으면 랙 그림과 전력 합계가 갈라진다. 예산은 여유 있게 잡는다. 전력이 먼저 차는
- * 이야기는 rack-power 가 맡고, 나머지 설계는 축을 하나씩만 가르친다.
+ * 랙 하나. 높이는 장비가 밝힌 값을 그대로 읽는다 — 두 곳에 적으면 랙 그림과 전력 합계가
+ * 갈라진다. 예산은 여유 있게 잡는다. 전력이 먼저 차는 이야기는 rack-power 가 맡고, 나머지
+ * 설계는 축을 하나씩만 가르친다.
  */
 function rackOf(topology, { id, name, deviceIds, powerBudgetWatts, capacityU = 42 }) {
-  let nextU = 1;
+  let ceiling = capacityU;
+  let floor = 1;
   const placements = deviceIds.map((deviceId) => {
     const device = topology.devices.find((candidate) => candidate.id === deviceId);
     if (!device?.metadata?.uHeight) throw new Error(`Device ${deviceId} has no rack unit height`);
-    const placement = { id: `${id}-${deviceId}`, deviceId, startU: nextU, uHeight: device.metadata.uHeight };
-    nextU += device.metadata.uHeight;
-    return placement;
+    const { uHeight } = device.metadata;
+    const fromTop = TOP_OF_RACK.has(device.kind);
+    const startU = fromTop ? ceiling - uHeight + 1 : floor;
+    if (fromTop) ceiling -= uHeight; else floor += uHeight;
+    if (floor > ceiling + 1) throw new Error(`Rack ${id} is out of units`);
+    return { id: `${id}-${deviceId}`, deviceId, startU, uHeight };
   });
   return { id, name, deviceIds, powerBasis: 'typical', powerBudgetWatts, capacityU, placements };
 }
