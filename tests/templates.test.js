@@ -162,7 +162,7 @@ test('AI inference pod keeps GPU racks physical and exposes shared power losses'
   const afterRailA = calculateScenario(topology, { disabledDomains: ['gpu-rail-a'] });
   const afterRailB = calculateScenario(topology, { disabledDomains: ['gpu-rail-b'] });
   const afterSpineA = calculateScenario(topology, { disabledDevices: ['spine-a'] });
-  assert.equal(topology.racks.length, 2);
+  assert.equal(topology.racks.filter(({ id }) => id.startsWith('gpu-rack-')).length, 2);
   assert.equal(topology.racks.flatMap(({ placements }) => placements).filter(({ deviceId }) => deviceId?.startsWith('gpu-')).length, 8);
   assert.ok(baseline.racks.every(({ status }) => status === 'pass'));
   assert.equal(baseline.services.find(({ id }) => id === 'inference-api').status, 'pass');

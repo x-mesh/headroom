@@ -17,7 +17,11 @@ function deviceInput(entry) {
 function place(topology, entries) {
   for (const entry of entries) {
     const { spec, accept, ...input } = deviceInput(entry);
-    addDevice(topology, input);
+    // 우리가 사서 랙에 꽂는 종류면 U 와 전력을 종류별 기본값으로 붙인다. 튜플에 일일이 적으면
+    // 설계 하나가 한눈에 안 읽히고, 안 적으면 그 랙이 미확인이 되어 설계 전체 판정을 덮는다.
+    // 스스로 밝힌 값이나 데이터시트가 있으면 그것이 이긴다.
+    const unit = input.external ? null : UNIT[input.kind];
+    addDevice(topology, unit && !input.metadata ? { ...input, metadata: unit } : input);
     if (spec) equip(topology, input.id, spec, accept);
   }
 }
@@ -84,14 +88,23 @@ const mesh = (sources, targets, capacityBps) => sources.flatMap((source) => targ
  */
 const UNIT = {
   router: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 300 },
-  leaf: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 380 },
-  spine: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 480 },
+  switch: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 380 },
   firewall: { powerBasis: 'typical', uHeight: 2, typicalDrawWatts: 320 },
   waf: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 280 },
+  ips: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 340 },
+  sslvpn: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 300 },
+  vpn: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 250 },
   lb: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 260 },
+  web: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 300 },
   server: { powerBasis: 'typical', uHeight: 1, typicalDrawWatts: 300 },
+  db: { powerBasis: 'typical', uHeight: 2, typicalDrawWatts: 520 },
   nas: { powerBasis: 'typical', uHeight: 2, typicalDrawWatts: 620 },
+  backup: { powerBasis: 'typical', uHeight: 2, typicalDrawWatts: 450 },
 };
+
+// 데이터시트를 붙인 장비는 카탈로그가 실제 측정값을 들고 온다. 엔진도 그쪽을 먼저 읽으므로
+// (engine.js rackPhysical) 여기서도 같은 순서로 읽어야 랙 그림과 전력 합계가 어긋나지 않는다.
+const physicalOf = (device) => (device?.spec ? device.spec.physical : device?.metadata) ?? null;
 
 // 랙 위에 서는 것과 아래에 서는 것. 배선이 짧아야 하는 스위치·보안 장비가 위로 가고 서버와
 // 스토리지가 아래를 채우는 것이 실제 랙의 모습이고, rack-power 와 ai-inference-pod 가 손으로
@@ -108,8 +121,8 @@ function rackOf(topology, { id, name, deviceIds, powerBudgetWatts, capacityU = 4
   let floor = 1;
   const placements = deviceIds.map((deviceId) => {
     const device = topology.devices.find((candidate) => candidate.id === deviceId);
-    if (!device?.metadata?.uHeight) throw new Error(`Device ${deviceId} has no rack unit height`);
-    const { uHeight } = device.metadata;
+    const uHeight = physicalOf(device)?.uHeight;
+    if (!uHeight) throw new Error(`Device ${deviceId} has no rack unit height`);
     const fromTop = TOP_OF_RACK.has(device.kind);
     const startU = fromTop ? ceiling - uHeight + 1 : floor;
     if (fromTop) ceiling -= uHeight; else floor += uHeight;
@@ -196,9 +209,9 @@ function spineLeaf() {
     ['spine-a', 'SPINE A', 'switch', 'FABRIC', 330, 150, { forwarding_bps: 40e9, forwarding_pps: 6e6 }],
     ['spine-b', 'SPINE B', 'switch', 'FABRIC', 620, 150, { forwarding_bps: 40e9, forwarding_pps: 6e6 }],
     ...repeat(3, (number, index) => ({ id: `leaf-${'abc'[index]}`, name: `LEAF ${'ABC'[index]}`, kind: 'switch', zone: `RACK 0${number}`,
-      position: { x: 190 + index * 285, y: 380 }, limits: { forwarding_bps: 25e9, forwarding_pps: 4e6 }, metadata: UNIT.leaf })),
+      position: { x: 190 + index * 285, y: 380 }, limits: { forwarding_bps: 25e9, forwarding_pps: 4e6 } })),
     ...repeat(3, (number, index) => ({ id: `node-${'abc'[index]}`, name: `NODE 0${number}`, kind: 'server', zone: `RACK 0${number}`,
-      position: { x: 190 + index * 285, y: 560 }, limits: { nic_bps: 25e9, nic_pps: null }, metadata: UNIT.server })),
+      position: { x: 190 + index * 285, y: 560 }, limits: { nic_bps: 25e9, nic_pps: null } })),
   ]);
   connect(topology, [
     ['spine-a', 'leaf-a', 40e9], ['spine-a', 'leaf-b', 40e9], ['spine-a', 'leaf-c', 40e9],
@@ -555,7 +568,7 @@ function serviceSla() {
     ['lb-a', 'LB A', 'lb', 'SERVICE', 560, 170, gateway],
     ['lb-b', 'LB B', 'lb', 'SERVICE', 560, 410, gateway],
     ...repeat(3, (number, index) => ({ id: `web-${number}`, name: `WEB 0${number}`, kind: 'web', zone: `RACK 0${number}`,
-      position: { x: 800, y: 140 + index * 150 }, limits: { nic_bps: 25e9, nic_pps: 4e6, new_sessions_per_sec: 44.6e3 }, metadata: UNIT.server })),
+      position: { x: 800, y: 140 + index * 150 }, limits: { nic_bps: 25e9, nic_pps: 4e6, new_sessions_per_sec: 44.6e3 } })),
   ]);
   connect(topology, [
     ...mesh(['internet'], ['fw-a', 'fw-b'], 40e9),
@@ -669,10 +682,10 @@ function dcPod() {
     ['fw-b', 'FW B', 'firewall', 'EDGE', 860, 270, { forwarding_bps: 100e9, forwarding_pps: 15e6, new_sessions_per_sec: 600e3, concurrent_sessions: 10e6 }],
     ...repeat(4, (n) => [`spine-${n}`, `SPINE 0${n}`, 'switch', 'POD 1 / SPINE', 320 + (n - 1) * 200, 430, { forwarding_bps: 100e9, forwarding_pps: 15e6 }]),
     ...repeat(8, (n) => ({ id: `leaf-${n}`, name: `LEAF 0${n}`, kind: 'switch', zone: rack(n),
-      position: { x: 140 + (n - 1) * 120, y: 590 }, limits: { forwarding_bps: 60e9, forwarding_pps: 9e6 }, metadata: UNIT.leaf })),
+      position: { x: 140 + (n - 1) * 120, y: 590 }, limits: { forwarding_bps: 60e9, forwarding_pps: 9e6 } })),
     // 마지막 랙만 스토리지다. 백업이 그 한 대로 모이고, 이 설계에서 가장 꽉 차는 곳이 된다.
     ...repeat(8, (n) => ({ id: `node-${n}`, name: n === 8 ? 'STORAGE' : `NODE 0${n}`, kind: n === 8 ? 'nas' : 'server', zone: rack(n),
-      position: { x: 140 + (n - 1) * 120, y: 750 }, limits: { nic_bps: 25e9, nic_pps: 4e6 }, metadata: n === 8 ? UNIT.nas : UNIT.server })),
+      position: { x: 140 + (n - 1) * 120, y: 750 }, limits: { nic_bps: 25e9, nic_pps: 4e6 } })),
   ]);
   connect(topology, [
     ...mesh(['internet'], ['border-a', 'border-b'], 200e9),
@@ -715,7 +728,7 @@ function poolAndPath() {
     { id: 'admin', name: 'ADMIN', kind: 'client', zone: 'OPS', position: { x: 110, y: 470 }, limits: { nic_bps: 10e9, nic_pps: 2e6 }, external: true },
     ['sw', 'OPS SW', 'switch', 'OPS', 350, 470, { forwarding_bps: 40e9, forwarding_pps: 6e6 }],
     ...repeat(3, (number, index) => ({ id: `web-${number}`, name: `WEB 0${number}`, kind: 'web', zone: `RACK 0${number}`,
-      position: { x: 640, y: 120 + index * 200 }, limits: { nic_bps: 25e9, nic_pps: 4e6, new_sessions_per_sec: 40e3 }, metadata: UNIT.server })),
+      position: { x: 640, y: 120 + index * 200 }, limits: { nic_bps: 25e9, nic_pps: 4e6, new_sessions_per_sec: 40e3 } })),
   ]);
   connect(topology, [
     ['internet', 'waf', 20e9], ['admin', 'sw', 10e9], ['sw', 'waf', 20e9],
@@ -742,9 +755,9 @@ function closPaths() {
   const tier = (stage, count, x, top, gap) => repeat(count, (n, index) =>
     [`t${stage}-${n}`, `T${stage}-0${n}`, 'switch', `TIER ${stage}`, x, top + index * gap, fabric]);
   place(topology, [
-    { id: 'leaf-a', name: 'LEAF A', kind: 'switch', zone: 'RACK 01', position: { x: 120, y: 350 }, limits: fabric, metadata: UNIT.leaf },
+    { id: 'leaf-a', name: 'LEAF A', kind: 'switch', zone: 'RACK 01', position: { x: 120, y: 350 }, limits: fabric },
     ...tier(1, 4, 330, 140, 140), ...tier(2, 4, 530, 140, 140), ...tier(3, 5, 730, 110, 130),
-    { id: 'leaf-b', name: 'LEAF B', kind: 'switch', zone: 'RACK 02', position: { x: 940, y: 350 }, limits: fabric, metadata: UNIT.leaf },
+    { id: 'leaf-b', name: 'LEAF B', kind: 'switch', zone: 'RACK 02', position: { x: 940, y: 350 }, limits: fabric },
   ]);
   const stage = (n, count) => repeat(count, (index) => `t${n}-${index}`);
   connect(topology, [
@@ -923,8 +936,8 @@ function dualUplinkFailure() {
     { id: 'border', name: 'BORDER', kind: 'switch', zone: 'EDGE', position: { x: 280, y: 290 }, limits: { forwarding_bps: 240e9, forwarding_pps: 30e6 } },
     { id: 'spine-a', name: 'SPINE A', kind: 'switch', zone: 'FABRIC', position: { x: 490, y: 150 }, limits: { forwarding_bps: 240e9, forwarding_pps: 30e6 }, ports: [port('to-border', 200e9), port('to-leaf', 100e9)] },
     { id: 'spine-b', name: 'SPINE B', kind: 'switch', zone: 'FABRIC', position: { x: 490, y: 430 }, limits: { forwarding_bps: 240e9, forwarding_pps: 30e6 }, ports: [port('to-border', 200e9), port('to-leaf', 100e9)] },
-    { id: 'leaf', name: 'LEAF', kind: 'switch', zone: 'RACK 01', position: { x: 700, y: 290 }, limits: { forwarding_bps: 240e9, forwarding_pps: 30e6 }, ports: [port('uplink-a', 100e9), port('uplink-b', 100e9), ...repeat(4, (n) => port(`server-${n}`, 40e9))], metadata: UNIT.leaf },
-    ...repeat(4, (n, index) => ({ id: `app-${n}`, name: `APP 0${n}`, kind: 'server', zone: 'RACK 01', position: { x: 910, y: 100 + index * 130 }, limits: { nic_bps: 40e9, nic_pps: 6e6 }, ports: [port('uplink', 40e9)], metadata: UNIT.server })),
+    { id: 'leaf', name: 'LEAF', kind: 'switch', zone: 'RACK 01', position: { x: 700, y: 290 }, limits: { forwarding_bps: 240e9, forwarding_pps: 30e6 }, ports: [port('uplink-a', 100e9), port('uplink-b', 100e9), ...repeat(4, (n) => port(`server-${n}`, 40e9))] },
+    ...repeat(4, (n, index) => ({ id: `app-${n}`, name: `APP 0${n}`, kind: 'server', zone: 'RACK 01', position: { x: 910, y: 100 + index * 130 }, limits: { nic_bps: 40e9, nic_pps: 6e6 }, ports: [port('uplink', 40e9)] })),
   ]);
   connect(topology, [
     ['client', 'border', 200e9],
@@ -1492,9 +1505,58 @@ export const templates = [
   },
 ];
 
+/**
+ * 어느 장비가 어느 랙에 서는가. 사이트 하나면 랙 하나로 묶고, 이중화나 사이트 분리가 그 설계의
+ * 논지일 때만 랙을 가른다. 서른 몇 개의 배치를 한자리에 모아 둔 것은 설계를 새로 넣는 사람이
+ * 다른 설계가 어떻게 묶였는지 보고 맞추게 하려는 것이다. build 안에서 이미 랙을 적은 설계 —
+ * 랙 자체가 논지인 rack-power·pdu-rails·ai-inference-pod 와 dc-pod 계열 — 는 여기 없다.
+ *
+ * 외부망·클라우드·VM·지사 CPE 는 우리가 꽂는 물건이 아니므로 어느 랙에도 넣지 않는다.
+ */
+const SITE_RACKS = {
+  'single-stack': [['rack-01', 'RACK 01', ['fw', 'lb', 'web-a', 'web-b']]],
+  'dual-stack': [['rack-a', 'RACK A', ['fw-a', 'lb-a', 'web-a']], ['rack-b', 'RACK B', ['fw-b', 'lb-b', 'web-b']]],
+  'dual-wan-shared-entry': [['rack-a', 'RACK A', ['edge-a', 'fw-a', 'api-a']], ['rack-b', 'RACK B', ['edge-b', 'fw-b', 'api-b']]],
+  'inline-lb': [['rack-01', 'RACK 01', ['edge', 'lb', 'web-a', 'web-b']]],
+  'dsr-farm': [['rack-01', 'RACK 01', ['edge', 'lb', 'web-a', 'web-b']]],
+  'raft-cluster': [['rack-01', 'RACK 01', ['node-1', 'node-2', 'node-3', 'node-4']]],
+  'three-tier': [['rack-01', 'RACK 01', ['lb', 'web-a', 'web-b', 'db']]],
+  'security-chain': [['rack-01', 'RACK 01', ['edge', 'fw', 'waf', 'web-a', 'web-b']]],
+  'remote-access': [['rack-01', 'RACK 01', ['fw', 'sslvpn', 'ips', 'sw', 'app', 'file']]],
+  'branch-vpn': [['rack-hq', 'HQ RACK', ['vpn', 'fw', 'sw', 'erp']]],
+  dmz: [['rack-01', 'RACK 01', ['fw-out', 'waf', 'fw-in']]],
+  'hybrid-cloud': [['rack-on-prem', 'ON-PREM RACK', ['core', 'edge']]],
+  'cdn-origin': [['rack-pop', 'EDGE POP RACK', ['cache-a', 'cache-b']], ['rack-origin', 'ORIGIN RACK', ['core', 'origin']]],
+  microservices: [['rack-pod-a', 'POD A RACK', ['leaf-a']], ['rack-pod-b', 'POD B RACK', ['leaf-b']]],
+  backup: [['rack-01', 'RACK 01', ['core', 'app-a', 'app-b', 'nas', 'vault']]],
+  vdi: [['rack-01', 'RACK 01', ['gw', 'profile']]],
+  payment: [['rack-01', 'RACK 01', ['waf', 'app-a', 'app-b', 'ledger']]],
+  streaming: [['rack-origin', 'ORIGIN RACK', ['core', 'origin']], ['rack-pop', 'POP RACK', ['edge-a', 'edge-b']]],
+  iot: [['rack-site', 'SITE RACK', ['gw-a', 'gw-b']], ['rack-platform', 'PLATFORM RACK', ['core']]],
+  'disaster-recovery': [['rack-site-a', 'SITE A RACK', ['sw-p', 'db-p']], ['rack-site-b', 'SITE B RACK', ['sw-s', 'db-s']]],
+  'asym-wan': [['rack-branch', 'BRANCH RACK', ['branch-lan', 'cpe']]],
+  'datasheet-perimeter': [['rack-01', 'RACK 01', ['fg', 'pa', 'core', 'app-1', 'app-2']]],
+  'evidence-acceptance': [['rack-01', 'RACK 01', ['fw-accepted', 'fw-pending', 'app-accepted', 'app-pending']]],
+  'session-sync-comparison': [['rack-synced', 'SYNCED RACK', ['synced-a', 'synced-b', 'app-synced']], ['rack-none', 'NONE RACK', ['none-a', 'none-b', 'app-none']]],
+  // 아래는 build 가 이미 랙 일부를 적은 설계다. 거기서 빠진 장비를 여기서 마저 세운다.
+  'spine-leaf': [['rack-spine', 'SPINE RACK', ['spine-a', 'spine-b']]],
+  'service-sla': [['rack-edge', 'EDGE RACK', ['fw-a', 'fw-b', 'lb-a', 'lb-b']]],
+  'dc-pod': [['rack-border', 'BORDER RACK', ['border-a', 'border-b', 'fw-a', 'fw-b']], ['rack-spine', 'SPINE RACK', ['spine-1', 'spine-2', 'spine-3', 'spine-4']]],
+  'pool-and-path': [['rack-dmz', 'DMZ RACK', ['waf', 'sw']]],
+  'clos-paths': [['rack-tier-1', 'TIER 1 RACK', ['t1-1', 't1-2', 't1-3', 't1-4']], ['rack-tier-2', 'TIER 2 RACK', ['t2-1', 't2-2', 't2-3', 't2-4']], ['rack-tier-3', 'TIER 3 RACK', ['t3-1', 't3-2', 't3-3', 't3-4', 't3-5']]],
+  'ai-inference-pod': [['rack-edge', 'EDGE RACK', ['gateway']]],
+  'dual-uplink-failure': [['rack-fabric', 'FABRIC RACK', ['border', 'spine-a', 'spine-b']]],
+};
+
 export const buildTemplate = (id) => {
   const definition = templates.find((template) => template.id === id) || templates[0];
   const topology = definition.build();
+  // declare 가 여기서도 장비 존재를 확인한다. 없는 id 를 적으면 조용히 빈 랙이 되는 대신 멈춘다.
+  // build 가 세운 랙은 그대로 두고 뒤에 잇는다 — 랙 자체가 논지인 설계의 배치를 덮으면 안 된다.
+  if (SITE_RACKS[definition.id]) {
+    const added = SITE_RACKS[definition.id].map(([rackId, name, deviceIds]) => rackOf(topology, { id: rackId, name, deviceIds, powerBudgetWatts: 4000 }));
+    declare(topology, { racks: [...(topology.racks || []), ...added] });
+  }
   topology.synthetic = definition.id !== 'blank';
   const copy = (field, fallback) => localizedTemplate(definition.id, field, fallback);
   const experiment = definition.experiment ? { ...structuredClone(definition.experiment), prompt: copy('prompt', definition.experiment.prompt), observe: copy('observe', definition.experiment.observe), action: { ...definition.experiment.action, label: copy('action', definition.experiment.action.label) } } : null;
