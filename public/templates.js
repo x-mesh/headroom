@@ -118,8 +118,8 @@ function balancedFarm(mode) {
     ['lb', 'LB', 'lb', 'SERVICE', 500, 290,
       { forwarding_bps: 8.5e9, new_sessions_per_sec: 60e3, concurrent_sessions: 1.2e6, tls_full_handshakes_per_sec: 5e3, tls_resumed_handshakes_per_sec: 40e3 },
       { mode, sessionSync: 'unknown' }],
-    ['web-a', 'WEB 01', 'web', 'RACK 01', 740, 180, { nic_bps: 25e9, nic_pps: null, new_sessions_per_sec: 40e3 }],
-    ['web-b', 'WEB 02', 'web', 'RACK 02', 740, 400, { nic_bps: 25e9, nic_pps: null, new_sessions_per_sec: 40e3 }],
+    ['web-a', 'WEB 01', 'web', 'WEB A', 740, 180, { nic_bps: 25e9, nic_pps: null, new_sessions_per_sec: 40e3 }],
+    ['web-b', 'WEB 02', 'web', 'WEB B', 740, 400, { nic_bps: 25e9, nic_pps: null, new_sessions_per_sec: 40e3 }],
   ]);
   connect(topology, [['internet', 'edge', 40e9], ['edge', 'lb', 20e9], ['lb', 'web-a', 25e9], ['lb', 'web-b', 25e9]]);
   // DSR 은 서버가 클라이언트에게 직접 답한다. 그 길이 실제로 있어야 응답 바이트를 어디에 실을지 적을 수 있다.
@@ -151,8 +151,8 @@ function securityChain() {
       { mode: 'routed', sessionSync: 'none' }],
     ['waf', 'WAF', 'waf', 'SECURITY', 585, 290,
       { forwarding_bps: 12e9, new_sessions_per_sec: 45e3, concurrent_sessions: 900e3, tls_full_handshakes_per_sec: 3.5e3 }],
-    ['web-a', 'WEB 01', 'web', 'RACK 01', 780, 180, { nic_bps: 25e9, nic_pps: null, new_sessions_per_sec: 40e3 }],
-    ['web-b', 'WEB 02', 'web', 'RACK 02', 780, 400, { nic_bps: 25e9, nic_pps: null, new_sessions_per_sec: 40e3 }],
+    ['web-a', 'WEB 01', 'web', 'WEB A', 780, 180, { nic_bps: 25e9, nic_pps: null, new_sessions_per_sec: 40e3 }],
+    ['web-b', 'WEB 02', 'web', 'WEB B', 780, 400, { nic_bps: 25e9, nic_pps: null, new_sessions_per_sec: 40e3 }],
   ]);
   connect(topology, [['internet', 'edge', 40e9], ['edge', 'fw', 20e9], ['fw', 'waf', 20e9], ['waf', 'web-a', 25e9], ['waf', 'web-b', 25e9]]);
   for (const [id, target] of [['shop-a', 'web-a'], ['shop-b', 'web-b']]) {
@@ -259,12 +259,12 @@ function cdnOrigin() {
 function microservices() {
   const topology = createEmptyTopology('East-West 마이크로서비스');
   place(topology, [
-    ['leaf-a', 'LEAF A', 'switch', 'RACK 01', 240, 200, { forwarding_bps: 40e9, forwarding_pps: 3e6 }],
-    ['leaf-b', 'LEAF B', 'switch', 'RACK 02', 700, 200, { forwarding_bps: 40e9, forwarding_pps: 3e6 }],
-    ['svc-a', 'API', 'vm', 'RACK 01', 150, 430, { nic_bps: 25e9, nic_pps: 4e6 }],
-    ['svc-b', 'AUTH', 'vm', 'RACK 01', 350, 430, { nic_bps: 25e9, nic_pps: 4e6 }],
-    ['svc-c', 'ORDER', 'vm', 'RACK 02', 610, 430, { nic_bps: 25e9, nic_pps: 4e6 }],
-    ['svc-d', 'LEDGER', 'vm', 'RACK 02', 810, 430, { nic_bps: 25e9, nic_pps: 4e6 }],
+    ['leaf-a', 'LEAF A', 'switch', 'POD A', 240, 200, { forwarding_bps: 40e9, forwarding_pps: 3e6 }],
+    ['leaf-b', 'LEAF B', 'switch', 'POD B', 700, 200, { forwarding_bps: 40e9, forwarding_pps: 3e6 }],
+    ['svc-a', 'API', 'vm', 'POD A', 150, 430, { nic_bps: 25e9, nic_pps: 4e6 }],
+    ['svc-b', 'AUTH', 'vm', 'POD A', 350, 430, { nic_bps: 25e9, nic_pps: 4e6 }],
+    ['svc-c', 'ORDER', 'vm', 'POD B', 610, 430, { nic_bps: 25e9, nic_pps: 4e6 }],
+    ['svc-d', 'LEDGER', 'vm', 'POD B', 810, 430, { nic_bps: 25e9, nic_pps: 4e6 }],
   ]);
   connect(topology, [['leaf-a', 'leaf-b', 40e9], ['svc-a', 'leaf-a', 25e9], ['svc-b', 'leaf-a', 25e9],
     ['svc-c', 'leaf-b', 25e9], ['svc-d', 'leaf-b', 25e9]]);
@@ -279,8 +279,8 @@ function microservices() {
 function backupNetwork() {
   const topology = createEmptyTopology('백업 네트워크');
   place(topology, [
-    ['app-a', 'APP 01', 'server', 'RACK 01', 160, 180, { nic_bps: 25e9, nic_pps: null }],
-    ['app-b', 'APP 02', 'server', 'RACK 01', 160, 400, { nic_bps: 25e9, nic_pps: null }],
+    ['app-a', 'APP 01', 'server', 'APP TIER', 160, 180, { nic_bps: 25e9, nic_pps: null }],
+    ['app-b', 'APP 02', 'server', 'APP TIER', 160, 400, { nic_bps: 25e9, nic_pps: null }],
     ['core', 'CORE SW', 'switch', 'FABRIC', 430, 290, { forwarding_bps: 40e9, forwarding_pps: 5e6 }],
     ['nas', 'NAS', 'nas', 'STORAGE', 680, 200, { nic_bps: 10e9, nic_pps: null }],
     ['vault', 'TAPE VAULT', 'backup', 'STORAGE', 680, 420, { nic_bps: 8e9, nic_pps: null }],
@@ -397,8 +397,8 @@ function remoteAccess() {
       { forwarding_bps: 5e9, concurrent_sessions: 200e3, vpn_tunnels: 10e3, tls_full_handshakes_per_sec: 4e3 }],
     ['ips', 'IPS', 'ips', 'SECURITY', 680, 290, { forwarding_bps: 8e9, forwarding_pps: 1.6e6, concurrent_sessions: 500e3 }],
     ['sw', 'SW', 'switch', 'CORE', 870, 290, { forwarding_bps: 20e9, forwarding_pps: 4e6 }],
-    ['app', 'APP 01', 'server', 'RACK 01', 1050, 180, { nic_bps: 10e9, nic_pps: 2e6 }],
-    ['file', 'FILE', 'nas', 'RACK 01', 1050, 400, { nic_bps: 10e9, nic_pps: 2e6 }],
+    ['app', 'APP 01', 'server', 'INTERNAL', 1050, 180, { nic_bps: 10e9, nic_pps: 2e6 }],
+    ['file', 'FILE', 'nas', 'INTERNAL', 1050, 400, { nic_bps: 10e9, nic_pps: 2e6 }],
   ]);
   connect(topology, [['remote', 'fw', 10e9], ['fw', 'sslvpn', 10e9], ['sslvpn', 'ips', 10e9],
     ['ips', 'sw', 10e9], ['sw', 'app', 10e9], ['sw', 'file', 10e9]]);
@@ -417,7 +417,7 @@ function branchVpn() {
     ['vpn', 'IPSEC GW', 'vpn', 'EDGE', 470, 290, { forwarding_bps: 2e9, forwarding_pps: 700e3, vpn_tunnels: 2e3 }],
     ['fw', 'FW', 'firewall', 'EDGE', 660, 290, { forwarding_bps: 10e9, forwarding_pps: 2e6, new_sessions_per_sec: 30e3, concurrent_sessions: 600e3 }],
     ['sw', 'SW', 'switch', 'CORE', 850, 290, { forwarding_bps: 20e9, forwarding_pps: 4e6 }],
-    ['erp', 'ERP', 'server', 'RACK 02', 1030, 290, { nic_bps: 10e9, nic_pps: 2e6 }],
+    ['erp', 'ERP', 'server', 'HQ', 1030, 290, { nic_bps: 10e9, nic_pps: 2e6 }],
   ]);
   connect(topology, [['branch', 'wan', 4e9], ['wan', 'vpn', 4e9], ['vpn', 'fw', 10e9], ['fw', 'sw', 10e9], ['sw', 'erp', 10e9]]);
   addDemand(topology, { id: 'branch-traffic', name: '지사 업무 트래픽', source: 'branch', target: 'erp',
@@ -444,8 +444,8 @@ function singleStack() {
     ['fw', 'FW', 'firewall', 'SECURITY', 340, 290, { forwarding_bps: 16e9, forwarding_pps: 2.4e6, new_sessions_per_sec: 60e3, concurrent_sessions: 1.2e6 }],
     ['lb', 'LB', 'lb', 'SERVICE', 570, 290,
       { forwarding_bps: 16e9, new_sessions_per_sec: 60e3, concurrent_sessions: 1.2e6, tls_full_handshakes_per_sec: 6e3, tls_resumed_handshakes_per_sec: 48e3 }],
-    ['web-a', 'WEB 01', 'web', 'RACK 01', 800, 180, { nic_bps: 8e9, nic_pps: 1.6e6, new_sessions_per_sec: 30e3 }],
-    ['web-b', 'WEB 02', 'web', 'RACK 02', 800, 400, { nic_bps: 8e9, nic_pps: 1.6e6, new_sessions_per_sec: 30e3 }],
+    ['web-a', 'WEB 01', 'web', 'WEB A', 800, 180, { nic_bps: 8e9, nic_pps: 1.6e6, new_sessions_per_sec: 30e3 }],
+    ['web-b', 'WEB 02', 'web', 'WEB B', 800, 400, { nic_bps: 8e9, nic_pps: 1.6e6, new_sessions_per_sec: 30e3 }],
   ]);
   connect(topology, [['internet', 'fw', 20e9], ['fw', 'lb', 20e9], ['lb', 'web-a', 10e9], ['lb', 'web-b', 10e9]]);
   return stackDemands(topology);
@@ -461,8 +461,8 @@ function dualStack() {
       { forwarding_bps: 8e9, new_sessions_per_sec: 30e3, concurrent_sessions: 600e3, tls_full_handshakes_per_sec: 3e3, tls_resumed_handshakes_per_sec: 24e3 }],
     ['lb-b', 'LB B', 'lb', 'SERVICE', 570, 400,
       { forwarding_bps: 8e9, new_sessions_per_sec: 30e3, concurrent_sessions: 600e3, tls_full_handshakes_per_sec: 3e3, tls_resumed_handshakes_per_sec: 24e3 }],
-    ['web-a', 'WEB 01', 'web', 'RACK 01', 800, 180, { nic_bps: 8e9, nic_pps: 1.6e6, new_sessions_per_sec: 30e3 }],
-    ['web-b', 'WEB 02', 'web', 'RACK 02', 800, 400, { nic_bps: 8e9, nic_pps: 1.6e6, new_sessions_per_sec: 30e3 }],
+    ['web-a', 'WEB 01', 'web', 'WEB A', 800, 180, { nic_bps: 8e9, nic_pps: 1.6e6, new_sessions_per_sec: 30e3 }],
+    ['web-b', 'WEB 02', 'web', 'WEB B', 800, 400, { nic_bps: 8e9, nic_pps: 1.6e6, new_sessions_per_sec: 30e3 }],
   ]);
   connect(topology, [
     ['internet', 'fw-a', 10e9], ['internet', 'fw-b', 10e9],
@@ -487,8 +487,8 @@ function dualWanSharedEntry() {
     ['edge-b', 'EDGE B', 'router', 'EDGE', 425, 400, { forwarding_bps: 12e9, forwarding_pps: 2e6 }],
     ['fw-a', 'FW A', 'firewall', 'SECURITY', 610, 180, { forwarding_bps: 12e9, forwarding_pps: 2e6, new_sessions_per_sec: 20e3, concurrent_sessions: 200e3 }],
     ['fw-b', 'FW B', 'firewall', 'SECURITY', 610, 400, { forwarding_bps: 12e9, forwarding_pps: 2e6, new_sessions_per_sec: 20e3, concurrent_sessions: 200e3 }],
-    ['api-a', 'API A', 'server', 'RACK 01', 825, 180, { nic_bps: 6e9, nic_pps: 1e6 }],
-    ['api-b', 'API B', 'server', 'RACK 02', 825, 400, { nic_bps: 6e9, nic_pps: 1e6 }],
+    ['api-a', 'API A', 'server', 'API A', 825, 180, { nic_bps: 6e9, nic_pps: 1e6 }],
+    ['api-b', 'API B', 'server', 'API B', 825, 400, { nic_bps: 6e9, nic_pps: 1e6 }],
   ]);
   connect(topology, [
     { id: 'entry-isp-a', source: 'internet', target: 'isp-a', capacity: { forwarding_bps: 12e9 } },
@@ -631,8 +631,8 @@ function datasheetPerimeter() {
     { id: 'fg', name: 'FG 100F', kind: 'firewall', zone: 'EDGE', position: { x: 320, y: 290 }, spec: ['fortinet-fortigate-100f', 'fw-1518'] },
     { id: 'pa', name: 'PA-3410', kind: 'firewall', zone: 'DMZ', position: { x: 530, y: 290 }, spec: ['paloalto-pa-3410', 'firewall-appmix'] },
     ['core', 'CORE SW', 'switch', 'CORE', 740, 290, { forwarding_bps: 80e9, forwarding_pps: 12e6 }],
-    ['app-1', 'APP 01', 'web', 'RACK 01', 950, 180, { nic_bps: 25e9, nic_pps: 4e6, new_sessions_per_sec: 60e3 }],
-    ['app-2', 'APP 02', 'web', 'RACK 02', 950, 400, { nic_bps: 25e9, nic_pps: 4e6, new_sessions_per_sec: 60e3 }],
+    ['app-1', 'APP 01', 'web', 'APP A', 950, 180, { nic_bps: 25e9, nic_pps: 4e6, new_sessions_per_sec: 60e3 }],
+    ['app-2', 'APP 02', 'web', 'APP B', 950, 400, { nic_bps: 25e9, nic_pps: 4e6, new_sessions_per_sec: 60e3 }],
   ]);
   connect(topology, [
     ['internet', 'fg', 20e9], ['fg', 'pa', 20e9], ['pa', 'core', 20e9],
