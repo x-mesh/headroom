@@ -856,6 +856,83 @@ function pduRails() {
   });
 }
 
+function dualUplinkFailure() {
+  const topology = createEmptyTopology('이중 uplink, 한 가닥 장애');
+  const port = (id, speedBps) => ({ id, speedBps });
+  place(topology, [
+    { id: 'client', name: 'CLIENT', kind: 'client', zone: 'EDGE', position: { x: 90, y: 290 }, limits: { nic_bps: 200e9 }, external: true },
+    { id: 'border', name: 'BORDER', kind: 'switch', zone: 'EDGE', position: { x: 280, y: 290 }, limits: { forwarding_bps: 240e9, forwarding_pps: 30e6 } },
+    { id: 'spine-a', name: 'SPINE A', kind: 'switch', zone: 'FABRIC', position: { x: 490, y: 150 }, limits: { forwarding_bps: 240e9, forwarding_pps: 30e6 }, ports: [port('to-border', 200e9), port('to-leaf', 100e9)] },
+    { id: 'spine-b', name: 'SPINE B', kind: 'switch', zone: 'FABRIC', position: { x: 490, y: 430 }, limits: { forwarding_bps: 240e9, forwarding_pps: 30e6 }, ports: [port('to-border', 200e9), port('to-leaf', 100e9)] },
+    { id: 'leaf', name: 'LEAF', kind: 'switch', zone: 'RACK 01', position: { x: 700, y: 290 }, limits: { forwarding_bps: 240e9, forwarding_pps: 30e6 }, ports: [port('uplink-a', 100e9), port('uplink-b', 100e9), ...repeat(4, (n) => port(`server-${n}`, 40e9))] },
+    ...repeat(4, (n, index) => ({ id: `app-${n}`, name: `APP 0${n}`, kind: 'server', zone: 'RACK 01', position: { x: 910, y: 100 + index * 130 }, limits: { nic_bps: 40e9, nic_pps: 6e6 }, ports: [port('uplink', 40e9)] })),
+  ]);
+  connect(topology, [
+    ['client', 'border', 200e9],
+    { id: 'border-spine-a', source: 'border', target: 'spine-a', capacity: { forwarding_bps: 200e9 }, targetPort: 'to-border' },
+    { id: 'border-spine-b', source: 'border', target: 'spine-b', capacity: { forwarding_bps: 200e9 }, targetPort: 'to-border' },
+    { id: 'leaf-spine-a', source: 'leaf', target: 'spine-a', capacity: { forwarding_bps: 100e9 }, sourcePort: 'uplink-a', targetPort: 'to-leaf' },
+    { id: 'leaf-spine-b', source: 'leaf', target: 'spine-b', capacity: { forwarding_bps: 100e9 }, sourcePort: 'uplink-b', targetPort: 'to-leaf' },
+    ...repeat(4, (n) => ({ id: `leaf-app-${n}`, source: 'leaf', target: `app-${n}`, capacity: { forwarding_bps: 40e9 }, sourcePort: `server-${n}`, targetPort: 'uplink' })),
+  ]);
+  for (const n of [1, 2, 3, 4]) addDemand(topology, { id: `api-${n}`, name: `API 0${n}`, source: 'client', target: `app-${n}`,
+    load: { forwarding_bps: 30e9, forwarding_pps: 3e6, nic_bps: 30e9, nic_pps: 3e6 } });
+  return declare(topology, {
+    services: [{ id: 'api', name: 'API', demandIds: repeat(4, (n) => `api-${n}`), requiredDeliveryRatio: 0.99 }],
+  });
+}
+
+function evidenceAcceptance() {
+  const topology = createEmptyTopology('조건 불일치와 근거 수락');
+  setWorkloadConditions(topology, { packet_size_bytes: 64, transport: 'udp', features_enabled: [] });
+  place(topology, [
+    { id: 'internet', name: 'INTERNET', kind: 'cloud', zone: 'EDGE', position: { x: 100, y: 290 }, limits: { forwarding_bps: 80e9 }, external: true },
+    { id: 'fw-accepted', name: 'FW ACCEPTED', kind: 'firewall', zone: 'REVIEWED', position: { x: 360, y: 170 }, spec: ['fortinet-fortigate-100f', 'fw-1518'], accept: ['forwarding_bps'] },
+    { id: 'fw-pending', name: 'FW PENDING', kind: 'firewall', zone: 'PENDING', position: { x: 360, y: 410 }, spec: ['fortinet-fortigate-100f', 'fw-1518'] },
+    { id: 'app-accepted', name: 'APP ACCEPTED', kind: 'server', zone: 'REVIEWED', position: { x: 700, y: 170 }, limits: { nic_bps: 20e9, nic_pps: 3e6 } },
+    { id: 'app-pending', name: 'APP PENDING', kind: 'server', zone: 'PENDING', position: { x: 700, y: 410 }, limits: { nic_bps: 20e9, nic_pps: 3e6 } },
+  ]);
+  connect(topology, [
+    ['internet', 'fw-accepted', 20e9], ['fw-accepted', 'app-accepted', 20e9],
+    ['internet', 'fw-pending', 20e9], ['fw-pending', 'app-pending', 20e9],
+  ]);
+  addDemand(topology, { id: 'reviewed', name: '검토 완료 서비스', source: 'internet', target: 'app-accepted', load: { forwarding_bps: 12e9, forwarding_pps: 1e6, nic_bps: 12e9, nic_pps: 1e6 } });
+  addDemand(topology, { id: 'pending', name: '검토 대기 서비스', source: 'internet', target: 'app-pending', load: { forwarding_bps: 12e9, forwarding_pps: 1e6, nic_bps: 12e9, nic_pps: 1e6 } });
+  return topology;
+}
+
+function sessionSyncComparison() {
+  const topology = createEmptyTopology('상태 동기화 HA 비교');
+  const firewall = { forwarding_bps: 10e9, forwarding_pps: 2e6, new_sessions_per_sec: 25e3, concurrent_sessions: 800e3 };
+  place(topology, [
+    { id: 'internet', name: 'INTERNET', kind: 'cloud', zone: 'EDGE', position: { x: 90, y: 290 }, limits: { forwarding_bps: 40e9 }, external: true },
+    ['synced-a', 'SYNCED A', 'firewall', 'STATEFUL HA', 350, 150, firewall],
+    ['synced-b', 'SYNCED B', 'firewall', 'STATEFUL HA', 350, 300, firewall],
+    ['none-a', 'NONE A', 'firewall', 'STATELESS HA', 350, 440, firewall],
+    ['none-b', 'NONE B', 'firewall', 'STATELESS HA', 350, 590, firewall],
+    ['app-synced', 'APP SYNCED', 'server', 'STATEFUL HA', 710, 220, { nic_bps: 8e9, nic_pps: 1.5e6 }],
+    ['app-none', 'APP NONE', 'server', 'STATELESS HA', 710, 520, { nic_bps: 8e9, nic_pps: 1.5e6 }],
+  ]);
+  connect(topology, [
+    ...mesh(['internet'], ['synced-a', 'synced-b', 'none-a', 'none-b'], 10e9),
+    ...mesh(['synced-a', 'synced-b'], ['app-synced'], 10e9),
+    ...mesh(['none-a', 'none-b'], ['app-none'], 10e9),
+  ]);
+  addDemand(topology, { id: 'stateful', name: '상태 동기화 서비스', source: 'internet', target: 'app-synced', load: { forwarding_bps: 4e9, forwarding_pps: 600e3, new_sessions_per_sec: 20e3, concurrent_sessions: 600e3, nic_bps: 4e9, nic_pps: 600e3 } });
+  addDemand(topology, { id: 'stateless', name: '비동기 서비스', source: 'internet', target: 'app-none', load: { forwarding_bps: 4e9, forwarding_pps: 600e3, new_sessions_per_sec: 20e3, concurrent_sessions: 600e3, nic_bps: 4e9, nic_pps: 600e3 } });
+  return declare(topology, {
+    services: [
+      { id: 'svc-synced', name: '상태 동기화 서비스', demandIds: ['stateful'], requiredDeliveryRatio: 0.99 },
+      { id: 'svc-none', name: '비동기 서비스', demandIds: ['stateless'], requiredDeliveryRatio: 0.99 },
+    ],
+    failureDomains: [{ id: 'active-a', name: '각 HA 쌍의 활성 노드', deviceIds: ['synced-a', 'none-a'] }],
+    haGroups: [
+      { id: 'synced-pair', name: '상태 동기화 쌍', members: ['synced-a', 'synced-b'], sessionSync: 'stateful', reestablishWindowSec: 30 },
+      { id: 'none-pair', name: '비동기 쌍', members: ['none-a', 'none-b'], sessionSync: 'none', reestablishWindowSec: 30 },
+    ],
+  });
+}
+
 // 설계가 스물을 넘으면 한 줄로 깔린 목록에서는 고를 수가 없다. 등급 배지도 기준이 되지 못한다 —
 // 스물넷 중 스물이 단일 장애점이다. 그래서 무엇을 가르치는지로 묶는다. 순서가 곧 섹션 순서다.
 export const templateGroups = Object.freeze([
@@ -1302,6 +1379,48 @@ export const templates = [
       observe: 'GPU 01부터 GPU 04까지 함께 멈춰 추론 요청 네 개가 단절됩니다. 이 모델은 NIC·팹릭·U·전력·선언한 전원 도메인만 계산합니다. GPU 연산 성능, 이중 PSU, 냉각은 계산하지 않습니다.',
     },
     build: aiInferencePod,
+  },
+  {
+    id: 'dual-uplink-failure', name: '이중 uplink, 한 가닥 장애',
+    group: 'resilience',
+    grade: { verdict: 'single-point', severs: 11 },
+    summary: '두 100Gbps uplink가 정상 시에는 나뉘고, 하나가 끊기면 남은 링크 하나로 몰리는 ToR 구성입니다.',
+    teaches: '이중 uplink는 장비 두 대가 아니라 물리 링크 두 가닥입니다. 정상일 때 API 4개의 120Gbps는 두 uplink에 60Gbps씩 갈라집니다. 하나를 끊으면 남은 링크 하나가 120%가 되어, 경로는 살아 있어도 서비스 수용 기준을 지키지 못합니다. 포트 속도도 링크 용량보다 작게 적을 수 없습니다.',
+    tags: ['uplink', '링크 장애', 'ECMP', '포트 속도', 'ToR'],
+    experiment: {
+      prompt: 'LEAF–SPINE A uplink 한 가닥이 끊기면 남은 경로는 충분할까요?',
+      action: { type: 'fault-link', id: 'leaf-spine-a', label: 'LEAF–SPINE A 링크 장애 실험' },
+      observe: '남은 LEAF–SPINE B uplink가 120%가 됩니다. 경로는 하나 남았지만 API는 수용 기준을 통과하지 못합니다.',
+    },
+    build: dualUplinkFailure,
+  },
+  {
+    id: 'evidence-acceptance', name: '조건 불일치와 근거 수락',
+    group: 'evidence',
+    grade: { verdict: 'single-point', severs: 6 },
+    summary: '같은 데이터시트 값도 조건 불일치 축을 수락했는지에 따라 계산 가능 여부가 달라지는 구성입니다.',
+    teaches: '두 방화벽은 같은 1518B UDP 데이터시트 값을 쓰지만, 이 설계의 워크로드는 64B입니다. FW ACCEPTED는 처리량 축 하나만 사용자가 근거를 수락해 60%로 계산되고, FW PENDING은 같은 값이라도 미확인으로 남습니다. 수락은 장비 전체가 아니라 축 하나에만 적용되며 워크로드 조건을 바꾸면 다시 검토해야 합니다.',
+    tags: ['데이터시트', '근거 수락', '조건 불일치', '사용자 판단', '감사'],
+    experiment: {
+      prompt: '부하를 1.5배로 올리면 수락한 근거는 어떤 숫자를 낼까요?',
+      action: { type: 'scale', value: 1.5, label: '부하를 1.5배로' },
+      observe: 'FW ACCEPTED의 수락한 처리량 축은 90%로 계산됩니다. FW PENDING은 같은 데이터시트 값이어도 수락하지 않았으므로 미확인으로 남습니다.',
+    },
+    build: evidenceAcceptance,
+  },
+  {
+    id: 'session-sync-comparison', name: '상태 동기화 HA 비교',
+    group: 'resilience',
+    grade: { verdict: 'single-point', severs: 2 },
+    summary: '동일한 용량의 HA 방화벽 쌍에서 상태 동기화 유무만 비교하는 구성입니다.',
+    teaches: '두 HA 쌍은 같은 부하와 같은 장비를 씁니다. 활성 노드가 함께 멈추면 상태 동기화 쌍은 남은 장비의 신규 세션이 80%지만, 비동기 쌍은 기존 세션 30만 개를 30초 안에 다시 세워야 해 120%가 됩니다. 이중화는 경로를 남기고, 상태 동기화는 재수립 폭증을 줄입니다.',
+    tags: ['HA', '세션 동기화', 'failover', '신규 세션', '장애 도메인'],
+    experiment: {
+      prompt: '각 HA 쌍의 활성 노드가 동시에 멈추면 두 서비스는 같은 결과가 될까요?',
+      action: { type: 'fault-domain', id: 'active-a', label: '활성 노드 장애 실험' },
+      observe: 'SYNCED B의 신규 세션은 80%지만 NONE B는 재수립 폭증으로 120%가 됩니다. 상태 동기화 서비스는 통과하고 비동기 서비스는 수용 기준을 넘지 못합니다.',
+    },
+    build: sessionSyncComparison,
   },
   {
     id: 'blank', name: '빈 설계',
