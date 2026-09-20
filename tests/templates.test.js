@@ -108,6 +108,38 @@ test('dual WAN makes an individual ISP loss survivable but exposes the shared en
   assert.deepEqual(topology.failureDomains, [{ id: 'shared-entry', name: '공용 건물 인입', kind: 'path', deviceIds: [], linkIds: ['entry-isp-a', 'entry-isp-b'] }]);
 });
 
+test('a failed uplink preserves reachability but overloads its surviving member', () => {
+  const topology = buildTemplate('dual-uplink-failure');
+  const after = calculateScenario(topology, { disabledLinks: ['leaf-spine-a'] });
+  const surviving = after.links.find(({ id }) => id === 'leaf-spine-b');
+  assert.ok(topology.devices.find(({ id }) => id === 'leaf').ports.some(({ id, speedBps }) => id === 'uplink-a' && speedBps === 100e9));
+  assert.equal(surviving.directions.reverse.axes.forwarding_bps.utilization, 1.2);
+  assert.equal(after.summary.unreachableCount, 0);
+  assert.equal(after.services.find(({ id }) => id === 'api').status, 'fail');
+});
+
+test('an accepted evidence axis is computed without accepting its neighboring axis', () => {
+  const result = calculateScenario(buildTemplate('evidence-acceptance'));
+  const accepted = result.devices.find(({ id }) => id === 'fw-accepted');
+  const pending = result.devices.find(({ id }) => id === 'fw-pending');
+  assert.equal(accepted.axes.forwarding_bps.evidenceApplicability, 'user-asserted');
+  assert.equal(accepted.axes.forwarding_bps.utilization, 0.6);
+  assert.equal(accepted.axes.new_sessions_per_sec.status, 'unknown');
+  assert.equal(pending.axes.forwarding_bps.evidenceApplicability, 'incompatible');
+  assert.equal(pending.axes.forwarding_bps.status, 'unknown');
+});
+
+test('stateful failover avoids the session reestablishment surge of a stateless pair', () => {
+  const topology = buildTemplate('session-sync-comparison');
+  const after = calculateScenario(topology, { disabledDomains: ['active-a'] });
+  const synced = after.devices.find(({ id }) => id === 'synced-b');
+  const stateless = after.devices.find(({ id }) => id === 'none-b');
+  assert.equal(synced.axes.new_sessions_per_sec.utilization, 0.8);
+  assert.equal(stateless.axes.new_sessions_per_sec.utilization, 1.2);
+  assert.equal(after.services.find(({ id }) => id === 'svc-synced').status, 'pass');
+  assert.equal(after.services.find(({ id }) => id === 'svc-none').status, 'fail');
+});
+
 test('the rack template opens with a valid physical placement', () => {
   const topology = buildTemplate('rack-power');
   assert.equal(topology.racks.length, 2);
