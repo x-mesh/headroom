@@ -14,6 +14,7 @@ test('a full render keeps the rack palette drag and pointer capture alive', asyn
     await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
     await page.goto('http://127.0.0.1:' + port + '/?lang=ko', { waitUntil: 'networkidle' });
     await page.locator('[data-workspace="rack"]').click();
+    await page.locator('[data-rack-view="2d"]').click();
 
     const source = page.locator('.rack-palette-item[data-rack-palette-type="standalone"]').first();
     const rack = page.locator('.rack-elevation').nth(1);
@@ -56,6 +57,7 @@ test('the 3D rack view accepts a palette drop on the U the pointer is over', asy
     await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
     await page.goto('http://127.0.0.1:' + port + '/?lang=ko', { waitUntil: 'networkidle' });
     await page.locator('[data-workspace="rack"]').click();
+    await page.locator('[data-rack-view="2d"]').click();
     await page.locator('[data-rack-view="3d"]').click();
     await page.waitForFunction(() => window.__rackMeshRack3D?.debug().dropZones > 0);
 
@@ -114,6 +116,7 @@ test('the 2D rack stage moves a placed device and catches drops away from the ra
     await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
     await page.goto('http://127.0.0.1:' + port + '/?lang=ko', { waitUntil: 'networkidle' });
     await page.locator('[data-workspace="rack"]').click();
+    await page.locator('[data-rack-view="2d"]').click();
 
     const device = page.locator('.rack-elevation[data-rack-id="rack-04-budget"] .rack-device').first();
     const startU = () => device.evaluate((node) => Number(node.style.getPropertyValue('--rack-start')));
@@ -183,6 +186,7 @@ test('a 0.5U blank panel stacks in half-U steps without covering its neighbor', 
     page.on('pageerror', (error) => pageErrors.push(error));
     await page.goto('http://127.0.0.1:' + port, { waitUntil: 'networkidle' });
     await page.locator('[data-workspace="rack"]').click();
+    await page.locator('[data-rack-view="2d"]').click();
 
     await page.locator('[data-rack-sidebar-tab="racks"]').click();
     await page.locator('[data-rack-select="rack-04-budget"]').click();
@@ -240,6 +244,7 @@ test('a 2U server dragged under a 0.5U panel sits flush at a half-U start', asyn
     await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
     await page.goto('http://127.0.0.1:' + port, { waitUntil: 'networkidle' });
     await page.locator('[data-workspace="rack"]').click();
+    await page.locator('[data-rack-view="2d"]').click();
 
     // 사용자가 겪은 배치를 만든다: RACK 04에 0.5U 패널을 넣고 inspector에서 U13.5로 옮긴다.
     await page.locator('[data-rack-sidebar-tab="racks"]').click();
@@ -295,6 +300,7 @@ test('a rack changes its place in the row by dragging its 2D header or with the 
     await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
     await page.goto('http://127.0.0.1:' + port, { waitUntil: 'networkidle' });
     await page.locator('[data-workspace="rack"]').click();
+    await page.locator('[data-rack-view="2d"]').click();
     const order = () => page.evaluate(() => [...document.querySelectorAll('#rack-2d-canvas .rack-elevation')].map((node) => node.dataset.rackId));
     assert.deepEqual(await order(), ['security-budget', 'rack-04-budget', 'rack-07-budget']);
 
@@ -337,6 +343,7 @@ test('the 2D rack view renames by double-click and runs rack actions from the ri
     page.on('pageerror', (error) => pageErrors.push(error));
     await page.goto('http://127.0.0.1:' + port, { waitUntil: 'networkidle' });
     await page.locator('[data-workspace="rack"]').click();
+    await page.locator('[data-rack-view="2d"]').click();
     const block = (name) => page.locator('.rack-elevation[data-rack-id="rack-04-budget"] .rack-device').filter({ has: page.locator('strong', { hasText: new RegExp(`^${name}$`) }) });
     const editor = page.locator('.rack-name-editor');
     const menu = page.locator('#context-menu');
@@ -417,6 +424,7 @@ test('the 3D rack view opens the rack menu with the right button and renames on 
     page.on('pageerror', (error) => pageErrors.push(error));
     await page.goto('http://127.0.0.1:' + port, { waitUntil: 'networkidle' });
     await page.locator('[data-workspace="rack"]').click();
+    await page.locator('[data-rack-view="2d"]').click();
     await page.locator('[data-rack-view="3d"]').click();
     await page.waitForFunction(() => window.__rackMeshRack3D?.debug().dropZones > 0);
 
@@ -498,6 +506,7 @@ test('Delete in the rack view takes the selected device out of the rack and neve
     const rackDevices = () => page.locator('.rack-elevation[data-rack-id="rack-04-budget"] .rack-device strong').allTextContents();
     const before = await topologyDevices();
     await page.locator('[data-workspace="rack"]').click();
+    await page.locator('[data-rack-view="2d"]').click();
 
     // 랙에서 고른 장비만 랙에서 빠진다. 토폴로지에서 기본 선택된 fw-a는 이 화면에 보이지 않으므로 건드리면 안 된다.
     await page.locator('.rack-elevation[data-rack-id="rack-04-budget"] .rack-device').filter({ has: page.locator('strong', { hasText: /^LEAF A$/ }) }).click();
@@ -515,6 +524,7 @@ test('Delete in the rack view takes the selected device out of the rack and neve
     // 빼낸 배치는 되돌리기로 돌아온다.
     await page.keyboard.press('Control+z');
     await page.locator('[data-workspace="rack"]').click();
+    await page.locator('[data-rack-view="2d"]').click();
     assert.deepEqual((await rackDevices()).sort(), ['API A', 'LEAF A']);
   } finally {
     await browser.close();
@@ -537,6 +547,7 @@ test('Ctrl+C and Ctrl+V in the rack view copy a device or a whole rack without c
     const topologyDevices = () => page.evaluate(() => [...document.querySelectorAll('#node-layer [data-device-id]')].map((node) => node.dataset.deviceId));
     const before = await topologyDevices();
     await page.locator('[data-workspace="rack"]').click();
+    await page.locator('[data-rack-view="2d"]').click();
     const rackOrder = () => page.evaluate(() => [...document.querySelectorAll('#rack-2d-canvas .rack-elevation')].map((node) => node.dataset.rackId));
     const rackBlocks = (rackId) => page.evaluate((id) => [...document.querySelectorAll(`.rack-elevation[data-rack-id="${id}"] .rack-device`)].map((node) => ({ name: node.querySelector('strong').textContent, mapped: node.dataset.mapped })), rackId);
 
@@ -566,6 +577,7 @@ test('Ctrl+C and Ctrl+V in the rack view copy a device or a whole rack without c
     await page.keyboard.press('Control+z');
     await page.keyboard.press('Control+z');
     await page.locator('[data-workspace="rack"]').click();
+    await page.locator('[data-rack-view="2d"]').click();
     assert.deepEqual(await rackOrder(), ['security-budget', 'rack-04-budget', 'rack-07-budget']);
     assert.deepEqual((await rackBlocks('rack-04-budget')).map(({ name }) => name).sort(), ['API A', 'LEAF A']);
     assert.equal(pageErrors.length, 0, `페이지 오류가 있었습니다: ${pageErrors.map((error) => error.message).join('; ')}`);
@@ -586,6 +598,7 @@ test('the 3D rack view drags a placed device to another U without orbiting', asy
     await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
     await page.goto('http://127.0.0.1:' + port + '/?lang=ko', { waitUntil: 'networkidle' });
     await page.locator('[data-workspace="rack"]').click();
+    await page.locator('[data-rack-view="2d"]').click();
     await page.locator('[data-rack-view="3d"]').click();
     await page.waitForFunction(() => window.__rackMeshRack3D?.debug().dropZones > 0);
 

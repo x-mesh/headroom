@@ -14,6 +14,7 @@ test('the rack view colors power domains and shows what a domain failure stops',
     await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('rack-mesh-guide-seen', '1'); });
     await page.goto('http://127.0.0.1:' + port + '/?lang=ko', { waitUntil: 'networkidle' });
     await page.locator('[data-workspace="rack"]').click();
+    await page.locator('[data-rack-view="2d"]').click();
 
     // 데모의 PDU-3 는 SPINE A·B 를 묶는다. 랙에 넣어야 물리 뷰에서 보인다.
     for (const [rackId, name] of [['rack-04-budget', 'SPINE A'], ['rack-07-budget', 'SPINE B']]) {

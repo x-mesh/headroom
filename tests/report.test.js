@@ -108,7 +108,10 @@ test('reports rack power and space, and says which device leaves a rack unknown'
   assert.equal(security.note, '경고선 80% 초과');
 
   // 사양 없는 장비 한 대가 랙 합계를 미확인으로 만든다. 보고서는 그 이름을 밝힌다.
-  topology.racks[1].deviceIds.push('spine-a');
+  // 사양을 여기서 직접 지운다. 어느 장비가 마침 사양이 없더라는 사실에 기대면, 그 장비에
+  // 사양이 생기는 날 이 테스트는 조용히 다른 것을 재게 된다.
+  delete topology.devices.find(({ id }) => id === 'spine-a').metadata;
+  topology.racks.find(({ id }) => id === 'rack-04-budget').deviceIds.push('spine-a');
   const unknownModel = buildReportModel(topology, calculateScenario(topology), baseline);
   const rack04 = unknownModel.racks.find(({ id }) => id === 'rack-04-budget');
   assert.equal(rack04.statusLabel, '미확인');
