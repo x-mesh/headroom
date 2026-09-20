@@ -87,7 +87,7 @@ let spatialScene = null;
 let rackScene = null;
 let spatialScenePromise = null;
 let rackScenePromise = null;
-const rackView = { mode: '2d', face: 'front', cables: true, domains: false, sidebarTab: 'devices', selectedRackId: null, selectedPlacementId: null };
+const rackView = { mode: '3d', face: 'front', cables: true, domains: false, sidebarTab: 'devices', selectedRackId: null, selectedPlacementId: null };
 const RACK_EQUIPMENT = [
   { kind: 'server', name: 'SERVER', label: '서버', uHeight: 2, heights: [1, 2, 4], powerWatts: null },
   { kind: 'switch', name: 'NETWORK SWITCH', label: '네트워크 스위치', uHeight: 1, heights: [1, 2, 4], powerWatts: null },
@@ -723,7 +723,7 @@ function renderRackElevations() {
 async function ensureRackScene() {
   if (rackScene) return rackScene;
   rackScenePromise ??= import('./rack-3d.js').then(({ createRackScene }) => { rackScene = createRackScene({ host: element('rack-3d-stage'), canvas: element('rack-3d-canvas'), reducedMotion: reducedMotion.matches, onSelect: ({ rackId, placementId }) => { rackView.selectedRackId = rackId; rackView.selectedPlacementId = placementId; renderRackWorkspace(); }, onPlacementDrag: handleScenePlacementDrag }); window.__rackMeshRack3D = rackScene; return rackScene; })
-    .catch((error) => { rackScenePromise = null; showToast(`랙 3D 보기를 불러오지 못했습니다: ${error.message}`); throw error; });
+    .catch((error) => { rackScenePromise = null; if (rackView.mode === '3d') { rackView.mode = '2d'; renderRackWorkspace(); } showToast(`랙 3D 보기를 불러오지 못해 2D로 엽니다: ${error.message}`); throw error; });
   return rackScenePromise;
 }
 function syncRackScene() {
@@ -3662,7 +3662,7 @@ function applyTemplate(id) {
   });
   if (id === 'blank') setLeftPanel('palette');
   if (['rack-power', 'ai-inference-pod'].includes(id)) {
-    rackView.mode = '2d'; rackView.selectedRackId = topology.racks?.[0]?.id || null; rackView.selectedPlacementId = null;
+    rackView.selectedRackId = topology.racks?.[0]?.id || null; rackView.selectedPlacementId = null;
     setWorkspace('rack');
   }
 }

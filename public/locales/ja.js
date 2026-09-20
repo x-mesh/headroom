@@ -48,7 +48,7 @@ messages.dynamic.poolShareRange = 'プール{size}台 · {low}～{high}%';
 messages.content.template['ai-inference-pod'] = {
   name: 'AI推論Pod',
   summary: 'GPU 8台を2つのラック、2つのfabric plane、ラックごとに1台のPDUへ配置した推論構成です。',
-  teaches: 'ラック配置でGPU 8台のU位置と電力予算を確認してください。3Dに切り替え、機器パレットのラック専用サーバーを空きUへ置くと、U空間と電力予算の変化を確認できます。電源ドメインを有効にすると、ラックごとのPDUが担当するGPU 4台を確認できます。ラックPDUが停止するとGPU 4台は停止しますが、2つのfabric planeは残ります。',
+  teaches: 'ラック配置でGPU 8台のU位置と電力予算を確認してください。機器パレットのラック専用サーバーを空きUへ置くと、U空間と電力予算の変化を確認できます。電源ドメインを有効にすると、ラックごとのPDUが担当するGPU 4台を確認できます。ラックPDUが停止するとGPU 4台は停止しますが、2つのfabric planeは残ります。',
   prompt: 'GPU RACK 21 PDUが停止すると、2つのラックとfabric planeは推論リクエストをどこまで守れますか？',
   action: 'GPU RACK 21 PDU障害を試す',
   observe: 'GPU 01からGPU 04までが同時に停止し、推論リクエスト4件が切断されます。このモデルはNIC、fabric、U、電力、宣言した電源ドメインだけを計算します。GPU演算性能、冗長PSU、冷却は計算しません。',

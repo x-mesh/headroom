@@ -1442,7 +1442,7 @@ export const templates = [
     group: 'resilience',
     grade: { verdict: 'single-point', severs: 10 },
     summary: 'GPU 8대가 두 랙에 나뉘어 팹릭 plane 둘과 랙별 PDU 하나에 물려 있습니다.',
-    teaches: '랙 배치에서 GPU 8대의 U 위치와 전력 예산부터 확인하세요. 3D로 바꾼 뒤 장비 팔레트의 랙 전용 서버를 빈 U에 놓으면 U 공간과 전력 예산이 어떻게 움직이는지 드러납니다. 전원 도메인을 켜면 랙별 PDU가 어느 GPU 네 대를 떠받치는지 보입니다. 랙 PDU 하나가 멈추면 GPU 네 대는 함께 멈추지만 팹릭 plane 둘은 남습니다.',
+    teaches: '랙 배치에서 GPU 8대의 U 위치와 전력 예산부터 확인하세요. 장비 팔레트의 랙 전용 서버를 빈 U에 끌어 놓으면 U 공간과 전력 예산이 어떻게 움직이는지 드러납니다. 전원 도메인을 켜면 랙별 PDU가 어느 GPU 네 대를 떠받치는지 보입니다. 랙 PDU 하나가 멈추면 GPU 네 대는 함께 멈추지만 팹릭 plane 둘은 남습니다.',
     tags: ['AI 추론', 'GPU', '3D 랙', '이중 팹릭', 'PDU', 'U 배치'],
     experiment: {
       prompt: 'GPU RACK 21 PDU가 멈추면 두 랙과 두 팹릭 plane은 추론 요청을 얼마나 지킬까요?',

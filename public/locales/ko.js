@@ -55,7 +55,7 @@ messages.report.reportProduct = 'Headroom 분석 보고서';
 messages.content.template['ai-inference-pod'] = {
   name: 'AI 추론 Pod',
   summary: 'GPU 8대가 두 랙에 나뉘어 팹릭 plane 둘과 랙별 PDU 하나에 물려 있습니다.',
-  teaches: '랙 배치에서 GPU 8대의 U 위치와 전력 예산부터 확인하세요. 3D로 바꾼 뒤 장비 팔레트의 랙 전용 서버를 빈 U에 놓으면 U 공간과 전력 예산이 어떻게 움직이는지 드러납니다. 전원 도메인을 켜면 랙별 PDU가 어느 GPU 네 대를 떠받치는지 보입니다. 랙 PDU 하나가 멈추면 GPU 네 대는 함께 멈추지만 팹릭 plane 둘은 남습니다.',
+  teaches: '랙 배치에서 GPU 8대의 U 위치와 전력 예산부터 확인하세요. 장비 팔레트의 랙 전용 서버를 빈 U에 끌어 놓으면 U 공간과 전력 예산이 어떻게 움직이는지 드러납니다. 전원 도메인을 켜면 랙별 PDU가 어느 GPU 네 대를 떠받치는지 보입니다. 랙 PDU 하나가 멈추면 GPU 네 대는 함께 멈추지만 팹릭 plane 둘은 남습니다.',
   prompt: 'GPU RACK 21 PDU가 멈추면 두 랙과 두 팹릭 plane은 추론 요청을 얼마나 지킬까요?',
   action: 'GPU RACK 21 PDU 장애 실험',
   observe: 'GPU 01부터 GPU 04까지 함께 멈춰 추론 요청 네 개가 단절됩니다. 이 모델은 NIC·팹릭·U·전력·선언한 전원 도메인만 계산합니다. GPU 연산 성능, 이중 PSU, 냉각은 계산하지 않습니다.',

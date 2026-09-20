@@ -21,19 +21,31 @@ const COLORS = Object.freeze({
 // 불빛 색은 게이지와 같은 기준을 쓴다. 랙 화면에서 노란 불과 노란 막대가 다른 뜻이면 안 된다.
 const LED = Object.freeze({ link: 0x4ad39c, disk: 0xa8e26a, power: 0x2fbf6a, warn: 0xf0a63c, over: 0xff5b4c });
 
+// 한 번 켜질 때 켜져 있는 몫. 부하를 따라 이 값까지 같이 올리면 최대 부하에서 상시등처럼 보여
+// "더 깜빡일수록 더 바쁘다"가 끝에서 뒤집힌다. 그래서 고정하고 빈도만 올린다.
+const LED_DUTY = .22;
+
 /**
  * 불빛 하나의 지금 밝기. 켜졌다/꺼졌다가 아니라 얼마나 지나가는지를 말한다 — 부하가 높을수록
- * 빠르게 그리고 오래 켜진다. 한계를 모르는 축이면 상시등만 희미하게 두고, 부하가 0 이면 어둡게
- * 둔다. 놀고 있는 서버가 바쁜 서버처럼 보이는 순간 이 화면은 처음으로 거짓말을 하게 된다.
+ * 자주 깜빡이고, 그 관계는 0%에서 100%까지 한 방향으로만 간다. 한계를 모르는 축이면 상시등만
+ * 희미하게 두고, 부하가 0 이면 어둡게 둔다. 놀고 있는 서버가 바쁜 서버처럼 보이는 순간 이
+ * 화면은 처음으로 거짓말을 하게 된다.
+ *
+ * 넘긴 장비만 규칙이 다르다. 더 빨리 깜빡여 봐야 99% 와 구별되지 않으므로, 느리고 크게 숨쉬는
+ * 경고등으로 바꾼다. 랙 여러 개를 한눈에 훑을 때 제일 먼저 걸려야 하는 것이 이미 넘은 곳이다.
  */
 function ledLevel(time, spot, reduce) {
   if (!spot.active) return 0;
   if (spot.role === 'power') return 1;
   if (spot.load == null) return .2;
   if (spot.load <= .001) return .05;
+  if (spot.load > 1) {
+    if (reduce) return 1;
+    return .3 + .7 * (.5 + .5 * Math.sin((time * 1.5 + spot.seed) * Math.PI * 2));
+  }
   if (reduce) return Math.min(1, .35 + spot.load * .65);
-  const wave = (time * (.7 + spot.load * 7) + spot.seed) % 1;
-  return wave < .22 + Math.min(.55, spot.load * .5) ? 1 : .1;
+  const wave = (time * (.8 + spot.load * 9) + spot.seed) % 1;
+  return wave < LED_DUTY ? 1 : .08;
 }
 
 function ledColor(role, load, warningThreshold) {
