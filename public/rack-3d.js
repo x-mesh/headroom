@@ -1,4 +1,5 @@
 import * as THREE from './vendor/three.module.js';
+import { vendorLogoFor } from './logos.js';
 
 // 1U = 44.45mm, 1 world unit = 1/6 m. 랙 높이를 U 수에서 계산해야 3U 인클로저와 42U 랙이 한 축척으로 선다.
 const U = .2667;
@@ -141,7 +142,15 @@ function freeTexture(units, width, height) {
   return textureOf(canvas);
 }
 
-function accentOf(view) { return !view.active ? '#6f7d79' : view.domainColor || (view.mapped ? '#0e9a86' : '#8aa39b'); }
+// 카탈로그에서 고른 장비는 제조사 색을 입는다. 손으로 적은 장비는 중립색으로 남아, 랙을
+// 훑는 것만으로 데이터시트를 등에 업은 쪽과 사람이 적어 넣은 쪽이 갈린다. 전원 도메인 색은
+// 기능이므로 켜져 있으면 그쪽이 먼저다.
+function brandOf(view) { return view.evidenced ? vendorLogoFor(view.vendor) : null; }
+function accentOf(view) {
+  if (!view.active) return '#6f7d79';
+  if (view.domainColor) return view.domainColor;
+  return brandOf(view)?.hex || (view.mapped ? '#0e9a86' : '#8aa39b');
+}
 
 // 섀시는 종류마다 깊이가 다르다. 패치 패널을 서버와 같은 깊이로 두면 옆에서 본 순간 정체가 드러난다.
 const CHASSIS = Object.freeze({
@@ -363,6 +372,25 @@ function faceTexture(view, accent, selected, profile) {
     socket(view.mapped ? accent : (dark ? '#7c8d87' : '#a3b1ac')); cursor += radius * 2.7;
     socket('rgba(0,0,0,.42)'); lamp(leds, lens(), 'status'); cursor += radius * 2.7;
     cursor += rowUnit * .2;
+  }
+
+  // 제조사 마크는 카탈로그에서 고른 장비에만 새긴다. simple-icons 의 24x24 단일 path 라
+  // 면 위에 바로 그릴 수 있고, 마크가 없는 제조사는 이름을 작게 새겨 공백을 남기지 않는다.
+  const brand = brandOf(view);
+  if (!half && view.evidenced) {
+    if (brand) {
+      const size = Math.round(rowUnit * .34);
+      context.save();
+      context.translate(cursor, middle - size / 2); context.scale(size / 24, size / 24);
+      context.fillStyle = brand.hex; context.fill(new Path2D(brand.path));
+      context.restore();
+      cursor += size + rowUnit * .16;
+    } else if (view.vendor) {
+      context.font = `700 ${Math.round(rowUnit * .18)}px ui-monospace, Menlo, monospace`;
+      const mark = view.vendor.toUpperCase().slice(0, 10);
+      context.fillStyle = dim; context.fillText(mark, cursor, middle);
+      cursor += context.measureText(mark).width + rowUnit * .18;
+    }
   }
 
   const name = view.name.length > 20 ? `${view.name.slice(0, 19)}…` : view.name;
