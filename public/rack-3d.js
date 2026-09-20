@@ -194,7 +194,60 @@ function stableSeed(value) {
   return (Math.abs(hash) % 1000) / 1000;
 }
 
+// 포트 모양새. 폭은 1U 픽셀 높이에 대한 비율이라 장비가 높아져도 포트는 커지지 않는다.
+const PORT_FORM = Object.freeze({
+  rj45: { width: .26, height: .3, cage: false },
+  sfp: { width: .3, height: .26, cage: true },
+  sfp28: { width: .3, height: .26, cage: true },
+  sfpplus: { width: .3, height: .26, cage: true },
+  qsfp: { width: .44, height: .3, cage: true },
+  qsfp28: { width: .44, height: .3, cage: true },
+  qsfpdd: { width: .48, height: .32, cage: true },
+});
+
+/**
+ * 카탈로그가 전면 구성을 아는 장비를 그 구성대로 그린다. 48포트 스위치가 48개로 보이고 100G
+ * 케이지가 1G 포트보다 넓게 서면, 그림이 모델명과 같은 말을 하게 된다. 데이터가 없는 장비는
+ * 부르는 쪽에서 기존 추정 배치로 돌아간다 - 모르는 구성을 아는 척 그리지 않는다.
+ */
+function drawPortGroups(context, area, view, accent, groups) {
+  const { left, right, top, bottom, rowUnit } = area;
+  const rows = view.uHeight > 1 ? 2 : 1;
+  const middle = (top + bottom) / 2;
+  const seats = groups.flatMap((group) => {
+    const form = PORT_FORM[group.form] || PORT_FORM.rj45;
+    return Array.from({ length: Math.max(0, Math.round(group.count)) }, () => form);
+  });
+  if (!seats.length) return false;
+  // 한 줄에 다 못 넣으면 줄을 나눈다. 그래도 넘치면 폭을 줄여 넣는다 - 48포트를 32개만 그리면
+  // 그림이 모델명과 다른 말을 한다.
+  const perRow = Math.ceil(seats.length / rows);
+  const natural = seats.slice(0, perRow).reduce((sum, form) => sum + rowUnit * form.width, 0) + (perRow - 1) * Math.max(2, rowUnit * .06);
+  const squeeze = Math.min(1, (right - left) / Math.max(1, natural));
+  for (let row = 0; row < rows; row += 1) {
+    let x = left;
+    const y = (rows > 1 ? middle + (row ? .3 : -.3) * rowUnit * .62 : middle);
+    for (let index = row * perRow; index < Math.min(seats.length, (row + 1) * perRow); index += 1) {
+      const form = seats[index];
+      const width = rowUnit * form.width * squeeze;
+      const height = Math.min(rowUnit * form.height, (bottom - top) / rows - 2);
+      const portY = y - height / 2;
+      context.fillStyle = form.cage ? '#101e1a' : '#0a1512';
+      roundRect(context, x, portY, width, height, form.cage ? 3 : 2); context.fill();
+      context.fillStyle = form.cage ? 'rgba(255,255,255,.16)' : 'rgba(255,255,255,.12)';
+      context.fillRect(x + 2, portY + 2, Math.max(1, width - 4), form.cage ? 2 : 1.5);
+      const lens = { x: x + width * .2, y: portY + height - 4, w: Math.max(2, width * .6), h: 2.4 };
+      context.fillStyle = 'rgba(0,0,0,.55)'; context.fillRect(lens.x, lens.y, lens.w, lens.h);
+      if (index % 3 === 0) lamp(area.leds, lens, 'link');
+      x += width + Math.max(2, rowUnit * .06) * squeeze;
+    }
+  }
+  return true;
+}
+
 function drawPorts(context, area, view, accent) {
+  if (view.frontPorts?.groups?.length && drawPortGroups(context, area, view, accent, view.frontPorts.groups)) return;
+
   const { left, right, top, bottom, rowUnit } = area;
   const rows = view.uHeight > 1 ? 2 : 1;
   const portWidth = Math.round(rowUnit * .26); const portHeight = Math.round(rowUnit * .3);

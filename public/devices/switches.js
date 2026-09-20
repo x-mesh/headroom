@@ -124,7 +124,8 @@ export const switchCatalog = Object.freeze([
     kind: 'switch',
     revision: 'catalog-2026-09-08',
     source: arista7050x4Source,
-    physical: { powerBasis: 'typical', typicalDrawWatts: 353, maximumDrawWatts: 880, uHeight: 1, source: arista7050x4PhysicalSource },
+    physical: { powerBasis: 'typical', typicalDrawWatts: 353, maximumDrawWatts: 880, uHeight: 1, source: arista7050x4PhysicalSource,
+      frontPorts: { groups: [{ count: 32, speedBps: 400e9, form: 'qsfpdd' }] } },
     profiles: [
       { id: 'spine-400g', label: '스파인 · 32x400G', note: `1RU 에 400G 32 포트. ${aristaNote}`, axisConditions: aristaConditions,
         limits: { forwarding_bps: 12.8e12, forwarding_pps: 5.3e9 } },
@@ -140,7 +141,8 @@ export const switchCatalog = Object.freeze([
     kind: 'switch',
     revision: 'catalog-2026-09-08',
     source: arista7050x4Source,
-    physical: { powerBasis: 'typical', typicalDrawWatts: 165, maximumDrawWatts: 520, uHeight: 1, source: arista7050x4PhysicalSource },
+    physical: { powerBasis: 'typical', typicalDrawWatts: 165, maximumDrawWatts: 520, uHeight: 1, source: arista7050x4PhysicalSource,
+      frontPorts: { groups: [{ count: 48, speedBps: 100e9, form: 'qsfp28' }, { count: 8, speedBps: 400e9, form: 'qsfpdd' }] } },
     profiles: [
       { id: 'leaf-100g', label: '리프 · 48x100G + 8x400G', note: `100G 서버를 받는 ToR 입니다. ${aristaNote}`, axisConditions: aristaConditions,
         limits: { forwarding_bps: 8e12, forwarding_pps: 2.7e9 } },
@@ -153,7 +155,8 @@ export const switchCatalog = Object.freeze([
     kind: 'switch',
     revision: 'catalog-2026-09-08',
     source: arista7050x4Source,
-    physical: { powerBasis: 'typical', typicalDrawWatts: 120, maximumDrawWatts: 223, uHeight: 1, source: arista7050x4PhysicalSource },
+    physical: { powerBasis: 'typical', typicalDrawWatts: 120, maximumDrawWatts: 223, uHeight: 1, source: arista7050x4PhysicalSource,
+      frontPorts: { groups: [{ count: 48, speedBps: 25e9, form: 'sfp28' }, { count: 4, speedBps: 400e9, form: 'qsfpdd' }] } },
     profiles: [
       { id: 'leaf-25g', label: '리프 · 48x25G + 4x400G', note: `25G 서버를 받고 400G 로 스파인에 올리는 ToR 입니다. ${aristaNote}`, axisConditions: aristaConditions,
         limits: { forwarding_bps: 2.8e12, forwarding_pps: 2.7e9 } },
@@ -166,6 +169,7 @@ export const switchCatalog = Object.freeze([
     kind: 'switch',
     revision: 'catalog-2026-09-08',
     source: ciscoNexus9300fxSource,
+    physical: { uHeight: 1, frontPorts: { groups: [{ count: 48, speedBps: 25e9, form: 'sfp28' }, { count: 6, speedBps: 100e9, form: 'qsfp28' }] } },
     profiles: [
       { id: 'leaf-25g', label: '리프 · 48x25G + 6x100G', note: nexusNote, axisConditions: nexusConditions,
         limits: { forwarding_bps: 3.6e12, forwarding_pps: 1.2e9 } },
@@ -178,6 +182,7 @@ export const switchCatalog = Object.freeze([
     kind: 'switch',
     revision: 'catalog-2026-09-08',
     source: ciscoNexus9300fxSource,
+    physical: { uHeight: 1, frontPorts: { groups: [{ count: 48, speedBps: 10e9, form: 'rj45' }, { count: 6, speedBps: 100e9, form: 'qsfp28' }] } },
     // 데이터시트가 "over 1.25bpps" 라고 적는다. 하한이므로 그 값을 그대로 쓰고 note 가 하한임을 말한다.
     profiles: [
       { id: 'leaf-10gt', label: '리프 · 48x10GBASE-T + 6x100G', note: `포워딩 레이트는 데이터시트가 "over 1.25 bpps" 라고 적은 하한입니다. ${nexusNote}`, axisConditions: nexusConditions,

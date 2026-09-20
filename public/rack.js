@@ -46,6 +46,9 @@ export function placementView(topology, placement) {
     name: device?.name || placement.name || placement.id,
     model: device?.model || placement.model || '',
     vendor: device?.vendor || placement.vendor || '',
+    // 전면에 실제로 달린 포트. 토폴로지의 device.ports 와는 다른 것이다 - 저쪽은 링크가 어느
+    // 포트로 몇 bps 나가는지를 말하고, 이쪽은 앞면에 무엇이 몇 개 보이는지만 말한다.
+    frontPorts: physical(device)?.frontPorts ?? null,
     kind: device?.kind || placement.kind || 'other',
     mapped: Boolean(device),
     active: device ? device.active !== false : true,
