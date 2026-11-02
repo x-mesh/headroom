@@ -20,9 +20,10 @@ async function clickEditorAction(page, action) {
   const inEditorMenu = await button.evaluate((node) => Boolean(node.closest('.editor-menu')));
   const inPalette = await button.evaluate((node) => Boolean(node.closest('#component-palette')));
   if (!await button.isVisible()) {
-    if (inEditorMenu) await page.locator('.editor-menu').evaluate((menu) => { menu.open = true; });
+    if (inEditorMenu) await page.locator('.editor-menu > summary').click();
     else {
-      if (await page.locator('#toggle-left-panel').getAttribute('aria-pressed') === 'true') await page.locator('#toggle-left-panel').click();
+      if (inPalette && await page.locator('button[data-workspace-panel="tools"]').isVisible()) await page.locator('button[data-workspace-panel="tools"]').click();
+      else if (await page.locator('#toggle-left-panel').isVisible() && await page.locator('#toggle-left-panel').getAttribute('aria-pressed') === 'true') await page.locator('#toggle-left-panel').click();
       if (inPalette && await page.locator('#panel-palette').isHidden()) await page.locator('#tab-palette').click();
     }
   }
@@ -215,7 +216,7 @@ async function verifyCanvasEditing() {
   await page.waitForFunction((before) => document.querySelectorAll('.link-group').length === before, nodeCount);
 
   // 팔레트 클릭은 즉시 현재 보이는 캔버스 중앙에 도형 하나를 만들고 선택한다.
-  await page.locator('[data-editor-action="shape-rect"]').click();
+  await clickEditorAction(page, 'shape-rect');
   assert.equal(await page.locator('.diagram-shape').count(), 1);
   assert.equal(await page.locator('.diagram-shape.selected').count(), 1);
   assert.equal(await page.locator('#inspector-code').textContent(), 'DRAW.IO INSPECTOR');
@@ -258,14 +259,14 @@ async function verifyCanvasEditing() {
   await page.locator('[data-editor-action="export-png"]').click();
   assert.match((await pngDownload).suggestedFilename(), /\.png$/);
 
-  await page.locator('[data-editor-action="shape-text"]').click();
+  await clickEditorAction(page, 'shape-text');
   assert.equal(await page.locator('.diagram-shape').count(), 2);
-  await page.locator('[data-editor-action="annotation-connect"]').click();
+  await clickEditorAction(page, 'annotation-connect');
   await page.locator('.diagram-shape').first().click();
   await page.keyboard.press('Escape');
   assert.match(await page.locator('#editor-mode').textContent(), /SELECT/);
   assert.equal(await page.locator('.diagram-connector').count(), 0, 'canceling annotation mode must not create a connector');
-  await page.locator('[data-editor-action="annotation-connect"]').click();
+  await clickEditorAction(page, 'annotation-connect');
   await page.locator('.diagram-shape').first().click();
   await page.locator('.diagram-shape').nth(1).click();
   assert.equal(await page.locator('.diagram-connector').count(), 1, 'annotation connectors remain visually connected but outside the traffic graph');
@@ -383,6 +384,7 @@ async function verifyCanvasEditing() {
   });
   assert.ok(importedHit, '가져온 링크의 클릭 영역은 그려진 선 위에 있다');
   await page.mouse.click(importedHit.x, importedHit.y);
+  await page.locator('.inspector-edit > summary').click();
   await page.waitForSelector('[data-resource-form="link"]');
   assert.equal(await page.locator('[data-resource-form="link"] input[name="capacityBps"]').inputValue(), '', '가져온 링크의 용량 칸은 null 이 아니라 비어 있다');
   await page.locator('[data-resource-form="link"] input[name="capacityBps"]').fill('10000000000');
@@ -490,6 +492,7 @@ async function verifyBackendPool() {
   await page.locator('#new-design-button').click();
   assert.equal(await page.locator('[data-template="dual-fabric"]').count(), 1, '공유 전원 템플릿을 설계 목록에서 열 수 있어야 합니다');
   await page.locator('[data-template="dual-stack"]').click();
+  await page.locator('button[data-workspace-panel="tools"]').click();
   await page.locator('#tab-palette').click();
   await page.waitForFunction(() => document.querySelector('#panel-palette')?.hidden === false);
 
@@ -503,7 +506,7 @@ async function verifyBackendPool() {
   await page.waitForFunction((id) => document.querySelector(`.mesh-node[data-device-id="${id}"] .node-pool[data-warn]`),
     replica, { timeout: 8000 });
 
-  await page.locator('[data-editor-action="connect"]').click();
+  await clickEditorAction(page, 'connect');
   await page.locator('.mesh-node[data-device-id="lb-b"]').click();
   await page.locator(`.mesh-node[data-device-id="${replica}"]`).click();
   await page.waitForFunction((id) => document.querySelector(`.mesh-node[data-device-id="${id}"] .node-pool:not([data-warn])`),
@@ -515,7 +518,7 @@ async function verifyBackendPool() {
   // LB A 에서는 복제로 갈 길이 없다. 세 대 균등이 아니라 갈래대로 나뉜다.
   assert.deepEqual(shares, { 'WEB 01': '풀 3대 · 42%', 'WEB 02': '풀 3대 · 42%', 'WEB 02 복제': '풀 3대 · 17%' });
 
-  await page.locator('[data-editor-action="demand"]').click();
+  await clickEditorAction(page, 'demand');
   await page.locator('.demand-editor-row input[name="single"]').first().check();
   await page.locator('.demand-editor-row button[type="submit"]').first().click();
   await page.waitForFunction(() => document.querySelector('.demand-pool span')?.textContent.includes('꺼짐'), null, { timeout: 8000 });
@@ -551,18 +554,10 @@ async function verify(viewport, screenshot, interact = false) {
   await page.evaluate(() => document.fonts.ready);
   if (viewport.width > 1180) {
     const canvasWidth = await page.locator('.topology-panel').evaluate((node) => node.getBoundingClientRect().width);
-    await page.locator('#toggle-left-panel').click();
-    await page.waitForFunction(() => document.querySelector('#design-board').getBoundingClientRect().width < 1);
-    assert.ok(await page.locator('#design-board').evaluate((node) => node.getBoundingClientRect().width < 1), '접힌 도구 패널은 세로 레일을 남기지 않아야 합니다');
-    assert.equal(await page.locator('#toggle-left-panel').isVisible(), true, '도구 펼치기 화살표는 도면 위에 남아야 합니다');
-    assert.equal(await page.locator('#panel-palette').evaluate((node) => node.inert), true, '접힌 도구 내용은 키보드 탐색에서 제외해야 합니다');
-    await page.locator('#toggle-right-panel').click();
-    await page.waitForFunction(() => document.querySelector('#inspector-panel').getBoundingClientRect().width < 1);
-    assert.ok(await page.locator('#inspector-panel').evaluate((node) => node.getBoundingClientRect().width < 1), '접힌 검사 패널은 세로 레일을 남기지 않아야 합니다');
-    assert.equal(await page.locator('#toggle-right-panel').isVisible(), true, '검사 펼치기 화살표는 도면 위에 남아야 합니다');
-    assert.equal(await page.locator('#inspector-content').evaluate((node) => node.inert), true, '접힌 검사 내용은 키보드 탐색에서 제외해야 합니다');
-    await page.locator('#toggle-left-panel').click();
-    await page.locator('#toggle-right-panel').click();
+    await page.locator('#workspace-panel-toggle').click();
+    assert.equal(await page.locator('#inspector-panel').isVisible(), false, '접힌 작업 패널은 숨겨야 합니다');
+    await page.waitForFunction((width) => document.querySelector('.topology-panel').getBoundingClientRect().width > width + 100, canvasWidth);
+    await page.locator('#workspace-panel-toggle').click();
     await page.waitForFunction((width) => Math.abs(document.querySelector('.topology-panel').getBoundingClientRect().width - width) < 2, canvasWidth);
   }
   assert.match(await page.locator('#summary-survival').textContent(), /단일 장애점\s*\d+/);
@@ -599,7 +594,7 @@ async function verify(viewport, screenshot, interact = false) {
   assert.match(await page.locator('[data-delete-model="domain"][data-model-id="rack-04"]').locator('xpath=parent::*').textContent(), /공간/);
   assert.equal(await page.locator('#summary-headroom').textContent(), headroomBeforeSuggestion, 'accepting a domain declaration does not change the current calculation');
   await page.locator('#editor-close').click();
-  assert.match(await page.locator('#topology-heading').textContent(), /(버팁니다|용량을 넘었습니다|계산할 수 없습니다|더 막히는 지점이 없습니다)$/, 'the canvas headline states the answer, not the question');
+  assert.match(await page.locator('#topology-heading').textContent(), /(통과 보류|버팁니다|용량을 넘었습니다|계산할 수 없습니다|더 막히는 지점이 없습니다)$/, 'the canvas headline states the answer, not the question');
   assert.equal(await page.locator('#summary-headroom').getAttribute('data-tone'), 'amber', 'headroom is coloured by the engine threshold');
   assert.ok(await page.locator('.packet-dot').count() > 0, 'active links must render packet dots');
   const packet = page.locator('.packet-dot').first();
@@ -652,11 +647,12 @@ async function verify(viewport, screenshot, interact = false) {
   const target = symbols.find((symbol) => symbol.id === 'fw-a').center;
   assert.ok(Math.abs(target[0] - anchored[0]) < 1.5 && Math.abs(target[1] - anchored[1]) < 1.5,
     `link endpoint ${anchored} must land on the symbol center ${target.map((value) => Math.round(value))}`);
-  assert.equal(await page.locator('[data-device-id="fw-a"] .node-axis').count(), 4, 'firewall shows one row per configured axis');
+  assert.equal(await page.locator('[data-device-id="fw-a"] .node-axis').count(), 4, 'the default view shows every configured firewall axis');
   assert.equal(await page.locator('[data-device-id="api-a"] .node-axis').count(), 2, 'server shows one row per configured axis');
   const unknownAxis = await page.locator('[data-device-id="api-a"] .node-axis').last().innerText();
   assert.match(unknownAxis, /—/, 'an unknown limit must read as an em dash');
   assert.doesNotMatch(unknownAxis, /\d%/, 'an unknown limit must never read as a percentage');
+  if (viewport.width > 1180) await page.locator('button[data-workspace-panel="tools"]').click();
   assert.equal(await page.locator('#tab-failure').getAttribute('aria-selected'), 'true', 'a non-empty design opens on the fault sweep');
   assert.equal(await page.locator('.failure-scope-guide p').count(), 3, '장애 분석은 자원 N-1, 도메인 N-1, 도메인 N-2 범위를 구분해야 합니다.');
   assert.match(await page.locator('.failure-scope-guide').textContent(), /장비 또는 링크 하나[\s\S]*함께 실패[\s\S]*동시에 실패/, '각 장애 범위의 단위를 설명해야 합니다.');
@@ -675,7 +671,7 @@ async function verify(viewport, screenshot, interact = false) {
     await resourceAbsorbsToggle.first().dispatchEvent('click');
     assert.equal(await resourceAbsorbsToggle.first().getAttribute('aria-expanded'), 'true', 'absorbing resources expand on demand');
   }
-  assert.deepEqual(await page.locator('.summary-group-label').allTextContents(), ['용량', '전달', '복원력'], '상단 판정을 세 그룹으로 합쳐야 합니다');
+  assert.deepEqual(await page.locator('.summary-group-label').allTextContents(), ['알려진 용량', '현재 전달', '장애 분석'], '상단 판정의 계산 조건을 구별해야 합니다');
   assert.equal(await page.locator('.metric-sparkline').count(), 0, '도면 높이를 차지하던 추이 그래프를 제거해야 합니다');
 
   // 카드가 담는 수치는 세 단으로 줄일 수 있다. 줄이는 것은 보이는 것뿐이고 계산은 그대로다.
@@ -701,6 +697,10 @@ async function verify(viewport, screenshot, interact = false) {
   await page.keyboard.press('Escape');
   assert.equal(brief.unknown, full.unknown, `요약이 미확인 축을 숨겼습니다: ${brief.unknown} / ${full.unknown}`);
   await detail('full');
+  if (await page.locator('.view-settings').getAttribute('open') !== null) await page.locator('.view-settings > summary').click();
+  const closeMobileInspector = async () => {
+    if (viewport.width <= 760 && await page.locator('#inspector-close-mobile').isVisible()) await page.locator('#inspector-close-mobile').click();
+  };
 
   // 여러 개를 고르는 두 손놀림. 예전에는 pointerdown 이 보조키를 무시하고 선택을 덮어써서,
   // 이어지는 click 의 토글이 방금 넣은 것을 도로 빼 아무것도 안 남았다.
@@ -712,13 +712,16 @@ async function verify(viewport, screenshot, interact = false) {
     ['fw-b', ['Shift'], 2, '이미 고른 것을 다시 누르면 빠져야 한다'],
     ['fw-a', [], 1, '보조키 없는 클릭은 하나로 되돌린다'],
   ]) {
+    await closeMobileInspector();
     await page.locator(`[data-device-id="${id}"]`).click({ modifiers });
     assert.equal(await picked(), want, why);
   }
 
   // 그룹을 만들면 그 그룹이 곧바로 선택되어 해제할 수 있어야 한다. 장비만 묶은 그룹은
   // 캔버스에서 다시 집을 별도 표식이 없으므로, 이 선택 전환이 빠지면 해제 경로가 막힌다.
+  await closeMobileInspector();
   await page.locator('[data-device-id="fw-a"]').click();
+  await closeMobileInspector();
   await page.locator('[data-device-id="fw-b"]').click({ modifiers: ['Shift'] });
   await clickEditorAction(page, 'group');
   assert.equal(await page.locator('[data-editor-action="ungroup"]').isDisabled(), false, 'a newly created group must be ready to ungroup');
@@ -731,7 +734,9 @@ async function verify(viewport, screenshot, interact = false) {
     const node = document.querySelector(`[data-device-id="${id}"]`);
     return [id, [Math.round(parseFloat(node.style.left)), Math.round(parseFloat(node.style.top))]];
   })));
+  await closeMobileInspector();
   await page.locator('[data-device-id="fw-a"]').click();
+  await closeMobileInspector();
   for (const id of ['fw-b', 'spine-a']) await page.locator(`[data-device-id="${id}"]`).click({ modifiers: ['Shift'] });
   const startSpots = await spots();
   await page.locator('[data-device-id="fw-a"]').evaluate((node) => node.scrollIntoView({ block: 'center', inline: 'center' }));
@@ -772,6 +777,7 @@ async function verify(viewport, screenshot, interact = false) {
   assert.equal(await page.locator('[data-class-badge]').count(), 2);
   // 배지는 기본이 켬이다. 끄고 켜는 두 방향이 다 도는지 본다.
   assert.equal(await page.locator('[data-device-id="fw-a"] .node-class-badge').textContent(), 'FW');
+  if (!(await page.locator('[data-class-badge="off"]').isVisible())) await page.locator('.view-settings > summary').click();
   await page.locator('[data-class-badge="off"]').click();
   await page.waitForFunction(() => document.querySelectorAll('.node-class-badge').length === 0);
   await page.locator('[data-class-badge="on"]').click();
@@ -781,10 +787,11 @@ async function verify(viewport, screenshot, interact = false) {
   assert.equal(await page.locator('[data-device-id="leaf-a"] .node-model').textContent(), 'DEMO-LEAF-12G');
   assert.equal(await page.locator('[data-device-id="api-a"] .node-axis[data-axis-state="unknown"][style*="--util"]').count(), 0,
     'an unknown limit must draw no meter, so it never reads as spare capacity');
+  if (await page.locator('.view-settings').getAttribute('open') !== null) await page.locator('.view-settings > summary').click();
 
   // 한계값은 숫자를 치는 것보다 막대를 끌어 정하는 편이 이 도구가 답하는 질문에 가깝다.
   await page.locator('[data-device-id="fw-a"]').click();
-  if (viewport.width <= 760) await page.locator('#mobile-inspector-open').click();
+  if (viewport.width <= 760 && !(await page.locator('#inspector-panel').isVisible())) await page.locator('#mobile-inspector-open').click();
   await page.waitForFunction(() => document.querySelector('[data-axis-drag]'));
   const meter = page.locator('[data-axis-drag]').first();
   await meter.scrollIntoViewIfNeeded();
@@ -1046,6 +1053,7 @@ async function verify(viewport, screenshot, interact = false) {
 
     // 데이터시트 프로필 · 워크로드 조건 · 축 단위 수락 · 사용자 보정
     await page.locator('[data-device-id="fw-b"]').click();
+    await page.locator('.inspector-edit > summary').click();
     await page.selectOption('[data-spec-field="catalog"]', 'fortinet-fortigate-100f');
     await page.waitForFunction(() => document.querySelector('.source-note')?.textContent.includes('데이터시트'));
     assert.match(await page.locator('.limit-field small').first().textContent(), /데이터시트 20 Gbps/);
@@ -1122,6 +1130,7 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForFunction(() => !document.querySelector('[data-spec-field="profile"]'));
     // 설계 편집은 현재 장애 시나리오와 사용자가 확정한 기준선을 바꾸지 않는다.
     await page.waitForFunction(() => Number(document.querySelector('#summary-faults')?.textContent) === 1);
+    if (viewport.width > 1180) await page.locator('button[data-workspace-panel="tools"]').click();
     await failure.click();
     await page.waitForFunction(() => document.querySelector('#summary-fault-label')?.textContent === '단일 장애점');
     const severs = page.locator('.failure-switch').filter({ has: page.locator('.failure-forecast[data-verdict="severs"]') }).first();
@@ -1172,6 +1181,7 @@ async function verify(viewport, screenshot, interact = false) {
     assert.equal(await page.locator('#toast [data-toast-undo]').count(), 1, 'replacing a design must offer an undo instead of a confirm');
     assert.match(await page.locator('[data-device-id="lb"] .node-meta').textContent(), /INLINE/);
     await page.locator('[data-device-id="lb"]').click();
+    await page.locator('.inspector-edit > summary').click();
     assert.equal(await page.locator('.behavior-choice input:checked').inputValue(), 'inline');
     // 바꾸기 전에 결과가 보여야 한다. 토글하고 기억해서 비교하게 만들지 않는다.
     const preview = await page.locator('.behavior-preview').textContent();
@@ -1201,6 +1211,7 @@ async function verify(viewport, screenshot, interact = false) {
       .every((halo) => halo.parentElement.querySelector('.link'))), true, '고른 선에도 상태를 말하는 선이 남아야 한다');
 
     // 상자도 선을 담아야 한다. 두 선의 가운데를 함께 덮는 상자를 그려 확인한다.
+    await page.waitForTimeout(400);
     const span = await page.evaluate(() => {
       const mid = [...document.querySelectorAll('.link-hit')].slice(0, 2).map((hit) => {
         const m = hit.getScreenCTM();
@@ -1280,13 +1291,13 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 2);
     assert.equal(await page.locator('.link-group').count(), 1);
 
-    await page.locator('[data-editor-action="demand"]').click();
+    await clickEditorAction(page, 'demand');
     await page.locator('[data-new-demand]').click();
     const demandForm = page.locator('[data-editor-form="demand"]');
     await demandForm.locator('[name="name"]').fill('Source to target');
     await demandForm.locator('button[type="submit"]').click();
     assert.match(await page.locator('#path-readout').textContent(), /1 DEMANDS · 1 ACTIVE PATHS/);
-    await page.locator('[data-editor-action="demand"]').click();
+    await clickEditorAction(page, 'demand');
     const demandEditor = page.locator('[data-editor-form="demand-edit"]');
     await demandEditor.locator('[name="forwarding_bps"]').fill('2000000000');
     await demandEditor.locator('button[type="submit"]').click();
@@ -1378,6 +1389,7 @@ async function verify(viewport, screenshot, interact = false) {
     await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 2);
 
     // 컴포넌트 팔레트: 탭 분리, 캔버스 드롭, 클릭 폴백
+    if (viewport.width > 1180) await page.locator('button[data-workspace-panel="tools"]').click();
     await page.locator('#tab-palette').click();
     assert.equal(await page.locator('#tab-palette').getAttribute('aria-selected'), 'true');
     assert.equal(await page.locator('#panel-failure').isHidden(), true, 'switching tabs must hide the failure panel');
@@ -1644,6 +1656,7 @@ async function verify(viewport, screenshot, interact = false) {
         straightAttrs: paths.filter((path) => path.tagName.toLowerCase() !== 'path').length,
       };
     });
+    if (!(await page.locator('[data-link-route="straight"]').isVisible())) await page.locator('.view-settings > summary').click();
     for (const [mode, label] of [['straight', '직선'], ['orthogonal', '직각'], ['curved', '곡선']]) {
       await page.locator(`[data-link-route="${mode}"]`).click();
       await page.waitForTimeout(120);
@@ -1781,8 +1794,9 @@ async function verifyNumberMotion() {
   await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
   await page.locator('.view-settings > summary').click();
 
-  assert.equal(await page.locator('[data-number-motion="on"]').getAttribute('aria-pressed'), 'true',
-    '떨림은 기본이 켜짐이다. 대신 끄는 스위치가 늘 화면에 있어야 한다');
+  assert.equal(await page.locator('[data-number-motion="off"]').getAttribute('aria-pressed'), 'true',
+    '합성 수치 흔들림은 기본적으로 꺼져 있어야 한다');
+  await page.locator('[data-node-detail="full"]').click();
 
   // 배율을 바꾸면 숫자가 곧바로 튀지 않고 이전 값에서 새 값으로 이어진다.
   // 표본은 페이지 안에서 뜬다. 브라우저를 왕복하며 읽으면 260ms 트윈을 놓친다.
@@ -1823,6 +1837,7 @@ async function verifyNumberMotion() {
     return { axis: [...seen.axis], headline: [...seen.headline] };
   }, ms);
 
+  await page.locator('[data-number-motion="on"]').click();
   const moving = await sampleMotion(2000);
   assert.ok(moving.axis.length >= 2, `떨림이 켜져 있는데 값이 그대로입니다: ${moving.axis.join(' ')}`);
   const arithmetic = await page.evaluate(() => {
@@ -1943,10 +1958,12 @@ async function verifyTourAnchoring() {
   await page.addInitScript(() => window.addEventListener('error', (event) => console.error(`failure-location ${event.filename}:${event.lineno}:${event.colno}`)));
   await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
 
-  // 첫 방문은 설명을 읽히는 대신 도구가 한 번 해 보인다. 주장은 문구가 아니라 엔진이 한다.
+  assert.equal(await page.locator('#cold-open').count(), 0, '첫 화면은 자동 시연 없이 선택지를 보여야 합니다');
+  await page.locator('[data-first-visit="guide"]').click();
+  await page.locator('[data-guide="start"]').click();
   await page.waitForSelector('#cold-open');
   assert.match(await page.locator('.cold-open-line').textContent(), /2대씩/, '도입 시연은 이중화를 산 설계라는 전제부터 세워야 합니다');
-  assert.equal(await page.evaluate(() => localStorage.getItem('rack-mesh-guide-seen')), null, '시연을 끝내기 전에는 안내를 본 것으로 기록하지 않아야 합니다');
+  assert.equal(await page.evaluate(() => localStorage.getItem('rack-mesh-guide-seen')), '1', '사용자가 연 안내는 본 상태로 기록합니다');
   await page.waitForFunction(() => document.querySelectorAll('.mesh-node.cold-open-lit').length === 2, null, { timeout: 15000 });
   assert.equal(await page.locator('.cold-open-tether text').textContent(), 'PDU-3 SPINE 공용 전원', '공용 전원 장면은 어떤 묶음인지 이름으로 밝혀야 합니다');
   await page.waitForSelector('.cold-open-damage:not([hidden])', { timeout: 20000 });
@@ -1962,11 +1979,11 @@ async function verifyTourAnchoring() {
   await page.waitForSelector('.cold-open-handoff:not([hidden])', { timeout: 20000 });
   assert.equal(await page.evaluate(() => document.body.dataset.coldOpenSpot), 'headroom', '마지막 장면은 이 설계가 버티는 배율을 가리켜야 합니다');
   await page.waitForFunction(() => document.querySelector('#summary-unreachable')?.textContent === '0');
-  assert.equal(await page.locator('.canvas-headline h1, h1').first().textContent(), '지금 부하의 1.16배까지 버팁니다', '시연이 끝나면 설계를 되돌려야 합니다');
+  assert.equal(await page.locator('#topology-heading').textContent(), '통과 보류', '시연이 끝나면 미확인 한계가 있는 설계의 판정을 복원해야 합니다');
 
   // 시연이 끝나면 중간 창을 하나 더 거치지 않고 곧바로 화면 읽는 법으로 넘어간다.
-  assert.equal(await page.locator('[data-cold-open="try"]').evaluate((node) => node.classList.contains('is-primary')), true,
-    '저절로 돈 시연은 직접 해 보는 쪽을 앞세워야 합니다');
+  assert.equal(await page.locator('[data-cold-open="guide"]').evaluate((node) => node.classList.contains('is-primary')), true,
+    '안내에서 시작한 시연은 이어 보는 쪽을 앞세워야 합니다');
   await page.locator('[data-cold-open="guide"]').click();
   await page.waitForSelector('#tour:not([hidden])');
   assert.match(await page.locator('#tour-title').textContent(), /템플릿으로 시작하기/, '시연은 안내 첫 단계로 바로 이어져야 합니다');
@@ -2040,6 +2057,174 @@ async function verifyTourAnchoring() {
   await page.close();
 }
 
+async function verifyFirstVisit() {
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }, { width: 390, height: 844 }]) {
+    const page = await browser.newPage({ viewport });
+    await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
+    assert.equal(await page.locator('#first-visit').isVisible(), true);
+    assert.match(await page.locator('#first-visit-title').textContent(), /서비스는 버틸까요/);
+    assert.equal(await page.locator('.topology-panel').isVisible(), false);
+    assert.equal(await page.locator('.summary-strip #topology-heading').count(), 1, '판정과 요약은 같은 영역에서 읽을 수 있어야 합니다');
+    assert.equal(await page.locator('[data-device-id="fw-a"] .node-axis').count(), 4);
+    await page.locator('[data-first-visit="try"]').click();
+    assert.equal(await page.locator('#first-visit-result').isVisible(), true);
+    assert.match(await page.locator('#first-visit-result-title').textContent(), /서비스 경로가 끊겼습니다/);
+    assert.match(await page.locator('#first-visit-impact').textContent(), /수요 2개.*12 Gbps/);
+    assert.match(await page.locator('#first-visit-cause').textContent(), /PDU-3.*SPINE A.*SPINE B/);
+    assert.match(await page.locator('#first-visit-evidence').textContent(), /미확인/);
+    assert.equal(await page.locator('.intro-node[data-stopped="true"]').count(), 2);
+    await page.locator('[data-first-visit="inspect"]').click();
+    assert.equal(await page.locator('#summary-unreachable').textContent(), '2');
+    assert.match(await page.locator('#topology-heading').textContent(), /경로 단절/);
+    assert.match(await page.locator('#headline-detail').textContent(), /2개/);
+    assert.match(await page.locator('#evidence-state').textContent(), /미확인/);
+    assert.equal(await page.locator('#summary-headroom').textContent(), '경로 단절');
+    assert.equal(await page.locator('#summary-growth').textContent(), '—');
+    assert.match(await page.locator('#fault-handoff-impact').textContent(), /SPINE A.*SPINE B.*2개/);
+    assert.equal(await page.locator('.mesh-node.selected').getAttribute('data-device-id'), 'spine-a');
+    await page.waitForFunction(() => {
+      const box = document.querySelector('.topology-scroll').getBoundingClientRect();
+      return ['spine-a', 'spine-b'].every((id) => {
+        const node = document.querySelector(`[data-device-id="${id}"]`).getBoundingClientRect();
+        return node.left >= box.left - 1 && node.right <= box.right + 1 && node.top >= box.top - 1 && node.bottom <= box.bottom + 1;
+      });
+    });
+    assert.equal(await page.locator('#first-visit').isHidden(), true);
+    if (viewport.width === 1024) assert.ok(await page.locator('.topology-scroll').evaluate((node) => node.clientHeight <= 720), '중간 화면에서 구성도 영역이 장애 목록을 따라 늘어나지 않아야 합니다');
+    if (viewport.width === 1024) await page.locator('[data-zoom="in"]').click();
+    const chosenZoom = await page.locator('#zoom-level').textContent();
+    await page.locator('#fault-handoff-open').click();
+    await page.waitForFunction(() => document.activeElement?.dataset.failureId === 'pdu-3');
+    if (viewport.width <= 760) await page.locator('[data-failure-type="domain"][data-failure-id="pdu-3"]').click();
+    else await page.locator('#baseline-reset').click();
+    assert.equal(await page.locator('#summary-unreachable').textContent(), '0');
+    assert.equal(await page.locator('#fault-handoff').isHidden(), true);
+    if (viewport.width === 1440) await page.waitForFunction(() => document.querySelector('#zoom-level')?.textContent === '100%');
+    if (viewport.width === 1024) assert.equal(await page.locator('#zoom-level').textContent(), chosenZoom, '사용자가 직접 바꾼 확대 배율은 복구해도 유지해야 합니다');
+    await page.reload({ waitUntil: 'networkidle' });
+    assert.equal(await page.locator('#first-visit').isHidden(), true);
+    await page.close();
+  }
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
+  await page.locator('[data-first-visit="start"]').click();
+  assert.equal(await page.locator('#editor-panel').isVisible(), true);
+  assert.equal(await page.locator('[data-template="blank"]').count(), 1);
+  await page.close();
+  const restore = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await restore.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
+  await restore.locator('[data-first-visit="try"]').click();
+  await restore.locator('#first-visit-language').selectOption('en');
+  await restore.waitForURL('**/?lang=en');
+  await restore.waitForLoadState('networkidle');
+  await restore.waitForFunction(() => document.querySelector('#first-visit-result-title')?.textContent.includes('severed'));
+  assert.match(await restore.locator('#first-visit-result-title').textContent(), /severed/i);
+  assert.doesNotMatch(await restore.locator('#first-visit-cause').textContent(), /[가-힣]/);
+  await restore.locator('[data-first-visit="restore"]').click();
+  assert.equal(await restore.locator('#summary-unreachable').textContent(), '0');
+  assert.equal(await restore.locator('#baseline-reset').isHidden(), true);
+  await restore.close();
+}
+
+async function verifyWorkspacePanel() {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.addInitScript(() => localStorage.setItem('rack-mesh-guide-seen', '1'));
+  await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
+  assert.deepEqual(await page.locator('.summary-group-label').allTextContents(), ['알려진 용량', '현재 전달', '장애 분석']);
+  assert.equal(await page.locator('#inspector-panel').isVisible(), true);
+  assert.equal(await page.locator('#design-board').isVisible(), false);
+  assert.equal(await page.locator('.result-explanation').getAttribute('open'), null);
+  await page.locator('.result-explanation > summary').click();
+  assert.match(await page.locator('#bottleneck-note').innerText(), /한계|미확인/);
+  assert.equal(await page.locator('.inspector-edit').getAttribute('open'), null);
+  await page.locator('.inspector-edit > summary').click();
+  assert.equal(await page.locator('[data-resource-form="device"] input[name="name"]').isVisible(), true);
+  await page.locator('#scale-input').evaluate((input) => { input.value = '110'; input.dispatchEvent(new Event('change', { bubbles: true })); });
+  assert.equal(await page.locator('.inspector-edit').getAttribute('open'), '');
+  await page.locator('[data-device-id="fw-b"]').click();
+  assert.equal(await page.locator('.inspector-edit').getAttribute('open'), null);
+  await page.locator('#summary-survival').click();
+  assert.equal(await page.locator('#panel-failure').isVisible(), true);
+  assert.equal(await page.locator('button[data-workspace-panel="tools"]').getAttribute('aria-pressed'), 'true');
+  await page.locator('[data-device-id="fw-a"]').click();
+  assert.equal(await page.locator('#inspector-panel').isVisible(), true);
+  assert.equal(await page.locator('#design-board').isVisible(), false);
+  await page.locator('#workspace-panel-toggle').click();
+  assert.equal(await page.locator('#workspace-panel-toggle').getAttribute('aria-expanded'), 'false');
+  assert.equal(await page.locator('#inspector-panel').isVisible(), false);
+  await page.locator('#workspace-panel-toggle').click();
+  assert.equal(await page.locator('#inspector-panel').isVisible(), true);
+  await page.close();
+}
+
+async function verifyMobileWorkspace() {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.addInitScript(() => localStorage.setItem('rack-mesh-guide-seen', '1'));
+  await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
+  assert.equal(await page.locator('#summary-survival').isVisible(), false);
+  assert.match(await page.locator('#mobile-risk').innerText(), /단일 장애점/);
+  await page.locator('#mobile-summary-toggle').click();
+  assert.equal(await page.locator('#summary-survival').isVisible(), true);
+  await page.locator('#summary-survival').click();
+  assert.equal(await page.locator('#design-board').getAttribute('role'), 'dialog');
+  assert.equal(await page.locator('#failure-close-mobile').evaluate((node) => node === document.activeElement), true);
+  await page.locator('[data-failure-type="device"]').first().click();
+  assert.equal(await page.locator('#design-board').getAttribute('role'), null);
+  if (await page.locator('#summary-unreachable').textContent() === '1') assert.notEqual(await page.locator('#summary-headroom').textContent(), '경로 단절');
+  assert.match(await page.locator('#scenario-change-text').textContent(), /기준선 → 현재/);
+  await page.locator('#scenario-change-details > summary').click();
+  assert.match(await page.locator('#scenario-change-detail').innerText(), /미확인 한계[\s\S]*병목/);
+  assert.match(await page.locator('#scenario-change-detail').innerText(), /경로 단절로 해석 보류/);
+  await page.locator('#mobile-summary-toggle').click();
+  await page.locator('[data-device-id="fw-b"]').click();
+  assert.equal(await page.locator('#inspector-panel').isVisible(), true);
+  await page.locator('.inspector-edit > summary').click();
+  await page.locator('[data-resource-form="device"] input[name="name"]').fill('이름 변경');
+  await page.locator('[data-resource-form="device"] button[type="submit"]').click();
+  assert.match(await page.locator('#scenario-change-text').textContent(), /수치 비교를 보류/);
+  assert.equal(await page.locator('#scenario-change-details').isHidden(), true);
+  await page.locator('#inspector-close-mobile').click();
+  await page.locator('.mobile-fault-tray a').click();
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#design-board').getAttribute('role'), null);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth), 0);
+  await page.close();
+
+  const guided = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+  await guided.addInitScript(() => localStorage.setItem('rack-mesh-guide-seen', '1'));
+  await guided.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
+  await guided.locator('#guide-button').click();
+  await guided.locator('[data-guide="start"]').click();
+  for (let index = 0; index < 3; index += 1) await guided.locator('[data-cold-open="next"]').click();
+  assert.equal(await guided.locator('#summary-delivery').isVisible(), true, '시연은 설명하는 요약을 펼쳐야 합니다');
+  await guided.locator('[data-cold-open="skip"]').click();
+  assert.equal(await guided.locator('#mobile-summary-toggle').getAttribute('aria-expanded'), 'false', '시연이 펼친 요약은 시연 뒤에 복원해야 합니다');
+  await guided.close();
+}
+
+async function verifyLargeWorkspace() {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.addInitScript(() => localStorage.setItem('rack-mesh-guide-seen', '1'));
+  await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
+  const topology = {
+    devices: Array.from({ length: 40 }, (_, index) => ({ id: `large-${index}`, name: `장비 ${index} · 긴 이름을 가진 네트워크 스위치`, kind: 'switch', zone: 'FABRIC', position: { x: 120 + index % 8 * 160, y: 100 + Math.floor(index / 8) * 170 }, limits: { forwarding_bps: index === 0 ? 1e9 : null } })),
+    links: Array.from({ length: 39 }, (_, index) => ({ id: `large-link-${index}`, source: `large-${index}`, target: `large-${index + 1}`, capacity: { forwarding_bps: 1e9 } })),
+    demands: [{ id: 'large-demand', name: '긴 경로', source: 'large-0', target: 'large-39', load: { forwarding_bps: 1e8 } }],
+  };
+  const project = JSON.stringify({ schemaVersion: 3, product: 'Rack Mesh', topology, scenario: { scale: 1, disabledDevices: [], disabledLinks: [], disabledDomains: [], viewMode: 'edit', selectedId: 'large-0' } });
+  const dialog = page.waitForEvent('dialog');
+  await page.setInputFiles('#project-file-input', { name: 'large.json', mimeType: 'application/json', buffer: Buffer.from(project) });
+  (await dialog).accept();
+  await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 40);
+  assert.match(await page.locator('#evidence-state').textContent(), /미확인/);
+  const node = page.locator('[data-device-id="large-0"]');
+  assert.match(await node.getAttribute('aria-label'), /긴 이름을 가진 네트워크 스위치/);
+  await node.click();
+  assert.match(await page.locator('.resource-identity strong').textContent(), /긴 이름을 가진 네트워크 스위치/);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth), 0);
+  await page.close();
+}
+
 async function waitForColdOpenScene(page, scene) {
   await page.waitForFunction((n) => document.querySelector('.cold-open-count')?.textContent.startsWith(`SCENE ${n} /`), scene, { timeout: 25000 });
 }
@@ -2054,6 +2239,9 @@ async function openColdOpenPage(viewport = { width: 1440, height: 900 }, { init,
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.stack || error.message}`));
   if (init) await page.addInitScript(init);
   await page.goto(`http://127.0.0.1:${port}/?lang=ko`, { waitUntil: 'networkidle' });
+  if (await page.locator('#first-visit').isVisible()) await page.locator('[data-first-visit="guide"]').click();
+  else await page.locator('#guide-button').click();
+  await page.locator('[data-guide="start"]').click();
   await page.waitForSelector('#cold-open');
   return page;
 }
@@ -2069,6 +2257,8 @@ async function verifyColdOpenEdges() {
   assert.equal(await page.locator('#summary-unreachable').textContent(), '0', '시연 도중 새로고침해도 시연이 켠 장애가 남지 않아야 합니다');
   assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('rack-mesh-working-copy') || 'null')?.scenario.disabledDomains ?? []), [],
     '시연이 켠 장애를 작업 사본에 저장하지 않아야 합니다');
+  await page.locator('#guide-button').click();
+  await page.locator('[data-guide="start"]').click();
   await page.waitForSelector('#cold-open');
 
   // 장면을 빨리 넘겨도 앞 장면의 숫자가 다음 장면에 섞이지 않는다.
@@ -2093,6 +2283,7 @@ async function verifyColdOpenEdges() {
   // 안내에서 시작한 시연은 ESC로 닫아도 건너뛰기처럼 안내로 이어진다.
   page = await openColdOpenPage();
   await page.locator('[data-cold-open="skip"]').click();
+  await page.locator('[data-tour="skip"]').click();
   await page.locator('#guide-button').click();
   await page.locator('[data-guide="start"]').click();
   await page.waitForSelector('#cold-open');
@@ -2101,10 +2292,10 @@ async function verifyColdOpenEdges() {
   assert.match(await page.locator('#tour-title').textContent(), /템플릿으로 시작하기/, 'ESC도 건너뛰기처럼 안내로 이어져야 합니다');
   await page.close();
 
-  // 시연 도중 설계를 만지면 시연을 거두고 설계를 되돌린 뒤 조작을 넘긴다.
+  // 시연 바깥을 누르면 시연을 거두고 설계를 되돌린다.
   page = await openColdOpenPage();
   await advanceColdOpen(page, 4);
-  await page.locator('.mesh-node[data-device-id="fw-a"]').click({ force: true });
+  await page.locator('.brand').click();
   assert.equal(await page.locator('#cold-open').count(), 0, '레일 밖을 누르면 시연을 거둬야 합니다');
   assert.equal(await page.locator('#summary-unreachable').textContent(), '0', '시연을 거두면 시연이 켠 장애도 되돌려야 합니다');
   assert.equal(await page.evaluate(() => document.body.classList.contains('cold-open-running') || 'coldOpenSpot' in document.body.dataset), false, '시연이 남긴 표시가 없어야 합니다');
@@ -2165,6 +2356,7 @@ async function verifyVirtualFailureList() {
   await page.setInputFiles('#project-file-input', { name: 'large-project.json', mimeType: 'application/json', buffer: Buffer.from(project) });
   (await dialog).accept();
   await page.waitForFunction(() => document.querySelectorAll('.mesh-node').length === 24);
+  await page.locator('button[data-workspace-panel="tools"]').click();
   await page.locator('#tab-failure').click();
   await page.waitForSelector('[data-failure-virtual]', { timeout: 25000 });
   const virtual = page.locator('[data-failure-virtual^="device-"]').first();
@@ -2213,7 +2405,17 @@ async function verifyInferredSwapSlot() {
 }
 
 try {
-  if (process.env.ONLY_VIRTUAL_FAILURE_LIST) await verifyVirtualFailureList();
+  if (process.env.ONLY_TOUR) await verifyTourAnchoring();
+  else if (process.env.ONLY_MOBILE_LEGACY) await verify({ width: 390, height: 844 }, '.impeccable/review/mobile.png');
+  else if (process.env.ONLY_MOBILE_WORKSPACE) await verifyMobileWorkspace();
+  else if (process.env.ONLY_LARGE_WORKSPACE) await verifyLargeWorkspace();
+  else if (process.env.ONLY_BACKEND_POOL) await verifyBackendPool();
+  else if (process.env.ONLY_CANVAS_EDITING) await verifyCanvasEditing();
+  else if (process.env.ONLY_DESKTOP) await verify({ width: 1440, height: 1000 }, '.impeccable/review/desktop.png', true);
+  else if (process.env.ONLY_WORKSPACE_PANEL) await verifyWorkspacePanel();
+  else if (process.env.ONLY_COLD_OPEN_EDGES) await verifyColdOpenEdges();
+  else if (process.env.ONLY_FIRST_VISIT) await verifyFirstVisit();
+  else if (process.env.ONLY_VIRTUAL_FAILURE_LIST) await verifyVirtualFailureList();
   else {
     await verifyLocales();
     await verify({ width: 1440, height: 1000 }, '.impeccable/review/desktop.png', true);
@@ -2223,6 +2425,10 @@ try {
     await verifySharedPowerTemplate();
     await verifyNumberMotion();
     await verifyTopologyViews();
+    await verifyWorkspacePanel();
+    await verifyMobileWorkspace();
+    await verifyLargeWorkspace();
+    await verifyFirstVisit();
     await verifyTourAnchoring();
     await verifyColdOpenEdges();
     await verifyVirtualFailureList();

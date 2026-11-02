@@ -127,7 +127,16 @@ export function startColdOpen(api) {
 
   // 요약 스트립은 좁은 화면에서 가로로 넘친다. 가리키는 칸이 밖에 있으면 스트립만 가로로 당긴다.
   const SPOT_GROUPS = { delivery: 'summary-delivery', capacity: 'summary-capacity', headroom: 'summary-capacity' };
+  let expandedSummaryForScene = false;
   const spotlight = (name) => {
+    const toggle = document.getElementById('mobile-summary-toggle');
+    if (name && window.matchMedia('(max-width: 760px)').matches && toggle?.getAttribute('aria-expanded') === 'false') {
+      document.dispatchEvent(new CustomEvent('headroom:mobile-summary', { detail: { expanded: true } }));
+      expandedSummaryForScene = true;
+    } else if (!name && expandedSummaryForScene) {
+      if (toggle?.getAttribute('aria-expanded') === 'true') document.dispatchEvent(new CustomEvent('headroom:mobile-summary', { detail: { expanded: false } }));
+      expandedSummaryForScene = false;
+    }
     if (!name) { delete document.body.dataset.coldOpenSpot; return; }
     document.body.dataset.coldOpenSpot = name;
     const group = document.querySelector(`.summary-group.${SPOT_GROUPS[name]}`);
