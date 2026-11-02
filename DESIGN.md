@@ -2,29 +2,29 @@
 name: Rack Mesh
 description: A daylight telemetry console for topology constraints and failure effects.
 colors:
-  ground: "#e7f0ea"
-  surface: "#f7faf7"
+  ground: "#e9edec"
+  surface: "#f5f7f6"
   surface-raised: "#ffffff"
-  surface-tint: "#dceae2"
-  panel-deep: "#16332d"
-  panel-mid: "#20483f"
-  panel-line: "#365a50"
+  surface-tint: "#edf1ef"
+  panel-deep: "#20323a"
+  panel-mid: "#31535a"
+  panel-line: "#526b70"
   on-deep: "#f4fbf7"
   on-deep-muted: "#dceae2"
   on-deep-line: "#628279"
   danger-soft: "#ff9c94"
-  canvas: "#eaf2ed"
-  line: "#9eb9ad"
-  line-soft: "#c9d9d1"
-  text: "#13241f"
-  muted: "#4a635a"
-  signal: "#b8e737"
+  canvas: "#f0f3f1"
+  line: "#a8bab5"
+  line-soft: "#d8e1dd"
+  text: "#1b3033"
+  muted: "#4d6360"
+  signal: "#d3ec87"
   signal-deep: "#4f7100"
   amber: "#8b5100"
   danger: "#b83c34"
   unknown: "#5b6478"
   cyan: "#077165"
-  action-ink: "#173028"
+  action-ink: "#1b3033"
 typography:
   display:
     fontFamily: "Avenir Next, Avenir, Pretendard, Segoe UI, sans-serif"
@@ -159,7 +159,7 @@ A compact toolbar and inline task panel extend the console into a topology edito
 - Three topology views: classic symbols, CSS 2.5D voxel chassis, and a spatial WebGL equipment scene.
 - Deep green top and mobile control bars.
 - Square controls, thin rules, and compact data typography.
-- Four summary sparklines and status-aware topology motion.
+- A scenario verdict and grouped capacity, delivery, and fault summaries.
 - An editor toolbar, inline forms, and inspector-based resource edit forms.
 - Text, shape, and line patterns that support each semantic color.
 
@@ -169,7 +169,7 @@ The palette separates a calm daylight workspace from a deep operational frame. S
 
 ### Primary
 
-- **Signal Lime** (#b8e737): Use for primary actions, focus outlines, the stable run state, and the brand mark.
+- **Signal Lime** (#d3ec87): Use for primary actions, focus outlines, the stable run state, and the brand mark.
 - **Deep Signal Green** (#4f7100): Use for decisive values, section codes, packet dots, and positive comparison values.
 
 ### Secondary
@@ -181,14 +181,14 @@ The palette separates a calm daylight workspace from a deep operational frame. S
 
 ### Neutral
 
-- **Sage Ground** (#e7f0ea): Use for the page ground.
-- **Quiet Surface** (#f7faf7): Use for control panels, summary cells, and inspectors.
+- **Sage Ground** (#e9edec): Use for the page ground.
+- **Quiet Surface** (#f5f7f6): Use for control panels, summary cells, and inspectors.
 - **White Raised Surface** (#ffffff): Use for small markers and symbol highlights.
-- **Sage Surface Tint** (#dceae2): Use for topology and comparison regions.
-- **Deep Forest Panel** (#16332d): Use for the top bar, toast, and mobile failure tray.
-- **Canvas Sage** (#eaf2ed): Use for the fixed topology canvas and its label masks.
-- **Forest Text** (#13241f): Use for primary text on light surfaces.
-- **Muted Sage Text** (#4a635a): Use for notes, labels, and metadata.
+- **Sage Surface Tint** (#edf1ef): Use for topology and comparison regions.
+- **Deep Forest Panel** (#20323a): Use for the top bar, toast, and mobile failure tray.
+- **Canvas Sage** (#f0f3f1): Use for the fixed topology canvas and its label masks.
+- **Forest Text** (#1b3033): Use for primary text on light surfaces.
+- **Muted Sage Text** (#4d6360): Use for notes, labels, and metadata.
 
 ### Named Rules
 
@@ -202,7 +202,7 @@ The palette separates a calm daylight workspace from a deep operational frame. S
 not only on the pale surface. The tint is where the design board and the comparison panel put their
 notes, so a color chosen against white lands there a step short. The semantic inks were darkened for
 this reason, unknown slate last: at #697286 it read 3.89:1 on the tint. A new ink must be checked
-against `#dceae2` before it ships.
+against `#edf1ef` before it ships.
 
 ## Typography
 
@@ -257,15 +257,17 @@ and Japanese have no case, and tracking pulls their syllables apart, so labels d
 
 ## Layout
 
-The desktop shell stacks the top bar, control deck, editor toolbar, optional editor panel, summary strip, workspace, and comparison panel.
+The desktop shell places the scenario verdict and capacity, delivery, and resilience summaries together above the workspace. The topology occupies the wide left workspace; a switch chooses the inspector or design tools in the right column. Selecting a device opens the inspector, while opening failure analysis selects the tools panel. The whole panel can be collapsed.
 
-The main workspace uses 250px, a flexible center of at least 680px, and 330px columns.
+Above 1180px the main workspace uses a flexible topology column and a 340px inspector and tools column.
 
-At 1180px, use 230px and a flexible center of at least 650px. Place the inspector below in four columns.
+At 1180px, use a 220px design-tools column and a flexible center. Limit the first workspace row to 720px and place the inspector below.
 
 At 1180px, place editor forms in three columns. Keep demand rows in four columns with internal horizontal scroll.
 
-At 760px, use one vertical flow and a two-column summary. Place topology before failures and the inspector.
+At 760px, show the verdict and fault risk first, with the remaining summary behind an expandable control. Place topology before failures and open device and failure details in bottom panels.
+
+When a fault is active, show baseline-to-current delivery changes near the verdict. Keep binding and unknown-limit changes available there, and withhold numerical comparison when the design differs from its baseline. Do not present headroom as an available margin when paths are severed.
 
 At 760px, place editor forms and demand rows in two columns. Keep each form action row across the full width.
 
@@ -322,6 +324,13 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 
 ## Components
 
+### First Visit
+
+- Start a new visitor with a question about service resilience and a simplified, explicitly synthetic diagram of the demo's shared PDU and two spine devices.
+- The primary action injects the actual shared-power fault and shows the calculated service impact, stopped resources, and unknown limits before offering analysis or restoration. Provide separate paths to start a design, explore the example, and open the guided demonstration.
+- On entering the analysis, center the affected devices, name the active fault, and offer a direct path to its failure-list entry. Remove this context when the fault is cleared. If automatic framing changed the zoom, restore it on recovery only when the user has not adjusted it.
+- Restore an existing working copy directly. The introduction must not obscure saved work or simulate packet behavior or recovery time.
+
 ### Buttons
 
 - **Shape:** Use square corners and a minimum height of 40px.
@@ -368,6 +377,8 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
   The limit fields sit below the axis meters, so editing a limit and reading its consequence used to
   be a scroll shuttle in a 300px column.
 
+- **Read Before Editing:** Show the axis results and source first. Keep behavior, profile, and limit fields under an edit disclosure. Preserve the disclosure state through recalculation for the same resource, and close it when a different resource is selected.
+
 - **Device:** Edit the name, zone, and independent capacity limits below the device telemetry.
 - **Link:** Edit directional capacity below the link telemetry.
 - **Empty:** If the topology has no devices, explain how to add or import the first device.
@@ -375,30 +386,28 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 
 ### Top Bar and Live State
 
-- **Frame:** Use the deep forest surface, light text, and a 72px minimum height.
+- **Frame:** Use the deep panel surface and light text; the desktop bar has a 58px minimum height.
 - **Run State:** Pair an 8px lamp with visible state text. Use lime, amber, or red for state.
 - **Warning Tier:** Name the warning tier the engine already computes. A design holding resources above the warning threshold must never read as stable, and the count belongs in the text.
-- **Live State:** Pair a cyan 7px indicator with `LIVE · SYNTHETIC TELEMETRY`.
-- **Motion:** Use a 1.8s alternate breath with the standard motion curve.
+- **Live State:** State and evidence chips name their conditions in the verdict area. The presentation does not claim that modeled results are live measurements.
+- **Motion:** Keep synthetic number variation off by default; the view settings can enable it.
 
-### Summary Metrics and Sparklines
+### Summary Metrics
 
-- **Structure:** Present four equal summary cells. Keep 28 recent samples in each SVG sparkline.
-- **Series:** Plot the figure the cell itself states, never a related one. A cell that counts overloaded resources plots that count; a line showing utilization beside it reads as the same fact and it is not.
-- **Legend:** Name every capacity state the canvas can paint, disabled included. A state the canvas draws but the legend omits is unreadable.
-- **One Name Per State:** The legend and the inspector must call a state the same thing. Two names for one state read as two states.
-- **Color:** Use cyan, amber, red, and deep signal green in that order.
-- **Headline Number:** Do not animate the largest number on the page. Synthetic variation belongs in the sparkline; a headline that drifts between two values contradicts the fixed comparison panel and the reader cannot tell which to trust.
+- **Structure:** Present the verdict alongside known capacity, current delivery, and failure analysis. Do not show sparklines in the summary.
+- **State Names:** Use the same terms for equivalent states in the summary, topology, and inspector.
+- **Color:** Use semantic state colors consistently and pair them with text.
+- **Headline Number:** Do not animate the largest number on the page. A headline that drifts between two values contradicts the fixed comparison panel and the reader cannot tell which to trust.
 - **Metric Color:** Color the headroom figure by the same threshold the engine judges with. A figure the engine calls warning must not be painted the healthy color.
 - **Telemetry:** Add about ±1.5 points of synthetic variation to a utilization the presentation layer shows, and about ±1.5% to a load figure. Keep scenario values unchanged. Add the variation, do not multiply it: a multiplied variation leaves a small percentage frozen at its rounded value while a large one moves.
 - **Cadence:** Advance the variation one step every 300ms, and draw every frame between steps. The 300ms is the speed, not the redraw interval. A stepped redraw shows one-point jumps, which the eye reads as a glitch and not as motion.
 - **Meter Follows:** Move the axis meter with the varied value on the canvas node. A percentage changes only in whole points, so the bar carries the motion between them; the eye catches length before it catches digits. Leave the inspector meter alone, because a reader drags it to set a limit.
-- **Opt Out:** Run the synthetic variation by default, and keep a control on screen that stops it. A reader who must quote a figure turns it off first. Name the control after the effect, not after the data. A name like "live" or "real time" claims the numbers themselves changed; the reader must be able to tell display motion from a new result.
+- **Opt In:** Keep synthetic variation off by default and provide a view setting that enables it. Name the control after the effect, not after the data; display motion must be distinguishable from a new result.
 - **Change Motion:** When a recalculation changes a value, ease the number from the previous value to the new one over 260ms. This motion has a cause, so it does not compete with the figure it shows. Run it whether or not synthetic variation is on, and skip it when reduced motion is active.
 
 ### Design Board Tabs
 
-- **Tabs:** Split the left board into a component tab and a failure tab. Keep the component tab first and open by default, because building comes before breaking.
+- **Tabs:** Split the design board into component and failure tabs. Open the failure tab for a populated design and the component tab for an empty design.
 - **Shape:** Use a two-pixel underline on the open tab. Use no corner radius and no filled tab body.
 - **Badge:** Show the active-fault count only on the failure tab. Hide it on the component tab.
 - **Keyboard:** Move between tabs with the arrow keys, Home, and End. Keep only the open tab in the tab order.
@@ -410,18 +419,16 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 - **Dismiss:** Close on Escape, on the close button, and on a press outside the panel.
 - **Height:** Cap it to the viewport and scroll inside. Never let it push the page taller.
 
-### Canvas Headline
+### Verdict Headline
 
-- **Answer, Not Question:** The largest type on the canvas states the answer — the binding resource, its axis and direction, and its utilisation. A standing question in display type while its answer sits in 11px at the fold is the wrong way round.
-- **Three Steps, Not Two Lines:** Split the card into the growth sentence, the binding resource, and the measurement. Give each its own element and its own size. A single string joined by a newline and left to `pre-line` renders both facts at one weight, and then the resource name competes with the number a reader returns to.
-- **Size Against The Detail, Not The Page:** The heading only reads as the conclusion while it outranks the binding line under it. It sat at 17px against a 13px detail and read as a peer; it now runs `clamp(18px, 1.45vw, 22px)`. Growing it further buys nothing and costs canvas.
-- **Tone:** Color the headline by the binding axis state, so overload and caution read before the number does.
-- **Detail Line:** Under it, state the load against the limit and how much growth is left before the first overload.
-- **Growth Limit:** Find that multiplier by bisecting the workload scale with the engine. It is a fact the tool can already compute and had nowhere to say.
+- **Answer:** State the current verdict above the canvas, followed by the binding resource and its measurement when meaningful.
+- **Path Loss:** Put disconnected demand ahead of a capacity-growth message; do not present an idle, disconnected design's headroom as available capacity.
+- **Tone:** Pair state color with the verdict text.
+- **Growth Limit:** Read the first threshold from the engine's growth ladder; expose unknown limits separately.
 
 ### Bottleneck Note
 
-- **Placement:** Put one sentence under the canvas saying what limits the design right now.
+- **Placement:** Keep the detailed explanation under the canvas in the verdict-details disclosure, alongside the next experiment.
 - **Content:** Name the resource, the axis, the direction when a link has one, and the load against the limit.
 - **Consequence:** Add what the overload costs — bytes dropped, sessions refused — as separate facts. Refused sessions do not throttle bytes.
 - **Unknown:** Say when a delivery ratio is an upper bound because a limit is missing.
@@ -664,7 +671,7 @@ Use three-pixel status rails under node symbols. Use seven-pixel axis meters for
 
 - **Position:** Keep it sticky at the top of the mobile flow.
 - **Surface:** Use deep forest, light text, and a structural shadow.
-- **Controls:** Expose FW A, FW B, and a link to the full list.
+- **Controls:** Expose the recommended fault and a button to open the full fault list in a bottom panel.
 - **State:** Show UP or DOWN and update `aria-pressed`.
 
 ### Reduced Motion

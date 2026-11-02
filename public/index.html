@@ -137,19 +137,57 @@
         </div>
       </header>
 
-      <section class="summary-strip" aria-label="시나리오 요약">
-        <div class="summary-group summary-capacity">
-          <span class="summary-group-label">용량</span>
-          <div class="summary-stats"><span><small>여유</small><strong id="summary-growth">···</strong></span><span><small>headroom</small><strong id="summary-headroom">···</strong></span><span><small>과부하</small><strong id="summary-overloaded">···</strong></span></div>
+      <section class="first-visit" id="first-visit" aria-labelledby="first-visit-title" hidden>
+        <header class="first-visit-header"><strong>HEADROOM</strong><label><span class="visually-hidden" data-i18n="navigation.language">언어</span><select id="first-visit-language" data-i18n-aria-label="navigation.language" aria-label="언어"><option value="en">English</option><option value="ko">한국어</option><option value="ja">日本語</option></select></label></header>
+        <div class="first-visit-body">
+          <div class="first-visit-copy">
+            <h1 id="first-visit-title" data-i18n="firstVisit.title">장애가 나도 서비스는 버틸까요?</h1>
+            <p data-i18n="firstVisit.description">두 장비가 같은 전원을 공유하면, 장비가 이중화되어 있어도 함께 멈출 수 있습니다.</p>
+            <p class="first-visit-prompt" data-i18n="firstVisit.prompt">공용 전원을 껐을 때 서비스에 무슨 일이 생기는지 확인해 보세요.</p>
+            <div class="first-visit-actions"><button type="button" data-first-visit="try" data-i18n="firstVisit.try">공용 전원 끄고 결과 보기</button><button type="button" data-first-visit="start" data-i18n="firstVisit.start">내 설계 시작하기</button></div>
+            <div class="first-visit-links"><button type="button" data-first-visit="dismiss" data-i18n="firstVisit.dismiss">예제 구성도 둘러보기</button><button type="button" data-first-visit="guide" data-i18n="firstVisit.guide">시연과 안내</button></div>
+          </div>
+          <div class="first-visit-result" id="first-visit-result" hidden>
+            <h1 id="first-visit-result-title" tabindex="-1"></h1>
+            <p class="first-visit-impact" id="first-visit-impact"></p>
+            <p class="first-visit-cause" id="first-visit-cause"></p>
+            <p class="first-visit-evidence" id="first-visit-evidence"></p>
+            <div class="first-visit-actions"><button type="button" data-first-visit="inspect" data-i18n="firstVisit.inspect">상세 분석 살펴보기</button><button type="button" data-first-visit="restore" data-i18n="firstVisit.restore">원래 상태로 돌아가기</button></div>
+          </div>
+          <figure class="first-visit-diagram">
+            <figcaption><strong data-i18n="firstVisit.diagramTitle">공유 전원과 이중화 경로</strong><span data-i18n="firstVisit.synthetic">합성 예제 · 관계 개략도</span></figcaption>
+            <svg viewBox="0 0 600 350" role="img" data-i18n-aria-label="firstVisit.diagramAlt" aria-label="PDU-3 공용 전원이 SPINE A와 SPINE B에 연결된 개략도">
+              <path class="intro-wire" d="M300 88 V125 M145 125 H455 M145 125 V158 M455 125 V158 M145 226 V259 M455 226 V259 M145 259 H455 M300 259 V286"/>
+              <rect class="intro-source" x="195" y="24" width="210" height="64" rx="4"/><text class="intro-source-name" x="300" y="52" text-anchor="middle">PDU-3</text><text class="intro-source-caption" x="300" y="72" text-anchor="middle" data-i18n="firstVisit.sharedPower">공용 전원</text>
+              <rect class="intro-node" data-intro-device="spine-a" x="45" y="158" width="200" height="68" rx="4"/><rect class="intro-node" data-intro-device="spine-b" x="355" y="158" width="200" height="68" rx="4"/><text class="intro-node-name" x="145" y="190" text-anchor="middle">SPINE A</text><text class="intro-node-name" x="455" y="190" text-anchor="middle">SPINE B</text><text class="intro-node-status" data-intro-status="spine-a" x="145" y="210" text-anchor="middle" data-i18n="firstVisit.stopped">중단</text><text class="intro-node-status" data-intro-status="spine-b" x="455" y="210" text-anchor="middle" data-i18n="firstVisit.stopped">중단</text>
+              <rect class="intro-service" x="195" y="286" width="210" height="44" rx="4"/><text class="intro-service-name" x="300" y="314" text-anchor="middle" data-i18n="firstVisit.servicePath">서비스 경로</text>
+            </svg>
+            <p id="first-visit-diagram-note" data-i18n="firstVisit.diagramNote">구성도에서 두 장비가 공유하는 전원을 함께 살펴봅니다.</p>
+          </figure>
+        </div>
+        <footer class="first-visit-footer"><span data-i18n="firstVisit.scope">브라우저에서 계산 · 합성 예제</span><span data-i18n="firstVisit.limits">패킷과 장애 복구 시간은 시뮬레이션하지 않습니다.</span></footer>
+      </section>
+
+      <section class="summary-strip" aria-label="시나리오 요약" data-mobile-expanded="false">
+        <div class="scenario-verdict">
+          <div><span class="verdict-label" data-i18n="workspace.currentVerdict">현재 판정</span><h1 id="topology-heading" tabindex="-1">계산 중</h1><p class="headline-detail" id="headline-detail">한계값을 읽는 중입니다.</p></div>
+          <div class="run-state" aria-live="polite"><span class="status-chip" id="capacity-state"><i aria-hidden="true"></i><span>용량 계산 중</span></span><span class="status-chip" id="evidence-state"><i aria-hidden="true"></i><span>근거 확인 중</span></span></div>
+          <p class="mobile-risk" id="mobile-risk"></p>
+          <div class="scenario-change" id="scenario-change" hidden><span id="scenario-change-text"></span><details id="scenario-change-details"><summary data-i18n="mobileWorkspace.changeDetails">병목과 근거 변화</summary><span id="scenario-change-detail"></span></details><a href="#comparison-heading" data-i18n="mobileWorkspace.compareDetails">비교 상세</a></div>
+          <button type="button" id="mobile-summary-toggle" class="mobile-summary-toggle" aria-expanded="false" aria-controls="summary-capacity summary-delivery summary-survival" data-i18n="mobileWorkspace.moreSummary">요약 펼치기</button>
+        </div>
+        <div class="summary-group summary-capacity" id="summary-capacity">
+          <span class="summary-group-label" data-i18n="workspace.knownCapacity">알려진 용량</span>
+          <div class="summary-stats"><span><small data-i18n="workspace.firstLimit">첫 한계</small><strong id="summary-growth">···</strong></span><span><small>headroom</small><strong id="summary-headroom">···</strong></span><span><small>과부하</small><strong id="summary-overloaded">···</strong></span></div>
           <p><span id="summary-growth-binding">계산 중</span><span id="summary-warning">계산 중</span></p>
         </div>
-        <div class="summary-group summary-delivery">
-          <span class="summary-group-label">전달</span>
+        <div class="summary-group summary-delivery" id="summary-delivery">
+          <span class="summary-group-label" data-i18n="workspace.currentDelivery">현재 전달</span>
           <div class="summary-stats"><span><small>무경로</small><strong id="summary-unreachable">···</strong></span><span><small>용량 드롭</small><strong id="summary-dropped-load">···</strong></span></div>
           <p id="summary-unreachable-load">계산 중</p>
         </div>
         <button class="summary-group summary-resilience" id="summary-survival" type="button" data-summary-failure>
-          <span class="summary-group-label">복원력</span><span class="summary-fault-row"><small id="summary-fault-label">생존성</small><strong id="summary-faults">···</strong></span><p id="summary-delta">기준선 계산 중</p>
+          <span class="summary-group-label" data-i18n="workspace.failureAnalysis">장애 분석</span><span class="summary-fault-row"><small id="summary-fault-label">생존성</small><strong id="summary-faults">···</strong></span><p id="summary-delta">기준선 계산 중</p>
         </button>
       </section>
       <button class="baseline-reset" id="baseline-reset" type="button" hidden>기준 상태로 돌아가기</button>
@@ -173,10 +211,14 @@
       <section class="mobile-fault-tray" aria-label="빠른 장애 주입">
         <div><span class="section-code">QUICK FAILURE</span><strong>설계를 보며 장애 주입</strong></div>
         <button type="button" data-quick-failure aria-pressed="false"><span>UP</span></button>
-        <a href="#failure-heading">전체 목록</a>
+        <a href="#failure-heading" aria-haspopup="dialog" aria-expanded="false" aria-controls="design-board">전체 목록</a>
       </section>
 
-      <section class="main-grid">
+      <section class="main-grid" data-workspace-panel="inspector">
+        <div class="workspace-panel-switch" id="workspace-panel-switch" role="group" data-i18n-aria-label="workspace.panelLabel" aria-label="작업 패널">
+          <button type="button" data-workspace-panel="inspector" aria-pressed="true" aria-controls="inspector-panel" data-i18n="workspace.inspector">장비 상세</button>
+          <button type="button" data-workspace-panel="tools" aria-pressed="false" aria-controls="design-board" data-i18n="workspace.tools">설계 도구</button>
+        </div>
         <aside class="failure-panel" id="design-board" aria-labelledby="failure-heading">
           <header class="panel-heading" role="group">
             <div>
@@ -185,6 +227,7 @@
             </div>
             <span class="count-badge" id="failure-count">주입한 장애 0</span>
             <button type="button" class="panel-collapse-button panel-collapse-left" id="toggle-left-panel" aria-pressed="false" aria-controls="design-board" aria-label="설계 도구 접기"><span aria-hidden="true"></span></button>
+            <button type="button" class="failure-close-mobile" id="failure-close-mobile" data-i18n="guide.close">닫기</button>
           </header>
           <div class="panel-tabs" role="tablist" aria-label="설계 도구">
             <button type="button" role="tab" id="tab-palette" data-panel-tab="palette" aria-controls="panel-palette" aria-selected="true">컴포넌트</button>
@@ -203,15 +246,9 @@
 
         <section class="topology-panel" aria-labelledby="topology-heading">
           <header class="panel-heading topology-heading" role="group">
-            <div>
-              <h1 id="topology-heading">계산 중</h1>
-              <p class="headline-detail" id="headline-detail">한계값을 읽는 중입니다.</p>
-              <div class="run-state" aria-live="polite">
-                <span class="status-chip" id="capacity-state"><i aria-hidden="true"></i><span>용량 계산 중</span></span>
-                <span class="status-chip" id="evidence-state"><i aria-hidden="true"></i><span>근거 확인 중</span></span>
-              </div>
-            </div>
+            <h2 data-i18n="navigation.topology">토폴로지</h2>
             <div class="topology-controls">
+              <button class="workspace-panel-toggle" id="workspace-panel-toggle" type="button" aria-expanded="true" aria-controls="workspace-panel-switch" data-i18n="workspace.hidePanel">패널 접기</button>
               <details class="editor-menu"><summary>편집</summary><div class="editor-tools" role="toolbar" aria-label="설계 편집">
                 <button type="button" data-editor-action="undo" disabled>실행 취소</button><button type="button" data-editor-action="redo" disabled>다시 실행</button>
                 <button type="button" data-editor-action="group">그룹</button><button type="button" data-editor-action="ungroup">그룹 해제</button><button type="button" data-editor-action="align-left">왼쪽 정렬</button><button type="button" data-editor-action="distribute-x">가로 분배</button><button type="button" data-editor-action="map-device">장비로 지정</button>
@@ -227,10 +264,14 @@
                 <button type="button" data-topology-view="classic">기본</button><button type="button" data-topology-view="voxel">Voxel</button><button type="button" data-topology-view="spatial">3D</button>
               </div></div>
               <div class="topology-live-status"><span><i></i> DETERMINISTIC MODEL</span><div class="path-readout" id="path-readout">2 DEMANDS · 4 ACTIVE PATHS</div></div>
-              <button type="button" class="mobile-inspector-open" id="mobile-inspector-open">선택 장비 검사</button>
+              <button type="button" class="mobile-inspector-open" id="mobile-inspector-open" aria-haspopup="dialog" aria-expanded="false" aria-controls="inspector-panel">선택 장비 검사</button>
               <details class="view-settings"><summary>보기</summary><div class="layout-control" id="class-control" aria-label="클래스 배지 표시"></div></details>
             </div>
           </header>
+          <section class="fault-handoff" id="fault-handoff" aria-labelledby="fault-handoff-title" hidden>
+            <div aria-live="polite"><strong id="fault-handoff-title"></strong><p id="fault-handoff-impact"></p></div>
+            <div class="fault-handoff-actions"><button type="button" id="fault-handoff-open" aria-controls="design-board" data-i18n="handoff.openFault">장애 항목 보기</button><button type="button" id="fault-handoff-dismiss" data-i18n="handoff.dismiss">설명 닫기</button></div>
+          </section>
           <div class="topology-scroll">
             <div class="mobile-pan-cue" aria-hidden="true"><span>←</span> 좌우로 탐색 <span>→</span></div>
             <div class="spatial-view-tools" id="spatial-view-tools" hidden>
@@ -249,7 +290,7 @@
             </div>
           </div>
           <footer class="canvas-footer">
-            <div><p class="bottleneck-note" id="bottleneck-note" aria-live="polite">계산 중</p><div class="learning-panel" id="learning-panel" hidden></div></div>
+            <div><div class="learning-panel" id="learning-panel" hidden></div><details class="result-explanation"><summary data-i18n="workspace.resultDetails">판정 근거 보기</summary><p class="bottleneck-note" id="bottleneck-note" aria-live="polite">계산 중</p></details></div>
             <span id="calculation-note">계산 중</span>
           </footer>
         </section>

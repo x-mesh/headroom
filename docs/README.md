@@ -24,6 +24,7 @@ Rack Mesh 설계 문서 모음. 기준 PRD는 이 폴더의 `infra-simulator-prd
 | `measured-import-prd.md` | 기능 PRD | 실측 한계값과 실측 부하의 파일 임포트 |
 | `fault-sweep-surfacing-prd.md` | IA PRD | 장애 스윕 결과의 노출 위치와 첫 화면 경험 |
 | `verdict-delivery-prd.md` | 개선 PRD | 계산된 판정이 첫 화면까지 도달하는 경로. 기본 시나리오 검증 객체, 요약의 도메인 흡수, 표시명·식별자 정합, 문구 위생 |
+| `first-experience-usability-test.ko.md` | 검토 진행안 | 첫 방문부터 장애 결과·구성도·복구까지 관찰하는 절차와 세션 기록표 |
 
 ## 결정 소유권
 

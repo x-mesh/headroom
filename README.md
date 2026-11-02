@@ -15,6 +15,7 @@ You can export a project file, a diagram, and human-readable reports.
 
 Headroom keeps calculations local to the browser.
 It uses synthetic demonstration data unless you import your own project or evidence.
+On a first visit, you can try a shared-power failure or start your own design; an existing working copy opens directly.
 
 ## Limits
 

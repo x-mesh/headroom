@@ -1,4 +1,4 @@
-import { formatNumber as formatLocaleNumber, initializeI18n, localizeError, localizedBundledLabel, localizedTemplate, localizeRenderedDocument, selectLocale, t } from './i18n.js';
+import { formatNumber as formatLocaleNumber, initializeI18n, localizeError, localizedAxis, localizedBundledLabel, localizedTemplate, localizeRenderedDocument, selectLocale, t } from './i18n.js';
 import { axisCatalog, behaviorCatalog, cloneTopology, failureDomainKinds } from './data.js';
 import { calculateScenario, calculateSurvivalMultiplier, compareScenarios, createExport, createFailureDomainSweepTask, createSingleFaultSweepTask, createSurvivalMultiplierTask, ENGINE_VERSION, rackUsage, sweepFailureDomains, sweepSingleFaults } from './engine.js';
 import { acceptEvidence, addDemand, addDevice, addLink, applySpec, applySpecToKind, clearEvidenceAcceptance, moveDevice, normalizeId, promoteConnector, removeDemand, removeDevice, removeLink, setDevicePower, setLimitOverride, setWorkloadConditions, updateDemand, updateDevice, updateLink } from './editor.js';
@@ -21,6 +21,8 @@ import { addMappedPlacement, addStandalonePlacement, copyRack, copyRackPlacement
 
 let topology = cloneTopology();
 const state = { scale: 1, selectedId: 'fw-a', selection: [{ type: 'device', id: 'fw-a' }], disabledDevices: new Set(), disabledLinks: new Set(), disabledDomains: new Set(), namedScenarios: [], editorMode: 'select', connectSource: null, leftPanel: 'palette', zoom: 1, viewMode: 'edit', workspace: 'topology', leftPanelCollapsed: false, rightPanelCollapsed: false };
+let firstFaultContext = null;
+let firstFaultAutoZoom = null;
 const FAILURE_DOMAIN_KIND_LABEL = Object.freeze({ power: '전원', space: '공간', path: '경로', firmware: '펌웨어', site: '사이트', other: '기타' });
 let panelSelectionExplicit = false;
 let comparisonDemandId = null;
@@ -368,6 +370,10 @@ function renderHeadline(binding) {
     say('아직 판정을 시작할 수 없습니다', 'unknown', '서비스 수요 또는 검증 대상이 없습니다.');
     return;
   }
+  if (summary.unreachableCount > 0 && !binding) {
+    say(t('dynamic.unreachable'), 'danger', t('dynamic.unreachableSentence', { value: formatCompact(summary.unreachableLoadBps, 'bps'), count: summary.unreachableCount }));
+    return;
+  }
   if (!binding) {
     say('한계를 아는 축이 없습니다', 'unknown', '장비를 눌러 한계값을 넣으면 어디가 먼저 차는지 계산합니다.');
     return;
@@ -379,12 +385,18 @@ function renderHeadline(binding) {
   const direction = binding.bindingDirection ? `${binding.bindingDirection === 'forward' ? '정방향 ' : '역방향 '}` : '';
   const rung = summary.growthLadder?.rungs?.[0];
 
-  const lead = summary.overloadedCount > 0 ? '지금 부하에서 이미 용량을 넘었습니다'
+  const lead = summary.unreachableCount > 0 ? t('dynamic.unreachable')
+    : summary.overloadedCount > 0 ? '지금 부하에서 이미 용량을 넘었습니다'
+    : summary.evaluationStatus === 'unknown' ? t('report.passPending')
     : summary.growthLadder?.indeterminate ? '몇 배까지 버티는지 계산할 수 없습니다'
       : rung ? `지금 부하의 ${rung.breachScale.toFixed(2)}배까지 버팁니다`
         : '한계를 아는 축에서는 더 막히는 지점이 없습니다';
   heading.textContent = lead;
-  heading.dataset.tone = axis.status === 'overloaded' ? 'danger' : axis.status === 'warning' ? 'amber' : 'signal-deep';
+  heading.dataset.tone = summary.unreachableCount > 0 || axis.status === 'overloaded' ? 'danger' : axis.status === 'warning' ? 'amber' : 'signal-deep';
+  if (summary.unreachableCount > 0 && axis.utilization === 0) {
+    detail.textContent = t('dynamic.unreachableSentence', { value: formatCompact(summary.unreachableLoadBps, 'bps'), count: summary.unreachableCount });
+    return;
+  }
 
   // 아래 줄은 캔버스에서 강조된 그 자원을 가리킨다. 다음에 넘는 자원이 따로면 이름을 덧붙인다.
   const suffix = AXIS_UNIT_SUFFIX[catalog.unit] || '';
@@ -559,6 +571,28 @@ function renderLearningPanel() {
     ${experiment ? `<div><span>${escapeText(experiment.prompt)}</span><br><button type="button"${lessonCue && experiment.action.id === lessonCue ? ' class="lesson-cue"' : ''} data-lesson-action="${escapeAttribute(experiment.action.type)}" data-lesson-id="${escapeAttribute(experiment.action.id || '')}" data-lesson-value="${escapeAttribute(experiment.action.value ?? '')}">${escapeText(experiment.action.label)}</button><output${lessonRevealed ? '' : ' hidden'}>${escapeText(experiment.observe)}</output></div>` : ''}`;
 }
 
+function renderFirstFaultContext() {
+  const panel = element('fault-handoff');
+  const domain = firstFaultContext && topology.failureDomains?.find(({ id }) => id === firstFaultContext);
+  if (firstFaultAutoZoom && !state.disabledDomains.has(firstFaultAutoZoom.domainId)) {
+    const zoom = firstFaultAutoZoom;
+    const stillPresent = topology.failureDomains?.some(({ id }) => id === zoom.domainId);
+    firstFaultAutoZoom = null;
+    if (stillPresent) requestAnimationFrame(() => {
+      if (Math.abs(state.zoom - zoom.applied) < 1e-6) { setZoom(zoom.previous); centerOnContent(); }
+    });
+  }
+  if (!domain || !state.disabledDomains.has(domain.id)) {
+    panel.hidden = true;
+    firstFaultContext = null;
+    return;
+  }
+  const devices = (domain.deviceIds || []).map((id) => current.devices.find((device) => device.id === id)).filter((device) => device && !device.active);
+  element('fault-handoff-title').textContent = t('handoff.title', { domain: resourceName(domain) });
+  element('fault-handoff-impact').textContent = t('handoff.impact', { devices: devices.map(resourceName).join(' · ') || t('common.none'), count: formatLocaleNumber(current.summary.unreachableCount) });
+  panel.hidden = false;
+}
+
 // 헤더는 지금 열려 있는 설계를 말해야 한다. 시작 복원과 undo/redo 는 loadTopology 를 거치지
 // 않으므로 불러오기가 아니라 렌더에서 갱신한다.
 function renderScenarioCopy() {
@@ -572,6 +606,7 @@ function renderScenarioCopy() {
 }
 
 function render() {
+  if (topology.template?.id !== 'demo') element('first-visit').hidden = true;
   renderScenarioCopy();
   renderSummary();
   renderFailures();
@@ -583,6 +618,7 @@ function render() {
   renderClassControl();
   applyTopologyView();
   renderLearningPanel();
+  renderFirstFaultContext();
   syncLiveNumbers();
   syncSpatialScene();
   if (state.workspace === 'rack') renderRackWorkspace();
@@ -1070,21 +1106,23 @@ function renderSummary() {
   const { summary } = current;
   const binding = resourceById(summary.bindingResourceId);
   const comparison = compareScenarios(baseline, current);
+  const allDemandsUnreachable = current.demands.length > 0 && summary.unreachableCount === current.demands.length;
   element('summary-headroom').dataset.baseValue = String(summary.minHeadroom ?? '');
-  element('summary-headroom').textContent = formatPercent(summary.minHeadroom);
+  element('summary-headroom').textContent = allDemandsUnreachable ? t('dynamic.unreachable') : formatPercent(summary.minHeadroom);
   element('summary-overloaded').textContent = String(summary.overloadedCount);
   element('summary-warning').textContent = t('ui.warningResources', { count: summary.warningCount });
   element('summary-unreachable').textContent = String(summary.unreachableCount);
   element('summary-unreachable-load').textContent = `${formatCompact(summary.unreachableLoadBps, 'bps')} ${t('ui.unreachable')}`;
   element('summary-dropped-load').textContent = formatCompact(summary.droppedLoadBps, 'bps');
   const growthRung = summary.growthLadder?.rungs?.[0];
-  const growth = summary.overloadedCount > 0 ? t('status.overloaded')
+  const growth = allDemandsUnreachable ? '—' : summary.overloadedCount > 0 ? t('status.overloaded')
     : summary.growthLadder?.indeterminate ? t('common.unknown')
       : growthRung ? `${growthRung.breachScale.toFixed(2)}×` : '—';
-  const growthBinding = summary.overloadedCount > 0 ? t('dynamic.overloadedNow')
+  const growthBinding = allDemandsUnreachable ? t('dynamic.unreachable') : summary.overloadedCount > 0 ? t('dynamic.overloadedNow')
     : summary.growthLadder?.indeterminate ? t('common.unknown')
       : growthRung ? `${t('ui.warningResources', { count: 1 })} · ${resourceName(resourceById(growthRung.resourceId)) || growthRung.resourceId} · ${axisCatalog[growthRung.axis]?.shortLabel || growthRung.axis}` : t('dynamic.noMoreLimit');
   element('summary-growth').textContent = growth;
+  element('summary-growth').dataset.tone = allDemandsUnreachable ? 'unknown' : '';
   element('summary-growth-binding').textContent = growthBinding;
   const survivalText = analysisProgress ? t('dynamic.calculating', analysisProgress) : survival.multiplier == null ? t('common.unknown') : survival.multiplier === 0 ? t('status.unavailable') : `${survival.multiplier < 0.005 ? survival.multiplier.toPrecision(2) : survival.multiplier.toFixed(2)}×${survival.bounded ? ' ' + t('dynamic.lowerBound') : ''}`;
   const failedService = survival.services?.find(({ status }) => status === 'fail');
@@ -1097,7 +1135,7 @@ function renderSummary() {
     ? `${stateLabel(survival.status)} · ${t('dynamic.survival', { multiplier: survivalText, name: resourceName(resourceById(survival.worstFault.id)) || survival.worstFault.id })}`
     : t('dynamic.noFaultCandidates');
   // 다음 병목은 상단 판정 문장이 이미 말하므로 여기서 또 반복하지 않는다. 그쪽이 비면만 대신 적는다.
-  element('summary-growth-binding').textContent = [serviceLabel, survivalLabel].filter(Boolean).join(' · ') || growthBinding;
+  element('summary-growth-binding').textContent = growthBinding;
   const singlePoints = sweep.resources.filter(({ verdict, endpoint }) => verdict === 'severs' && !endpoint);
   const severedDomains = domainSweep.singles.filter(({ verdict }) => verdict === 'severs');
   const invalidDomains = domainSweep.redundancyInvalid || [];
@@ -1120,10 +1158,35 @@ function renderSummary() {
   } else {
     element('summary-fault-label').textContent = t('dynamic.singleFault');
     element('summary-faults').textContent = singlePoints.length && severedDomains.length ? `${singlePoints.length} + ${t('dynamic.domainFaults', { count: severedDomains.length })}` : singlePoints.length ? String(singlePoints.length) : t('dynamic.domainFaults', { count: severedDomains.length });
-    element('summary-delta').textContent = representativeDomain
+    const domainDetail = representativeDomain
       ? `${resourceName(representativeDomain)}${invalidDomains.some(({ id }) => id === representativeDomain.id) ? ' · 이중화 무효' : ''}`
       : singlePoints.length ? `${resourceName(resourceById(singlePoints[0].id)) || singlePoints[0].id}` : t('dynamic.noSingleFault');
+    element('summary-delta').textContent = [serviceLabel, survivalLabel, domainDetail].filter(Boolean).join(' · ');
     survivalTile.setAttribute('aria-label', `${t('dynamic.singleFault')} ${t('common.items', { count: formatLocaleNumber(singlePoints.length) })}${severedDomains.length ? `. ${t('dynamic.domainFaults', { count: severedDomains.length })}` : ''}.`);
+  }
+  element('mobile-risk').textContent = `${element('summary-fault-label').textContent}: ${element('summary-faults').textContent}`;
+  const change = element('scenario-change');
+  change.hidden = !summary.activeFaults;
+  if (summary.activeFaults) {
+    const designChanged = JSON.stringify(baselineSnapshot.topology) !== JSON.stringify(topology);
+    const bindingName = (result) => {
+      const id = result.summary.bindingResourceId;
+      const resource = [...result.devices, ...result.links].find((item) => item.id === id);
+      const axis = result.summary.bindingAxis;
+      return resource ? [resourceName(resource), axis ? localizedAxis(axis, 'shortLabel', axisCatalog[axis]?.shortLabel || axis) : ''].filter(Boolean).join(' · ') : t('common.unknown');
+    };
+    element('scenario-change-text').textContent = designChanged ? t('mobileWorkspace.changedDesign') : t('mobileWorkspace.change', {
+      beforeLoad: formatCompact(baseline.summary.unreachableLoadBps, 'bps'), afterLoad: formatCompact(summary.unreachableLoadBps, 'bps'),
+      beforeDrop: formatCompact(baseline.summary.droppedLoadBps, 'bps'), afterDrop: formatCompact(summary.droppedLoadBps, 'bps'),
+      beforeCount: baseline.summary.unreachableCount, afterCount: summary.unreachableCount,
+    });
+    element('scenario-change-details').hidden = designChanged;
+    element('scenario-change-detail').textContent = designChanged ? '' : t('mobileWorkspace.changeDetail', {
+      before: baseline.summary.unreachableCount ? t('mobileWorkspace.pathCut') : formatPercent(baseline.summary.minHeadroom),
+      after: summary.unreachableCount ? t('mobileWorkspace.pathCut') : formatPercent(summary.minHeadroom),
+      beforeUnknown: baseline.summary.unknownCount, afterUnknown: summary.unknownCount,
+      beforeBinding: bindingName(baseline), afterBinding: bindingName(current),
+    });
   }
   // 엔진은 0.8 을 넘으면 warning 으로 판정하고 그 수를 summary.warningCount 에 담는데,
   // 상단 상태가 그 값을 보지 않아 주의 자원이 있어도 'BASELINE STABLE' 이라고 말했다.
@@ -1134,14 +1197,14 @@ function renderSummary() {
     : summary.warningCount ? { text: t('ui.warningResources', { count: summary.warningCount }), tone: 'amber' }
     : summary.activeFaults ? { text: stateLabel('survives'), tone: 'amber' }
     : { text: stateLabel('healthy'), tone: 'signal' };
-  const evidence = summary.evaluationStatus === 'unknown' ? { text: `${t('dynamic.unknownLimit')} ${t('common.items', { count: formatLocaleNumber(summary.unknownCount || 0) })}`, tone: 'unknown' } : { text: t('status.healthy'), tone: 'signal' };
+  const evidence = summary.unknownCount > 0 ? { text: `${t('dynamic.unknownLimit')} ${t('common.items', { count: formatLocaleNumber(summary.unknownCount) })}`, tone: 'unknown' } : { text: t('status.healthy'), tone: 'signal' };
   const capacity = { text: runState.text, tone: runState.tone === 'amber' ? 'warning' : runState.tone };
   for (const [id, value] of [['evidence-state', evidence], ['capacity-state', capacity]]) {
     const chip = element(id); chip.querySelector('span').textContent = value.text; chip.dataset.tone = value.tone;
   }
   element('baseline-reset').hidden = !(summary.activeFaults || state.scale !== 1);
   // headroom 은 엔진이 쓰는 임계값과 같은 기준으로 칠한다. 13% 가 초록이면 숫자가 거짓말을 한다.
-  element('summary-headroom').dataset.tone = summary.minHeadroom == null ? 'unknown'
+  element('summary-headroom').dataset.tone = allDemandsUnreachable || summary.minHeadroom == null ? 'unknown'
     : summary.minHeadroom <= 0 ? 'danger' : summary.minHeadroom < 0.2 ? 'amber' : 'signal-deep';
   element('scale-output').textContent = `${state.scale.toFixed(2)}×`;
   // 슬라이더는 50~180 을 가진다. 그 숫자만 읽으면 몇 배인지 알 수 없다.
@@ -1425,7 +1488,7 @@ try {
   if (DETAIL_LEVELS.has(saved)) detailView.level = saved;
 } catch { /* 저장된 선택이 없으면 기본값을 쓴다 */ }
 
-const motionView = { drift: 'on' };
+const motionView = { drift: 'off' };
 try {
   const saved = localStorage.getItem('rack-mesh-number-motion');
   if (saved === 'on' || saved === 'off') motionView.drift = saved;
@@ -1668,6 +1731,7 @@ function renderPalette() {
 
 function setLeftPanel(name, { explicit = false } = {}) {
   if (explicit) panelSelectionExplicit = true;
+  if (name === 'palette') setWorkspacePanel('tools');
   state.leftPanel = name;
   document.querySelectorAll('[data-panel-tab]').forEach((tab) => {
     const selected = tab.dataset.panelTab === name;
@@ -1677,6 +1741,53 @@ function setLeftPanel(name, { explicit = false } = {}) {
   });
   element('failure-count').hidden = name !== 'failure';
 }
+
+function setWorkspacePanel(name) {
+  const grid = document.querySelector('.main-grid');
+  grid.dataset.workspacePanel = name;
+  document.querySelectorAll('.workspace-panel-switch [data-workspace-panel]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.workspacePanel === name)));
+  if (window.matchMedia('(min-width: 1181px)').matches) {
+    setWorkspacePanelVisibility(true);
+    const side = name === 'tools' ? 'left' : 'right';
+    if (state[side === 'left' ? 'leftPanelCollapsed' : 'rightPanelCollapsed']) setWorkspacePanelCollapsed(side, false);
+  }
+  if (name === 'tools') requestAnimationFrame(queueVirtualFailureRows);
+}
+
+function setWorkspacePanelVisibility(visible) {
+  document.querySelector('.main-grid').classList.toggle('workspace-panel-hidden', !visible);
+  const button = element('workspace-panel-toggle');
+  button.setAttribute('aria-expanded', String(visible));
+  button.dataset.i18n = visible ? 'workspace.hidePanel' : 'workspace.showPanel';
+  button.textContent = t(button.dataset.i18n);
+}
+
+element('workspace-panel-toggle').addEventListener('click', () => {
+  setWorkspacePanelVisibility(element('workspace-panel-toggle').getAttribute('aria-expanded') !== 'true');
+});
+
+document.querySelector('.workspace-panel-switch').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-workspace-panel]');
+  if (button) setWorkspacePanel(button.dataset.workspacePanel);
+});
+element('fault-handoff-dismiss').addEventListener('click', () => {
+  firstFaultContext = null;
+  element('fault-handoff').hidden = true;
+  element('topology-heading').focus({ preventScroll: true });
+});
+element('fault-handoff-open').addEventListener('click', () => {
+  const id = firstFaultContext;
+  if (!id) return;
+  setWorkspacePanel('tools');
+  setLeftPanel('failure', { explicit: true });
+  if (mobileLayout.matches) openMobileFailure();
+  requestAnimationFrame(() => {
+    const row = document.querySelector(`[data-failure-type="domain"][data-failure-id="${CSS.escape(id)}"]`);
+    if (!row) { showToast(t('handoff.filtered')); return; }
+    row.scrollIntoView({ block: 'center', behavior: reducedMotion.matches ? 'auto' : 'smooth' });
+    row.focus({ preventScroll: true });
+  });
+});
 
 function setWorkspacePanelCollapsed(side, collapsed) {
   const isLeft = side === 'left';
@@ -1879,6 +1990,22 @@ function centerOnContent() {
   const centerY = STAGE_PAD + (box.y - viewport.minY + box.height / 2) * state.zoom;
   scroll.scrollLeft = Math.max(0, centerX - scroll.clientWidth / 2);
   scroll.scrollTop = Math.max(0, centerY - scroll.clientHeight / 2);
+}
+
+function focusFaultMembers(ids) {
+  const devices = ids.map((id) => current.devices.find((device) => device.id === id)).filter(Boolean);
+  if (!devices.length) { centerOnContent(); return; }
+  const scroll = document.querySelector('.topology-scroll');
+  const xs = devices.map((device) => device.position.x);
+  const ys = devices.map((device) => device.position.y);
+  const x = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const y = (Math.min(...ys) + Math.max(...ys) - NODE_REACH.top + NODE_REACH.bottom) / 2;
+  const width = Math.max(...xs) - Math.min(...xs) + NODE_REACH.left + NODE_REACH.right;
+  const height = Math.max(...ys) - Math.min(...ys) + NODE_REACH.top + NODE_REACH.bottom;
+  const fit = Math.min((scroll.clientWidth - 32) / width, (scroll.clientHeight - 32) / height, state.zoom);
+  if (fit > 0 && fit < state.zoom) setZoom(fit);
+  scroll.scrollLeft = Math.max(0, STAGE_PAD + (x - viewport.minX) * state.zoom - scroll.clientWidth / 2);
+  scroll.scrollTop = Math.max(0, STAGE_PAD + (y - viewport.minY) * state.zoom - scroll.clientHeight / 2);
 }
 
 /**
@@ -2202,6 +2329,12 @@ function renderTopology() {
   element('drawio-import-layer').innerHTML = hasDrawioImport ? importedElements : '';
 }
 
+let inspectorEditState = { id: null, open: false };
+element('inspector-content').addEventListener('toggle', (event) => {
+  const details = event.target;
+  if (details.matches('.inspector-edit') && details.isConnected) inspectorEditState = { id: details.dataset.resourceId, open: details.open };
+}, true);
+
 function renderInspector() {
   const selectedGroupId = state.selection.length === 1 && state.selection[0].type === 'group' ? state.selection[0].id : null;
   const selectedGroup = selectedGroupId ? topology.diagram?.groups?.find(({ id }) => id === selectedGroupId) : null;
@@ -2243,16 +2376,22 @@ function renderInspector() {
   element('resource-state').textContent = resource.active ? stateLabel(resource.primaryStatus) : '비활성';
   element('resource-state').style.color = `var(--${resource.active ? ({ overloaded: 'danger', warning: 'amber', invalid: 'danger', unknown: 'unknown', healthy: 'cyan' })[resource.primaryStatus] || 'unknown' : 'danger'})`;
   const binding = resource.axes[resource.bindingAxis];
+  const previousEdit = element('inspector-content').querySelector('.inspector-edit');
+  const editing = previousEdit?.dataset.resourceId === resource.id ? previousEdit.open : inspectorEditState.id === resource.id && inspectorEditState.open;
+  inspectorEditState = { id: resource.id, open: editing };
   element('inspector-content').innerHTML = `
     <div class="resource-identity"><strong>${escapeText(resourceName(resource))}</strong><span>${escapeText(isDevice ? [[resource.vendor, resource.model].filter(Boolean).join(' '), resource.kind.toUpperCase(), resource.zone].filter(Boolean).join(' · ') : `링크 · ${formatCompact(resource.capacity?.forwarding_bps, 'bps')} 방향별`)}</span></div>
     <div class="binding-callout"><span>BINDING AXIS</span><strong><span>${axisCatalog[resource.bindingAxis]?.label || resource.bindingAxis || '알려진 축 없음'}</span><span data-live-util="${binding?.utilization ?? ''}" data-live-seed="${resource.id}-binding">${binding ? formatPercent(binding.utilization) : '—'}</span></strong></div>
     ${isDevice ? renderIdleNote(resource) : ''}
     <div class="axis-list">${Object.entries(resource.axes).map(([axis, result]) => renderAxis(axis, result, resource.id, resource)).join('')}</div>
     ${isDevice ? '' : renderLinkDirections(resource)}
-    ${isDevice ? renderBehavior(resource) : ''}
-    ${isDevice ? renderSpecBlock(resource) : ''}
     ${renderSourceNote(source, isDevice ? resource : null)}
-    ${isDevice ? renderDeviceEditor(resource) : renderLinkEditor(resource)}`;
+    <details class="inspector-edit" data-resource-id="${escapeAttribute(resource.id)}"${editing ? ' open' : ''}>
+      <summary>${escapeText(t(isDevice ? 'workspace.editDevice' : 'workspace.editLink'))}</summary>
+      ${isDevice ? renderBehavior(resource) : ''}
+      ${isDevice ? renderSpecBlock(resource) : ''}
+      ${isDevice ? renderDeviceEditor(resource) : renderLinkEditor(resource)}
+    </details>`;
 }
 
 function setInspectorHeading(code, title) {
@@ -3044,6 +3183,7 @@ const TOUR_STEPS = [
       if (!spread) return;
       state.selectedId = spread.device.id;
       state.selection = [{ type: 'device', id: spread.device.id }];
+      setWorkspacePanel('inspector');
       openMobileInspector();
     },
   },
@@ -3058,7 +3198,7 @@ const TOUR_STEPS = [
         : fault.verdict === 'overloads' ? '남은 쪽이 한계를 넘습니다' : '남은 쪽이 받아냅니다';
       return `${tail} ${withParticle(name, 'object')} 끄면 ${verdict}`;
     },
-    run: ({ fault }) => { setLeftPanel('failure'); if (fault) state.disabledDevices.add(fault.id); },
+    run: ({ fault }) => { setWorkspacePanel('tools'); setLeftPanel('failure'); openMobileFailure(); if (fault) state.disabledDevices.add(fault.id); },
   },
   {
     title: '장비 바꾸기',
@@ -3139,7 +3279,7 @@ function startTour() {
   tour = {
     index: 0,
     restore: { scale: state.scale, devices: [...state.disabledDevices], links: [...state.disabledLinks],
-      selectedId: state.selectedId, leftPanel: state.leftPanel,
+      selectedId: state.selectedId, leftPanel: state.leftPanel, workspacePanel: document.querySelector('.main-grid').dataset.workspacePanel, workspacePanelHidden: document.querySelector('.main-grid').classList.contains('workspace-panel-hidden'),
       scrollLeft: document.querySelector('.topology-scroll').scrollLeft, scrollTop: document.querySelector('.topology-scroll').scrollTop },
   };
   runTourStep(0);
@@ -3227,7 +3367,10 @@ function endTour() {
   state.selectedId = restore.selectedId;
   state.selection = restore.selectedId ? [{ type: 'device', id: restore.selectedId }] : [];
   closeMobileInspector();
+  closeMobileFailure();
   setLeftPanel(restore.leftPanel);
+  setWorkspacePanel(restore.workspacePanel || 'inspector');
+  if (restore.workspacePanelHidden) setWorkspacePanelVisibility(false);
   element('tour-spot').hidden = true;
   element('tour').hidden = true; element('tour').innerHTML = ''; delete element('tour').dataset.intro;
   recalculate();
@@ -3241,6 +3384,8 @@ function runTourStep(index) {
   if (index < 0 || index >= TOUR_STEPS.length) { endTour(); return; }
   tour.index = index;
   const step = TOUR_STEPS[index];
+  closeMobileInspector();
+  closeMobileFailure();
   // 단계마다 시나리오 상태를 시작 시점으로 되돌린 뒤 그 단계가 할 일만 한다. 그래야 '이전'으로
   // 오갔을 때 앞 단계가 남긴 장애나 배율이 쌓이지 않는다. 마지막 단계는 되돌린 화면 그대로다.
   state.scale = tour.restore.scale; element('scale-input').value = String(Math.round(tour.restore.scale * 100));
@@ -3943,7 +4088,7 @@ function handleEditorAction(action) {
   }
   if (action === 'new') openTemplatePicker();
   if (action === 'new-blank') applyTemplate('blank');
-  if (action.startsWith('shape-')) createShapeAtVisibleCanvasCenter(action.slice(6));
+  if (action.startsWith('shape-')) { createShapeAtVisibleCanvasCenter(action.slice(6)); setWorkspacePanel('inspector'); }
   if (action === 'group' && state.selection.length > 1) {
     topology = groupSelection(topology, state.selection, '설계 그룹');
     const group = topology.diagram.groups.at(-1);
@@ -4306,6 +4451,7 @@ function selectElement(type, id, additive = false) {
     state.selection = exists ? state.selection.filter((item) => item.type !== type || item.id !== id) : [...state.selection, entry];
   } else state.selection = [entry];
   if (type === 'device' || type === 'link') state.selectedId = id;
+  if (!additive && window.matchMedia('(min-width: 1181px)').matches) setWorkspacePanel('inspector');
   renderEditorMode();
 }
 
@@ -4354,11 +4500,64 @@ function handleNodeSelection(id, additive = false) {
     return;
   }
   selectElement('device', id, additive); renderTopology(); renderInspector();
+  if (!additive) openMobileInspector();
 }
 
-function openMobileInspector() { if (mobileLayout.matches) element('inspector-panel').classList.add('mobile-open'); }
-function closeMobileInspector() { element('inspector-panel').classList.remove('mobile-open'); }
-element('inspector-close-mobile').addEventListener('click', closeMobileInspector);
+function openMobileInspector() {
+  if (!mobileLayout.matches) return;
+  closeMobileFailure();
+  const panel = element('inspector-panel');
+  panel.classList.add('mobile-open');
+  panel.setAttribute('role', 'dialog');
+  element('mobile-inspector-open').setAttribute('aria-expanded', 'true');
+  element('inspector-close-mobile').focus({ preventScroll: true });
+}
+function closeMobileInspector() {
+  element('inspector-panel').classList.remove('mobile-open');
+  element('inspector-panel').removeAttribute('role');
+  element('mobile-inspector-open').setAttribute('aria-expanded', 'false');
+}
+function openMobileFailure() {
+  if (!mobileLayout.matches) return;
+  closeMobileInspector();
+  const panel = element('design-board');
+  panel.classList.add('mobile-open');
+  panel.setAttribute('role', 'dialog');
+  document.querySelector('.mobile-fault-tray a').setAttribute('aria-expanded', 'true');
+  element('failure-close-mobile').focus();
+  requestAnimationFrame(queueVirtualFailureRows);
+}
+function closeMobileFailure(showResult = false) {
+  const panel = element('design-board');
+  if (!panel.classList.contains('mobile-open')) return;
+  panel.classList.remove('mobile-open');
+  panel.removeAttribute('role');
+  document.querySelector('.mobile-fault-tray a').setAttribute('aria-expanded', 'false');
+  if (showResult && mobileLayout.matches) {
+    element('topology-heading').scrollIntoView({ block: 'start', behavior: reducedMotion.matches ? 'auto' : 'smooth' });
+    element('mobile-summary-toggle').focus({ preventScroll: true });
+  }
+}
+element('failure-close-mobile').addEventListener('click', () => closeMobileFailure(true));
+mobileLayout.addEventListener('change', (event) => { if (!event.matches) { closeMobileFailure(); closeMobileInspector(); } });
+element('design-board').addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && element('design-board').classList.contains('mobile-open')) { event.stopPropagation(); closeMobileFailure(true); }
+});
+function setMobileSummaryExpanded(expanded) {
+  const button = element('mobile-summary-toggle');
+  button.setAttribute('aria-expanded', String(expanded));
+  document.querySelector('.summary-strip').dataset.mobileExpanded = String(expanded);
+  button.dataset.i18n = expanded ? 'mobileWorkspace.lessSummary' : 'mobileWorkspace.moreSummary';
+  button.textContent = t(button.dataset.i18n);
+}
+element('mobile-summary-toggle').addEventListener('click', (event) => setMobileSummaryExpanded(event.currentTarget.getAttribute('aria-expanded') !== 'true'));
+document.addEventListener('headroom:mobile-summary', (event) => setMobileSummaryExpanded(Boolean(event.detail?.expanded)));
+element('inspector-close-mobile').addEventListener('click', () => { closeMobileInspector(); element('mobile-inspector-open').focus({ preventScroll: true }); });
+element('inspector-panel').addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && element('inspector-panel').classList.contains('mobile-open')) {
+    event.stopPropagation(); closeMobileInspector(); element('mobile-inspector-open').focus({ preventScroll: true });
+  }
+});
 element('mobile-inspector-open').addEventListener('click', openMobileInspector);
 element('toggle-left-panel').addEventListener('click', () => setWorkspacePanelCollapsed('left', !state.leftPanelCollapsed));
 element('toggle-right-panel').addEventListener('click', () => setWorkspacePanelCollapsed('right', !state.rightPanelCollapsed));
@@ -4372,7 +4571,7 @@ element('failure-list').addEventListener('click', (event) => {
   const filter = event.target.closest('[data-failure-filter-verdict]');
   if (filter) { failureFilter.verdict = filter.dataset.failureFilterVerdict; renderFailures(); return; }
   const button = event.target.closest('[data-failure-id]');
-  if (button) toggleFailure(button.dataset.failureType, button.dataset.failureId);
+  if (button) { toggleFailure(button.dataset.failureType, button.dataset.failureId); closeMobileFailure(true); }
 });
 element('failure-list').addEventListener('input', (event) => {
   const input = event.target.closest('[data-failure-filter] input');
@@ -4421,7 +4620,7 @@ element('class-control').addEventListener('click', (event) => {
 });
 document.querySelector('.workspace-switch').addEventListener('click', (event) => {
   const button = event.target.closest('[data-workspace]');
-  if (button) setWorkspace(button.dataset.workspace);
+  if (button) { closeMobileFailure(); closeMobileInspector(); setWorkspace(button.dataset.workspace); }
 });
 element('rack-workspace').addEventListener('click', (event) => {
   const sidebarTab = event.target.closest('[data-rack-sidebar-tab]');
@@ -5854,6 +6053,7 @@ element('learning-panel').addEventListener('click', (event) => {
   const button = event.target.closest('[data-lesson-action]'); if (!button) return;
   lessonCue = null;
   if (['fault-device', 'fault-link', 'fault-domain', 'scale'].includes(button.dataset.lessonAction)) lessonRevealed = true;
+  if (['fault-device', 'fault-link', 'fault-domain'].includes(button.dataset.lessonAction)) setWorkspacePanel('tools');
   if (button.dataset.lessonAction === 'fault-device') { state.disabledDevices.add(button.dataset.lessonId); setLeftPanel('failure'); recalculate(); }
   if (button.dataset.lessonAction === 'scale') { state.scale = Number(button.dataset.lessonValue); element('scale-input').value = String(state.scale * 100); recalculate(); }
   if (button.dataset.lessonAction === 'workload') openWorkloadForm();
@@ -5870,10 +6070,18 @@ document.querySelector('.topology-panel').addEventListener('wheel', (event) => {
   const delta = event.deltaMode === 1 ? event.deltaY * WHEEL_LINE_HEIGHT : event.deltaY;
   setZoom(state.zoom * Math.exp(-delta * ZOOM_WHEEL_SENSITIVITY), { x: event.clientX - rect.left, y: event.clientY - rect.top });
 }, { passive: false });
-document.querySelector('a[href="#failure-heading"]').addEventListener('click', () => setLeftPanel('failure'));
+document.querySelector('a[href="#failure-heading"]').addEventListener('click', (event) => {
+  setLeftPanel('failure');
+  if (mobileLayout.matches) { event.preventDefault(); openMobileFailure(); }
+});
 element('summary-survival').addEventListener('click', () => {
+  setWorkspacePanel('tools');
   setLeftPanel('failure', { explicit: true });
-  requestAnimationFrame(() => element('failure-list').scrollIntoView({ block: 'nearest' }));
+  if (mobileLayout.matches) { openMobileFailure(); return; }
+  requestAnimationFrame(() => {
+    if (window.matchMedia('(min-width: 1181px)').matches) element('design-board').scrollTop = 0;
+    else element('failure-list').scrollIntoView({ block: 'nearest' });
+  });
 });
 document.querySelector('.failure-panel > .panel-tabs').addEventListener('click', (event) => {
   const tab = event.target.closest('[data-panel-tab]');
@@ -6008,10 +6216,82 @@ document.querySelector('.app-shell').dataset.workspace = state.workspace;
 renderRackWorkspace();
 centerOnContent();
 startTelemetry();
-let guideSeen = false;
-try { guideSeen = localStorage.getItem('rack-mesh-guide-seen') !== null; } catch { /* 저장소 접근이 막히면 자동 안내를 생략한다 */ }
-if (guideSeen) startTeaser();
-else if (!startColdOpen()) maybeStartTour();
+const firstVisit = element('first-visit');
+element('first-visit-language').value = document.documentElement.lang;
+element('first-visit-language').addEventListener('change', (event) => {
+  if (firstVisit.dataset.phase === 'result') { try { sessionStorage.setItem('headroom-first-result', '1'); } catch { } }
+  selectLocale(event.currentTarget.value);
+});
+function showFirstVisitResult(domain) {
+  const stopped = (domain.deviceIds || []).map((id) => current.devices.find((device) => device.id === id)).filter((device) => device && !device.active);
+  element('first-visit-result-title').textContent = t(current.summary.unreachableCount ? 'firstVisit.resultSevered' : 'firstVisit.resultOther');
+  element('first-visit-impact').textContent = t('firstVisit.resultImpact', { count: current.summary.unreachableCount, load: formatCompact(current.summary.unreachableLoadBps, 'bps') });
+  element('first-visit-cause').textContent = t('firstVisit.resultCause', { domain: resourceName(domain), devices: stopped.map(resourceName).join(' · ') });
+  element('first-visit-evidence').textContent = current.summary.unknownCount ? t('firstVisit.resultEvidence', { count: current.summary.unknownCount }) : t('firstVisit.resultKnown');
+  firstVisit.querySelector('.first-visit-copy').hidden = true;
+  element('first-visit-result').hidden = false;
+  firstVisit.dataset.phase = 'result';
+  firstVisit.setAttribute('aria-labelledby', 'first-visit-result-title');
+  firstVisit.querySelector('.intro-source-caption').textContent = t('firstVisit.stopped');
+  for (const device of stopped) {
+    firstVisit.querySelector(`[data-intro-device="${CSS.escape(device.id)}"]`)?.setAttribute('data-stopped', 'true');
+    firstVisit.querySelector(`[data-intro-status="${CSS.escape(device.id)}"]`)?.setAttribute('data-stopped', 'true');
+  }
+  if (current.summary.unreachableCount) {
+    firstVisit.querySelector('.intro-service').setAttribute('data-severed', 'true');
+    firstVisit.querySelector('.intro-service-name').textContent = t('firstVisit.serviceSevered');
+    firstVisit.querySelector('svg').setAttribute('aria-label', t('firstVisit.resultDiagramAlt'));
+  }
+  element('first-visit-diagram-note').textContent = t('firstVisit.diagramResult');
+  element('first-visit-result-title').focus();
+}
+try {
+  firstVisit.hidden = restoredWorkingCopy || localStorage.getItem('rack-mesh-guide-seen') !== null || localStorage.getItem('rack-mesh-first-visit-dismissed') !== null;
+} catch { firstVisit.hidden = true; }
+try {
+  const resumeResult = sessionStorage.getItem('headroom-first-result') === '1';
+  sessionStorage.removeItem('headroom-first-result');
+  const domain = topology.failureDomains?.find(({ id }) => id === 'pdu-3');
+  if (resumeResult && restoredWorkingCopy && topology.synthetic && topology.template?.id === 'demo' && domain && state.disabledDomains.has(domain.id)) {
+    firstVisit.hidden = false;
+    showFirstVisitResult(domain);
+  }
+} catch { }
+firstVisit.addEventListener('click', (event) => {
+  const action = event.target.closest('[data-first-visit]')?.dataset.firstVisit;
+  if (!action) return;
+  const domain = topology.failureDomains?.find(({ id }) => id === 'pdu-3');
+  if (action === 'try' && !domain) { firstVisit.hidden = true; return; }
+  if (action === 'try') {
+    state.disabledDomains.add(domain.id);
+    recalculate();
+    showFirstVisitResult(domain);
+    return;
+  }
+  firstVisit.hidden = true;
+  try { localStorage.setItem('rack-mesh-first-visit-dismissed', '1'); } catch { }
+  if (action === 'restore' && domain) { state.disabledDomains.delete(domain.id); recalculate(); }
+  if (action === 'inspect' && domain) {
+    firstFaultContext = domain.id;
+    const first = (domain.deviceIds || []).find((id) => current.devices.some((device) => device.id === id && !device.active));
+    if (first) { state.selectedId = first; state.selection = [{ type: 'device', id: first }]; }
+    setWorkspacePanel('tools'); setLeftPanel('failure'); render(); persistWorkingCopy();
+  }
+  requestAnimationFrame(() => {
+    window.dispatchEvent(new Event('resize'));
+    if (action === 'inspect' && domain) {
+      const previous = state.zoom;
+      focusFaultMembers(domain.deviceIds || []);
+      if (Math.abs(state.zoom - previous) > 1e-6) firstFaultAutoZoom = { domainId: domain.id, previous, applied: state.zoom };
+    } else centerOnContent();
+    queueVirtualFailureRows();
+  });
+  if (action === 'inspect') (mobileLayout.matches ? element('mobile-summary-toggle') : element('summary-survival')).focus();
+  if (action === 'restore') element('topology-heading').focus({ preventScroll: true });
+  if (action === 'guide') element('guide-button').click();
+  if (action === 'start') element('new-design-button').click();
+  if (action === 'dismiss') element('topology-heading').focus({ preventScroll: true });
+});
 // 작업 사본이 커도 현재 시나리오를 먼저 보여 준다. 전수 분석은 첫 화면 뒤에 시작한다.
 const initialAnalysisRun = analysisRun;
 scheduleAnalysis(() => { if (analysisRun !== initialAnalysisRun) return; startAnalysis(); render(); });
